@@ -1,0 +1,99 @@
+{
+  "config": {
+    "flow_title": "Philips Sonicare ({name})",
+    "step": {
+      "bluetooth_confirm": {
+        "title": "Confirm Philips Sonicare",
+        "description": "Do you want to add **{name}** to Home Assistant?"
+      },
+      "user": {
+        "title": "Philips Sonicare BLE",
+        "description": "Select or enter BLE address of your Sonicare toothbrush.",
+        "data": {
+          "address": "BLE Address"
+        }
+      },
+      "init": {
+        "title": "Philips Sonicare Options",
+        "data": {
+          "poll_interval": "Poll interval (seconds)",
+          "enable_live_updates": "Enable live updates (BLE notifications)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Philips Sonicare Options",
+        "data": {
+          "poll_interval": "Poll interval (seconds)",
+          "enable_live_updates": "Enable live updates (BLE notifications)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": { "name": "Battery" },
+      "handle_state": {
+        "name": "Handle State",
+        "state": {
+          "off": "Off",
+          "standby": "Standby",
+          "run": "Running",
+          "charge": "Charging",
+          "shutdown": "Shutdown",
+          "validate": "Validate",
+          "background": "Background"
+        }
+      },
+      "brushing_mode": {
+        "name": "Brushing Mode",
+        "state": {
+          "clean": "Clean",
+          "white_plus": "White+",
+          "gum_health": "Gum Health",
+          "deep_clean_plus": "Deep Clean+"
+        }
+      },
+      "brushing_state": {
+        "name": "Brushing State",
+        "state": {
+          "off": "Off",
+          "on": "On",
+          "pause": "Pause",
+          "session_complete": "Session Complete",
+          "session_aborted": "Session Aborted"
+        }
+      },
+      "intensity": {
+        "name": "Intensity",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      },
+      "brushing_time": { "name": "Brushing Time" },
+      "routine_length": { "name": "Routine Length" },
+      "session_id": { "name": "Session ID" },
+      "latest_session_id": { "name": "Latest Session ID" },
+      "session_count": { "name": "Session Count" },
+      "motor_runtime": { "name": "Motor Runtime" },
+      "brushhead_wear": { "name": "Brush Head Wear" },
+      "brushhead_usage": { "name": "Brush Head Usage" },
+      "brushhead_limit": { "name": "Brush Head Limit" },
+      "brushhead_serial": { "name": "Brush Head Serial" },
+      "brushhead_date": { "name": "Brush Head Date" },
+      "brushhead_ring_id": { "name": "Brush Head Ring ID" },
+      "model_number": { "name": "Model Number" },
+      "firmware": { "name": "Firmware" },
+      "last_seen": { "name": "Last Seen" }
+    },
+    "binary_sensor": {
+      "is_brushing": { "name": "Brushing" },
+      "is_charging": { "name": "Charging" }
+    }
+  }
+}

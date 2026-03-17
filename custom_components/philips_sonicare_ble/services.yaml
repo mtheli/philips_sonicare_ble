@@ -1,0 +1,28 @@
+read_characteristic:
+  name: Read characteristic
+  description: Read a BLE characteristic from the Sonicare toothbrush (debug).
+  fields:
+    characteristic_uuid:
+      name: Characteristic UUID
+      description: The UUID of the characteristic to read.
+      required: true
+      example: "477ea600-a260-11e4-ae37-0002a5d54120"
+      selector:
+        text:
+
+write_characteristic:
+  name: Write characteristic
+  description: Write data to a BLE characteristic on the Sonicare toothbrush (debug).
+  fields:
+    characteristic_uuid:
+      name: Characteristic UUID
+      description: The UUID of the characteristic to write.
+      required: true
+      selector:
+        text:
+    data:
+      name: Data
+      description: Hex data to write (e.g. "01" or "0100").
+      required: true
+      selector:
+        text:

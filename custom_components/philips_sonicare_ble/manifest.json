@@ -1,0 +1,17 @@
+{
+  "domain": "philips_sonicare_ble",
+  "name": "Philips Sonicare",
+  "after_dependencies": ["esphome"],
+  "bluetooth": [
+    {"service_uuid": "477ea600-a260-11e4-ae37-0002a5d50001"}
+  ],
+  "codeowners": ["@theli"],
+  "config_flow": true,
+  "dependencies": ["bluetooth"],
+  "documentation": "https://github.com/theli/philips_sonicare_ble",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/theli/philips_sonicare_ble/issues",
+  "requirements": ["bleak>=0.21.0", "bleak-retry-connector>=3.5.0"],
+  "version": "0.1.0"
+}
