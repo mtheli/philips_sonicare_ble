@@ -1,6 +1,6 @@
 # Philips Sonicare BLE Protocol
 
-This document describes the Bluetooth Low Energy (BLE) GATT protocol used by Philips Sonicare toothbrushes with the **Legacy** protocol. Reverse-engineered from the Android app `com.philips.cdp.ohc.tuscany` v10.17.0 and verified against a real HX992X (DiamondClean 9000).
+This document describes the Bluetooth Low Energy (BLE) GATT protocol used by Philips Sonicare toothbrushes with the **Legacy** protocol. Documented through BLE analysis and verified against a real HX992X (DiamondClean 9000).
 
 ## Protocol Variants
 
@@ -301,5 +301,5 @@ The Sonicare app includes a proprietary native library `libwatsonWrapper.so` for
 
 - [python-sonicare](https://github.com/joushx/python-sonicare) — Python BLE library for Sonicare (Legacy protocol)
 - [sonicare-ble-hacs](https://github.com/GrumpyMeow/sonicare-ble-hacs) — Earlier HA integration (unmaintained)
-- [My toothbrush streams gyroscope data](https://blog.johannes-mittendorfer.com/artikel/2020/10/my-toothbrush-streams-gyroscope-data) — Blog post on Sonicare BLE reverse engineering
+- [My toothbrush streams gyroscope data](https://blog.johannes-mittendorfer.com/artikel/2020/10/my-toothbrush-streams-gyroscope-data) — Blog post on Sonicare BLE gyroscope streaming
 - [ROBAS-UCLA/Toothbrushing-region-detection](https://github.com/ROBAS-UCLA/Toothbrushing-region-detection) — Academic brushing region detection using IMU

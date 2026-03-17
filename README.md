@@ -149,7 +149,7 @@ Toothbrush wakes up
 
 For a detailed technical description of the BLE protocol including all service UUIDs, characteristic reference, data formats, and enum values, see **[PROTOCOL.md](PROTOCOL.md)**.
 
-The protocol was reverse-engineered from the Philips Sonicare Android app (`com.philips.cdp.ohc.tuscany` v10.17.0) using jadx decompilation and verified against a real HX992X device.
+The protocol was documented through BLE analysis and verified against a real HX992X device.
 
 ---
 
