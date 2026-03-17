@@ -26,6 +26,7 @@ async def async_setup_entry(
     entities = [
         SonicareIsBrushingBinarySensor(coordinator, entry),
         SonicareIsChargingBinarySensor(coordinator, entry),
+        SonicarePressureAlertBinarySensor(coordinator, entry),
     ]
 
     async_add_entities(entities)
@@ -80,3 +81,27 @@ class SonicareIsChargingBinarySensor(PhilipsSonicareEntity, BinarySensorEntity):
             return False
 
         return self.coordinator.data.get("handle_state_value") == 3
+
+
+class SonicarePressureAlertBinarySensor(PhilipsSonicareEntity, BinarySensorEntity):
+    """Binary sensor showing if too much pressure is applied."""
+
+    _attr_translation_key = "pressure_alert"
+    _attr_icon = "mdi:alert-circle"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(
+        self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_pressure_alert"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True if overpressure is detected (alarm byte == 2)."""
+        if not self.coordinator.data:
+            return None
+        alarm = self.coordinator.data.get("pressure_alarm")
+        if alarm is None:
+            return None
+        return alarm == 2

@@ -13,6 +13,11 @@
           "address": "BLE Address"
         }
       },
+      "show_capabilities": {
+        "title": "Philips Sonicare — {name}",
+        "description": "**Device Information**\n\n{device_info}\n\n**Detected Services**\n\n{services}",
+        "submit": "Set up"
+      },
       "init": {
         "title": "Philips Sonicare Options",
         "data": {
@@ -20,6 +25,10 @@
           "enable_live_updates": "Enable live updates (BLE notifications)"
         }
       }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the toothbrush. Make sure it is awake (press button or place on charger) and in range.",
+      "unknown": "Unexpected error. Check the logs for details."
     }
   },
   "options": {
@@ -89,11 +98,14 @@
       "brushhead_ring_id": { "name": "Brush Head Ring ID" },
       "model_number": { "name": "Model Number" },
       "firmware": { "name": "Firmware" },
-      "last_seen": { "name": "Last Seen" }
+      "last_seen": { "name": "Last Seen" },
+      "pressure": { "name": "Pressure" },
+      "temperature": { "name": "Temperature" }
     },
     "binary_sensor": {
       "is_brushing": { "name": "Brushing" },
-      "is_charging": { "name": "Charging" }
+      "is_charging": { "name": "Charging" },
+      "pressure_alert": { "name": "Pressure Alert" }
     }
   }
 }

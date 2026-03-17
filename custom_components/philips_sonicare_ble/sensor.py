@@ -56,6 +56,8 @@ async def async_setup_entry(
         SonicareModelNumberSensor(coordinator, entry),
         SonicareFirmwareSensor(coordinator, entry),
         SonicareLastSeenSensor(coordinator, entry),
+        SonicarePressureSensor(coordinator, entry),
+        SonicareTemperatureSensor(coordinator, entry),
     ]
 
     async_add_entities(entities)
@@ -502,3 +504,47 @@ class SonicareLastSeenSensor(PhilipsSonicareEntity, SensorEntity):
     def available(self) -> bool:
         """Always available so the user can see when the device was last seen."""
         return True
+
+
+# ---------------------------------------------------------------------------
+# Pressure (from sensor data stream 0x4130)
+# ---------------------------------------------------------------------------
+class SonicarePressureSensor(PhilipsSonicareEntity, SensorEntity):
+    """Pressure sensor from IMU data stream (value in grams)."""
+
+    _attr_translation_key = "pressure"
+    _attr_icon = "mdi:arrow-collapse-down"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "g"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_pressure"
+
+    @property
+    def native_value(self) -> int | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("pressure")
+
+
+# ---------------------------------------------------------------------------
+# Temperature (from sensor data stream 0x4130)
+# ---------------------------------------------------------------------------
+class SonicareTemperatureSensor(PhilipsSonicareEntity, SensorEntity):
+    """Temperature sensor from IMU data stream."""
+
+    _attr_translation_key = "temperature"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = "\u00b0C"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_temperature"
+
+    @property
+    def native_value(self) -> float | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("temperature")

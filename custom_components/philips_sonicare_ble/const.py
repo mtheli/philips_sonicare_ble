@@ -140,20 +140,26 @@ INTENSITIES = {
 
 # ── Characteristic lists for polling/live ────────────────────────────────────
 NOTIFICATION_CHARS = [
-    CHAR_HANDLE_STATE,        # indicate
-    CHAR_BRUSHING_STATE,      # notify
-    CHAR_BRUSHING_MODE,       # indicate
-    CHAR_BRUSHING_TIME,       # notify
-    CHAR_ROUTINE_LENGTH,      # notify
-    CHAR_INTENSITY,           # notify
-    CHAR_SESSION_ID,          # notify
+    # Priority 1: Core status (must have for basic functionality)
+    CHAR_HANDLE_STATE,        # indicate — off/standby/run/charge
+    CHAR_BRUSHING_TIME,       # notify — live brushing timer
+    CHAR_BRUSHING_STATE,      # notify — on/off/pause/complete/aborted
+    CHAR_SENSOR_DATA,         # notify — pressure/temperature/gyro stream
+    # Priority 2: Session details
+    CHAR_BRUSHING_MODE,       # indicate — clean/white+/gum/deep
+    CHAR_INTENSITY,           # notify — low/medium/high
+    CHAR_ROUTINE_LENGTH,      # notify — target duration
+    CHAR_SESSION_ID,          # notify — current session
+    # Priority 3: Storage & diagnostics (nice to have)
     CHAR_LATEST_SESSION_ID,   # notify
     CHAR_SESSION_COUNT,       # notify
-    CHAR_UNKNOWN_4030,        # notify
-    CHAR_UNKNOWN_40A0,        # notify
-    CHAR_UNKNOWN_40C0,        # notify
     CHAR_BRUSHHEAD_SERIAL,    # notify
 ]
+
+# Sensor frame types (from 0x4130 stream)
+SENSOR_FRAME_PRESSURE = 1
+SENSOR_FRAME_TEMPERATURE = 2
+SENSOR_FRAME_GYROSCOPE = 4
 
 POLL_READ_CHARS = [
     CHAR_BATTERY_LEVEL,

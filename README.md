@@ -16,10 +16,10 @@ Other BLE-enabled Philips Sonicare toothbrushes using the Legacy protocol (servi
 
 The integration connects to your toothbrush via **Bluetooth Low Energy (BLE)** to provide battery status, brushing session data, brush head wear tracking, and more. All communication is fully local -- no cloud, no app required.
 
-Two connection methods are supported:
+<!-- Two connection methods are supported:
 
 1.  **Direct Bluetooth** -- connects from the HA host's Bluetooth adapter. Uses a persistent live connection with a poll fallback.
-2.  **ESP32 BLE Bridge** -- an ESP32 running ESPHome acts as a wireless BLE relay. Ideal when the toothbrush is out of Bluetooth range of the HA host.
+2.  **ESP32 BLE Bridge** -- an ESP32 running ESPHome acts as a wireless BLE relay. Ideal when the toothbrush is out of Bluetooth range of the HA host. -->
 
 ---
 

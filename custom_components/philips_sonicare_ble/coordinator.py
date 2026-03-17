@@ -45,6 +45,10 @@ from .const import (
     CHAR_BRUSHHEAD_RING_ID,
     CHAR_ERROR_PERSISTENT,
     CHAR_ERROR_VOLATILE,
+    CHAR_SENSOR_DATA,
+    SENSOR_FRAME_PRESSURE,
+    SENSOR_FRAME_TEMPERATURE,
+    SENSOR_FRAME_GYROSCOPE,
     HANDLE_STATES,
     BRUSHING_MODES,
     BRUSHING_STATES,
@@ -138,6 +142,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "brushhead_ring_id": None,
             "error_persistent": None,
             "error_volatile": None,
+            "pressure": None,
+            "pressure_alarm": None,
+            "temperature": None,
             "last_seen": None,
         }
 
@@ -350,6 +357,17 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if raw := results.get(CHAR_ERROR_VOLATILE):
             new_data["error_volatile"] = int.from_bytes(raw[:4], "little")
 
+        # Sensor Data Stream (0x4130) — pressure, temperature, gyroscope frames
+        if raw := results.get(CHAR_SENSOR_DATA):
+            if len(raw) >= 4:
+                import struct
+                frame_type = struct.unpack("<H", raw[:2])[0]
+                if frame_type == SENSOR_FRAME_PRESSURE and len(raw) >= 7:
+                    new_data["pressure"] = struct.unpack("<h", raw[4:6])[0]
+                    new_data["pressure_alarm"] = raw[6]
+                elif frame_type == SENSOR_FRAME_TEMPERATURE and len(raw) >= 6:
+                    new_data["temperature"] = round(raw[4] / 256 + raw[5], 1)
+
         # Change detection: only update last_seen when data actually changed
         # or every 30s as heartbeat for availability tracking
         old = self.data or {}
@@ -478,13 +496,16 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             finally:
                 self._live_setup_done = False
                 await self.transport.unsubscribe_all()
-                _LOGGER.info("Live connection ended - waiting for next advertisement (or 5s)")
-                self._device_seen.clear()
-                try:
-                    await asyncio.wait_for(self._device_seen.wait(), timeout=5)
-                    _LOGGER.info("ADV received during wait - reconnecting immediately")
-                except asyncio.TimeoutError:
-                    _LOGGER.debug("No ADV during 5s wait - going to top of loop")
+                if self._device_seen.is_set():
+                    _LOGGER.info("Live connection ended - ADV already received, reconnecting immediately")
+                    self._device_seen.clear()
+                else:
+                    _LOGGER.info("Live connection ended - waiting for next advertisement (or 5s)")
+                    try:
+                        await asyncio.wait_for(self._device_seen.wait(), timeout=5)
+                        _LOGGER.info("ADV received during wait - reconnecting immediately")
+                    except asyncio.TimeoutError:
+                        _LOGGER.debug("No ADV during 5s wait - going to top of loop")
 
     def _make_live_callback(self):
         """Create a single notification callback for all subscribed characteristics."""
