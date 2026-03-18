@@ -16,6 +16,11 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectOptionDict,
+)
 
 from bleak import BleakClient
 from bleak.exc import BleakError
@@ -27,11 +32,18 @@ from .const import (
     CONF_ENABLE_LIVE_UPDATES,
     CONF_SERVICES,
     CONF_TRANSPORT_TYPE,
+    CONF_ESP_DEVICE_NAME,
+    CONF_ESP_DEVICE_ID,
+    CONF_NOTIFY_THROTTLE,
     TRANSPORT_BLEAK,
+    TRANSPORT_ESP_BRIDGE,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_ENABLE_LIVE_UPDATES,
+    DEFAULT_NOTIFY_THROTTLE,
     MIN_POLL_INTERVAL,
     MAX_POLL_INTERVAL,
+    MIN_NOTIFY_THROTTLE,
+    MAX_NOTIFY_THROTTLE,
     CHAR_BATTERY_LEVEL,
     CHAR_MODEL_NUMBER,
     CHAR_SERIAL_NUMBER,
@@ -47,6 +59,8 @@ from .const import (
     SVC_EXTENDED,
     SVC_BYTESTREAM_LEGACY,
 )
+from .transport import EspBridgeTransport
+from .exceptions import TransportError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,6 +97,19 @@ SERVICE_NAMES: dict[str, str] = {
     SVC_BYTESTREAM_LEGACY.lower(): "ByteStreaming (Legacy)",
 }
 
+# Map each service to one representative characteristic for ESP probing
+SERVICE_PROBE_CHARS: dict[str, str] = {
+    SVC_BATTERY: CHAR_BATTERY_LEVEL,
+    SVC_DEVICE_INFO: CHAR_MODEL_NUMBER,
+    SVC_SONICARE: "477ea600-a260-11e4-ae37-0002a5d54010",  # CHAR_HANDLE_STATE
+    SVC_ROUTINE: "477ea600-a260-11e4-ae37-0002a5d54080",   # CHAR_BRUSHING_MODE
+    SVC_STORAGE: "477ea600-a260-11e4-ae37-0002a5d540d0",   # CHAR_LATEST_SESSION_ID
+    SVC_SENSOR: "477ea600-a260-11e4-ae37-0002a5d54120",    # CHAR_SENSOR_ENABLE
+    SVC_BRUSHHEAD: "477ea600-a260-11e4-ae37-0002a5d54210",  # CHAR_BRUSHHEAD_NFC_VERSION
+    SVC_DIAGNOSTIC: "477ea600-a260-11e4-ae37-0002a5d54310",  # CHAR_ERROR_PERSISTENT
+    SVC_EXTENDED: "477ea600-a260-11e4-ae37-0002a5d54420",   # CHAR_SETTINGS
+}
+
 
 class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Philips Sonicare BLE."""
@@ -94,17 +121,19 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._address: str | None = None
         self._name: str | None = None
         self._fetched_data: dict[str, Any] | None = None
+        self._transport_type: str = TRANSPORT_BLEAK
+        self._esp_device_name: str | None = None
+        self._esp_device_id: str = ""
+        self._esp_device_ids: list[str] = []
+        self._bridge_info: dict[str, str] | None = None
 
+    # ------------------------------------------------------------------
+    # Capabilities fetch (direct BLE)
+    # ------------------------------------------------------------------
     async def _async_fetch_capabilities(self, address: str) -> dict[str, Any]:
-        """Connect to the device and read capabilities.
-
-        Uses the cached BLEDevice from discovery when available to skip
-        the address lookup, and use_services_cache=True to skip GATT
-        service discovery on repeated connects.
-        """
+        """Connect to the device and read capabilities via direct BLE."""
         result: dict[str, Any] = {"services": []}
 
-        # Prefer the device object we already have from discovery
         if self._discovery_info is not None:
             device = self._discovery_info.device
         else:
@@ -125,7 +154,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
             result["services"] = [str(s.uuid).lower() for s in client.services]
 
-            # Read device info (sequential — BLE GATT is request-response)
             for char_uuid, key in (
                 (CHAR_BATTERY_LEVEL, "battery"),
                 (CHAR_MODEL_NUMBER, "model"),
@@ -155,6 +183,69 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return result
 
+    # ------------------------------------------------------------------
+    # Capabilities fetch (ESP bridge)
+    # ------------------------------------------------------------------
+    async def _async_fetch_capabilities_esp(
+        self,
+        address: str,
+        esp_device_name: str,
+        esp_device_id: str = "",
+    ) -> dict[str, Any]:
+        """Read capabilities and probe services via ESP32 bridge."""
+        transport = EspBridgeTransport(self.hass, address, esp_device_name, esp_device_id)
+        try:
+            await transport.connect()
+
+            found_services: list[str] = []
+            model_number: str | None = None
+            for svc_uuid, probe_char in SERVICE_PROBE_CHARS.items():
+                raw = await transport.read_char(probe_char)
+                if raw is not None:
+                    found_services.append(svc_uuid)
+                    if probe_char == CHAR_MODEL_NUMBER:
+                        model_number = raw.decode("utf-8", errors="replace").strip()
+
+            if not found_services:
+                raise TransportError(
+                    "Could not read any service via ESP bridge - toothbrush may not be connected"
+                )
+
+            # Battery
+            battery: int | None = None
+            raw_bat = await transport.read_char(CHAR_BATTERY_LEVEL)
+            if raw_bat:
+                battery = raw_bat[0]
+
+            # Serial
+            serial: str | None = None
+            raw_serial = await transport.read_char(CHAR_SERIAL_NUMBER)
+            if raw_serial:
+                serial = raw_serial.decode("utf-8", errors="replace").strip()
+
+            # Firmware
+            firmware: str | None = None
+            raw_fw = await transport.read_char(CHAR_FIRMWARE_REVISION)
+            if raw_fw:
+                firmware = raw_fw.decode("utf-8", errors="replace").strip()
+
+            return {
+                "services": found_services,
+                "sonicare_mac": transport.detected_mac,
+                "model": model_number,
+                "serial": serial,
+                "firmware": firmware,
+                "battery": battery,
+            }
+
+        except TransportError:
+            raise
+        finally:
+            await transport.disconnect()
+
+    # ------------------------------------------------------------------
+    # Display helpers
+    # ------------------------------------------------------------------
     @staticmethod
     def _get_service_status_text(fetched_uuids: list[str]) -> str:
         """Format found services as HTML table with checkmarks."""
@@ -176,7 +267,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     f"<tr><td>❌</td><td>{name}</td><td><code>{short}</code></td></tr>"
                 )
 
-        # Unknown services (found but not expected)
         known_all = _EXPECTED_SERVICES | {SVC_BYTESTREAM_LEGACY.lower()}
         for uuid in sorted(fetched_lower - _EXPECTED_SERVICES):
             name = SERVICE_NAMES.get(uuid, "Unknown")
@@ -212,6 +302,39 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         return "<table>" + "".join(rows) + "</table>"
 
     # ------------------------------------------------------------------
+    # ESP bridge helpers
+    # ------------------------------------------------------------------
+    def _get_esphome_device_options(self) -> list[SelectOptionDict]:
+        """Build a list of available ESPHome devices for the selector."""
+        esphome_entries = self.hass.config_entries.async_entries("esphome")
+        options: list[SelectOptionDict] = []
+        for entry in esphome_entries:
+            device_name = entry.data.get("device_name")
+            if device_name:
+                options.append(
+                    SelectOptionDict(
+                        value=device_name,
+                        label=f"{entry.title} ({device_name})",
+                    )
+                )
+        return options
+
+    def _detect_esp_device_ids(self, esp_device_name: str) -> list[str]:
+        """Detect available device_id suffixes on an ESP bridge."""
+        # Single device (no suffix)
+        if self.hass.services.has_service("esphome", f"{esp_device_name}_ble_read_char"):
+            return [""]
+
+        # Multi-device: find suffixed services
+        esphome_services = self.hass.services.async_services().get("esphome", {})
+        prefix = f"{esp_device_name}_ble_read_char_"
+        return [
+            svc_name[len(prefix):]
+            for svc_name in esphome_services
+            if svc_name.startswith(prefix)
+        ]
+
+    # ------------------------------------------------------------------
     # Discovery flow
     # ------------------------------------------------------------------
     async def async_step_bluetooth(
@@ -242,6 +365,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         try:
             self._fetched_data = await self._async_fetch_capabilities(self._address)
             if self._fetched_data.get("services"):
+                self._transport_type = TRANSPORT_BLEAK
                 return await self.async_step_show_capabilities()
             errors["base"] = "cannot_connect"
         except Exception:
@@ -255,13 +379,25 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     # ------------------------------------------------------------------
-    # Manual flow
+    # Manual flow — menu: choose connection type
     # ------------------------------------------------------------------
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle manual setup."""
-        errors = {}
+        """Handle a flow initialized by the user — choose connection type."""
+        return self.async_show_menu(
+            step_id="user",
+            menu_options=["user_bleak", "esp_bridge"],
+        )
+
+    # ------------------------------------------------------------------
+    # Direct BLE manual setup
+    # ------------------------------------------------------------------
+    async def async_step_user_bleak(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle manual MAC address entry for direct BLE."""
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             address = user_input[CONF_ADDRESS].upper()
@@ -274,8 +410,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 self._fetched_data = await self._async_fetch_capabilities(address)
                 if self._fetched_data.get("services"):
+                    self._transport_type = TRANSPORT_BLEAK
                     return await self.async_step_show_capabilities()
-                # No services found but no exception — create entry anyway
                 return self.async_create_entry(
                     title=f"Philips Sonicare ({address})",
                     data={
@@ -298,7 +434,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if sonicare_devices:
             return self.async_show_form(
-                step_id="user",
+                step_id="user_bleak",
                 data_schema=vol.Schema(
                     {vol.Required(CONF_ADDRESS): vol.In(sonicare_devices)}
                 ),
@@ -306,7 +442,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             )
 
         return self.async_show_form(
-            step_id="user",
+            step_id="user_bleak",
             data_schema=vol.Schema(
                 {vol.Required(CONF_ADDRESS): str}
             ),
@@ -314,7 +450,190 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     # ------------------------------------------------------------------
-    # Capabilities dialog
+    # ESP32 Bridge setup
+    # ------------------------------------------------------------------
+    async def async_step_esp_bridge(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle ESP32 bridge configuration."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            esp_device_name = user_input["esp_device_name"].strip().replace("-", "_")
+
+            device_ids = self._detect_esp_device_ids(esp_device_name)
+            if not device_ids:
+                _LOGGER.error("No philips_sonicare services found on %s", esp_device_name)
+                errors["base"] = "cannot_connect"
+            else:
+                self._esp_device_name = esp_device_name
+                self._esp_device_ids = device_ids
+
+                if len(device_ids) > 1:
+                    return await self.async_step_esp_select_device()
+
+                self._esp_device_id = device_ids[0]
+                return await self._esp_bridge_health_check()
+
+        esp_options = self._get_esphome_device_options()
+
+        if esp_options:
+            data_schema = vol.Schema(
+                {
+                    vol.Required("esp_device_name"): SelectSelector(
+                        SelectSelectorConfig(options=esp_options)
+                    ),
+                }
+            )
+        else:
+            data_schema = vol.Schema(
+                {
+                    vol.Required("esp_device_name"): str,
+                }
+            )
+            errors["base"] = "no_esphome_devices"
+
+        return self.async_show_form(
+            step_id="esp_bridge",
+            data_schema=data_schema,
+            errors=errors,
+        )
+
+    async def async_step_esp_select_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Let user pick which device on a multi-device ESP bridge."""
+        if user_input is not None:
+            self._esp_device_id = user_input["esp_device_id"]
+            return await self._esp_bridge_health_check()
+
+        options: list[SelectOptionDict] = []
+        for did in self._esp_device_ids:
+            options.append(SelectOptionDict(value=did, label=did or "default"))
+
+        if not options:
+            return self.async_abort(reason="already_configured")
+
+        if len(options) == 1:
+            self._esp_device_id = options[0]["value"]
+            return await self._esp_bridge_health_check()
+
+        return self.async_show_form(
+            step_id="esp_select_device",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("esp_device_id"): SelectSelector(
+                        SelectSelectorConfig(options=options)
+                    ),
+                }
+            ),
+        )
+
+    async def _esp_bridge_health_check(self) -> FlowResult:
+        """Run bridge health check and proceed to status step."""
+        if self._bridge_info:
+            return await self.async_step_esp_bridge_status()
+
+        transport = EspBridgeTransport(
+            self.hass, "", self._esp_device_name, self._esp_device_id
+        )
+        try:
+            await transport.connect()
+            self._bridge_info = {
+                "version": transport.bridge_version or "?",
+                "ble_connected": str(transport.is_device_connected).lower(),
+                "mac": transport.detected_mac or "",
+            }
+        except TransportError:
+            _LOGGER.error("ESP bridge not reachable: %s", self._esp_device_name)
+            return self.async_show_form(
+                step_id="esp_bridge",
+                data_schema=vol.Schema({vol.Required("esp_device_name"): str}),
+                errors={"base": "cannot_connect"},
+            )
+        except Exception:
+            _LOGGER.exception("Unexpected error checking ESP bridge")
+            return self.async_show_form(
+                step_id="esp_bridge",
+                data_schema=vol.Schema({vol.Required("esp_device_name"): str}),
+                errors={"base": "unknown"},
+            )
+        finally:
+            await transport.disconnect()
+
+        return await self.async_step_esp_bridge_status()
+
+    async def async_step_esp_bridge_status(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show ESP bridge status before reading toothbrush capabilities."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            try:
+                capabilities = await self._async_fetch_capabilities_esp(
+                    "", self._esp_device_name, self._esp_device_id,
+                )
+
+                sonicare_mac = capabilities.get("sonicare_mac")
+                if sonicare_mac:
+                    await self.async_set_unique_id(
+                        sonicare_mac.upper(), raise_on_progress=False
+                    )
+                else:
+                    await self.async_set_unique_id(f"esp_{self._esp_device_name}")
+                self._abort_if_unique_id_configured()
+
+                self._fetched_data = capabilities
+                self._address = sonicare_mac
+                model = capabilities.get("model")
+                self._name = model if model else self._esp_device_name
+                self._transport_type = TRANSPORT_ESP_BRIDGE
+
+                return await self.async_step_show_capabilities()
+
+            except TransportError:
+                _LOGGER.error(
+                    "ESP bridge: unable to read toothbrush capabilities via %s",
+                    self._esp_device_name,
+                )
+                errors["base"] = "cannot_connect"
+            except Exception:
+                _LOGGER.exception("Unexpected error reading toothbrush capabilities")
+                errors["base"] = "unknown"
+
+        # Format bridge status display
+        info = self._bridge_info or {}
+        if info:
+            version = info.get("version", "?")
+            ble_connected = info.get("ble_connected") == "true"
+            mac = info.get("mac", "")
+
+            ble_status = "Connected" if ble_connected else "Disconnected"
+
+            rows = [
+                f"<tr><td><b>Version</b></td><td>v{version}</td></tr>",
+                f"<tr><td><b>BLE</b></td><td>{ble_status}</td></tr>",
+            ]
+            if mac and mac != "00:00:00:00:00:00":
+                rows.append(f"<tr><td><b>MAC</b></td><td><code>{mac}</code></td></tr>")
+
+            status_text = "<table>" + "".join(rows) + "</table>"
+        else:
+            status_text = "Diagnostic details not available."
+
+        return self.async_show_form(
+            step_id="esp_bridge_status",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "device_name": self._esp_device_name or "",
+                "status": status_text,
+            },
+            errors=errors,
+        )
+
+    # ------------------------------------------------------------------
+    # Capabilities dialog (shared by BLE and ESP)
     # ------------------------------------------------------------------
     async def async_step_show_capabilities(
         self, user_input: dict[str, Any] | None = None
@@ -327,19 +646,36 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             services = self._fetched_data.get("services", [])
             title = self._fetched_data.get("model", self._name) or self._name
 
+            entry_data: dict[str, Any] = {
+                CONF_SERVICES: services,
+            }
+
+            if self._transport_type == TRANSPORT_ESP_BRIDGE:
+                entry_data[CONF_TRANSPORT_TYPE] = TRANSPORT_ESP_BRIDGE
+                entry_data[CONF_ESP_DEVICE_NAME] = self._esp_device_name
+                if self._esp_device_id:
+                    entry_data[CONF_ESP_DEVICE_ID] = self._esp_device_id
+                if self._address:
+                    entry_data[CONF_ADDRESS] = self._address
+            else:
+                entry_data[CONF_ADDRESS] = self._address
+                entry_data[CONF_TRANSPORT_TYPE] = TRANSPORT_BLEAK
+
             return self.async_create_entry(
-                title=title,
-                data={
-                    CONF_ADDRESS: self._address,
-                    CONF_TRANSPORT_TYPE: TRANSPORT_BLEAK,
-                    CONF_SERVICES: services,
-                },
+                title=f"Philips Sonicare ({title})",
+                data=entry_data,
             )
 
         device_info_text = self._get_device_info_text(self._fetched_data)
         services_text = self._get_service_status_text(
             self._fetched_data.get("services", [])
         )
+
+        bridge_info = ""
+        if self._transport_type == TRANSPORT_ESP_BRIDGE:
+            bridge_info = f" via **ESP32 Bridge** ({self._esp_device_name})"
+        else:
+            bridge_info = " via **Direct Bluetooth**"
 
         return self.async_show_form(
             step_id="show_capabilities",
@@ -348,6 +684,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "name": str(self._name),
                 "device_info": device_info_text,
                 "services": services_text,
+                "bridge_info": bridge_info,
             },
         )
 
@@ -369,22 +706,41 @@ class PhilipsSonicareOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        is_esp = (
+            self._config_entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
+        )
+
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            data = {
+                CONF_POLL_INTERVAL: user_input[CONF_POLL_INTERVAL],
+                CONF_ENABLE_LIVE_UPDATES: user_input[CONF_ENABLE_LIVE_UPDATES],
+            }
+            if is_esp and CONF_NOTIFY_THROTTLE in user_input:
+                data[CONF_NOTIFY_THROTTLE] = int(user_input[CONF_NOTIFY_THROTTLE])
+            return self.async_create_entry(title="", data=data)
 
         options = self._config_entry.options
+        schema_fields: dict = {
+            vol.Required(
+                CONF_POLL_INTERVAL,
+                default=options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
+            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL)),
+            vol.Required(
+                CONF_ENABLE_LIVE_UPDATES,
+                default=options.get(CONF_ENABLE_LIVE_UPDATES, DEFAULT_ENABLE_LIVE_UPDATES),
+            ): bool,
+        }
+
+        if is_esp:
+            schema_fields[vol.Required(
+                CONF_NOTIFY_THROTTLE,
+                default=options.get(CONF_NOTIFY_THROTTLE, DEFAULT_NOTIFY_THROTTLE),
+            )] = vol.All(
+                vol.Coerce(int),
+                vol.Range(min=MIN_NOTIFY_THROTTLE, max=MAX_NOTIFY_THROTTLE),
+            )
+
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_POLL_INTERVAL,
-                        default=options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
-                    ): vol.All(vol.Coerce(int), vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL)),
-                    vol.Required(
-                        CONF_ENABLE_LIVE_UPDATES,
-                        default=options.get(CONF_ENABLE_LIVE_UPDATES, DEFAULT_ENABLE_LIVE_UPDATES),
-                    ): bool,
-                }
-            ),
+            data_schema=vol.Schema(schema_fields),
         )
