@@ -36,7 +36,7 @@ captive_portal:
 # --- BLE ---
 
 esp32_ble:
-  io_capability: no_input_no_output
+  io_capability: none
   max_notifications: 20
 
 esp32_ble_tracker:
