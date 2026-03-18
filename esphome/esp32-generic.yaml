@@ -63,7 +63,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/mtheli/philips_sonicare_ble
-      ref: main
+      ref: master
       path: esphome/components
     components: [philips_sonicare]
     refresh: 0s                  # always fetch latest code on build
