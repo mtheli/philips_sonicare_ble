@@ -197,7 +197,23 @@ POLL_READ_CHARS = [
     CHAR_SENSOR_ENABLE,
 ]
 
-LIVE_READ_CHARS = POLL_READ_CHARS
+# Live monitoring: only read dynamic chars before subscribing.
+# Static data (model, serial, firmware) is read by the poll cycle.
+LIVE_READ_CHARS = [
+    CHAR_BATTERY_LEVEL,
+    CHAR_HANDLE_STATE,
+    CHAR_BRUSHING_MODE,
+    CHAR_BRUSHING_STATE,
+    CHAR_BRUSHING_TIME,
+    CHAR_ROUTINE_LENGTH,
+    CHAR_INTENSITY,
+    CHAR_SESSION_ID,
+    CHAR_LATEST_SESSION_ID,
+    CHAR_SESSION_COUNT,
+    CHAR_MOTOR_RUNTIME,
+    CHAR_BRUSHHEAD_LIFETIME_LIMIT,
+    CHAR_BRUSHHEAD_LIFETIME_USAGE,
+]
 
 # ── Characteristic → Service map (for ESP bridge) ───────────────────────────
 CHAR_SERVICE_MAP: dict[str, str] = {
