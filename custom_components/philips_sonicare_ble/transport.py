@@ -349,31 +349,31 @@ class EspBridgeTransport(SonicareTransport):
                 self._bridge_version = version
 
             self._last_heartbeat = time.monotonic()
+            was_alive = self._esp_alive
+            was_connected = self._device_connected
+
             if not self._esp_alive:
                 self._esp_alive = True
-                if self._disconnect_cb:
-                    self._disconnect_cb()
 
             if status == "heartbeat":
                 ble_connected = event.data.get("ble_connected") == "true"
-                if ble_connected != self._device_connected:
-                    self._device_connected = ble_connected
-                    if not ble_connected:
-                        self._cancel_pending_reads()
-                    if self._disconnect_cb:
-                        self._disconnect_cb()
+                self._device_connected = ble_connected
+                if not ble_connected:
+                    self._cancel_pending_reads()
             elif status in ("connected", "ready"):
-                if not self._device_connected:
-                    self._device_connected = True
+                self._device_connected = True
                 if status == "ready":
                     self._needs_resubscribe = True
-                if self._disconnect_cb:
-                    self._disconnect_cb()
             elif status == "disconnected":
-                if self._device_connected:
-                    self._device_connected = False
-                    self._cancel_pending_reads()
-                    if self._disconnect_cb:
+                self._device_connected = False
+                self._cancel_pending_reads()
+
+            # Only fire callback when actual state changed
+            now_connected = self.is_connected
+            was_fully_connected = was_alive and was_connected
+            if now_connected != was_fully_connected and self._disconnect_cb:
+                self._disconnect_cb()
+            elif status == "disconnected" and self._disconnect_cb:
                         self._disconnect_cb()
 
         self._status_unsub = self._hass.bus.async_listen(ESP_STATUS_EVENT_NAME, _handle_status_event)
@@ -452,20 +452,16 @@ class EspBridgeTransport(SonicareTransport):
                 {"service_uuid": service_uuid, "char_uuid": char_uuid},
                 blocking=True,
             )
-        except HomeAssistantError:
+        except HomeAssistantError as err:
             self._pending_reads.pop(char_uuid, None)
-            self._esp_alive = False
+            _LOGGER.debug("Service call failed for %s: %s", char_uuid, err)
             return None
 
         try:
             return await asyncio.wait_for(future, timeout=ESP_READ_TIMEOUT)
         except asyncio.TimeoutError:
             self._pending_reads.pop(char_uuid, None)
-            self._cancel_pending_reads()
-            self._esp_alive = False
-            self._device_connected = False
-            if self._disconnect_cb:
-                self._disconnect_cb()
+            _LOGGER.debug("Read timeout for %s (other reads continue)", char_uuid)
             return None
 
     async def read_chars(self, char_uuids: list[str]) -> dict[str, bytes | None]:
