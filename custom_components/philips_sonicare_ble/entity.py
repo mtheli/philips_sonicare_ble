@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.components.bluetooth import async_last_service_info
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -16,10 +17,12 @@ from .const import DOMAIN, CONF_ADDRESS
 _LOGGER = logging.getLogger(__name__)
 
 
-class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator]):
+class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator], RestoreEntity):
     """Base class for all Philips Sonicare entities."""
 
     _attr_has_entity_name = True
+    _data_key: str | None = None
+    _restore_type: type = str  # int, float, or str
 
     def __init__(
         self,
@@ -41,6 +44,32 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator]):
             manufacturer="Philips",
             name=name,
         )
+
+    async def async_added_to_hass(self) -> None:
+        """Restore last known state into coordinator data."""
+        await super().async_added_to_hass()
+        if self._data_key is None:
+            return
+        if self.coordinator.data and self.coordinator.data.get(self._data_key) is not None:
+            return
+        last_state = await self.async_get_last_state()
+        if not last_state or last_state.state in (None, "unknown", "unavailable"):
+            return
+        self._restore_from_state(last_state.state)
+
+    def _restore_from_state(self, state: str) -> None:
+        """Restore a coordinator data key from a state string."""
+        if self.coordinator.data is None:
+            self.coordinator.data = {}
+        try:
+            if self._restore_type is int:
+                self.coordinator.data[self._data_key] = int(state)
+            elif self._restore_type is float:
+                self.coordinator.data[self._data_key] = float(state)
+            else:
+                self.coordinator.data[self._data_key] = state
+        except (ValueError, TypeError):
+            _LOGGER.debug("Could not restore %s from '%s'", self._data_key, state)
 
     @callback
     def _handle_coordinator_update(self) -> None:
