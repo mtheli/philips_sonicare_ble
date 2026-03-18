@@ -1,0 +1,115 @@
+esphome:
+  name: atom-lite
+  friendly_name: "Atom Lite BLE Bridge"
+
+# ESP-IDF is required (not Arduino) because Bluedroid's notification limit
+# is only configurable via sdkconfig.  Arduino uses precompiled libbt.a with
+# BTA_GATTC_NOTIF_REG_MAX=5 — Sonicare needs 11 subscriptions.
+esp32:
+  board: m5stack-atom
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"    # default 40; Sonicare has ~45 attributes
+      CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"     # default 5; we subscribe to 11 chars
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Atom-Lite-Fallback"
+    password: !secret fallback_password
+
+captive_portal:
+
+# --- BLE ---
+
+esp32_ble:
+  io_capability: no_input_no_output
+  max_notifications: 20
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+    interval: 211ms
+    window: 120ms
+
+# --- BLE Client ---
+# Replace the MAC address with your Sonicare's Bluetooth address.
+# You can find the MAC in the Philips app or via a BLE scanner.
+#
+# No pairing required — Sonicare uses open GATT.
+
+ble_client:
+  - mac_address: "XX:XX:XX:XX:XX:XX"          # <-- Replace with your Sonicare's MAC
+    id: philips_sonicare_ble
+    auto_connect: true
+    on_connect:
+      then:
+        - logger.log: "Connected to Sonicare"
+        - light.turn_on:
+            id: status_led
+            red: 0%
+            green: 100%
+            blue: 0%
+    on_disconnect:
+      then:
+        - logger.log: "Disconnected from Sonicare"
+        - light.turn_on:
+            id: status_led
+            red: 100%
+            green: 0%
+            blue: 0%
+
+# --- Philips Sonicare Component ---
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/mtheli/philips_sonicare_ble
+      ref: main
+      path: esphome/components
+    components: [philips_sonicare]
+    refresh: 0s
+
+philips_sonicare:
+  ble_client_id: philips_sonicare_ble
+  connected:
+    name: "Sonicare Connected"
+
+# --- Hardware: M5Stack Atom Lite ---
+
+# NeoPixel LED (GPIO27) — esp32_rmt_led_strip required for ESP-IDF
+light:
+  - platform: esp32_rmt_led_strip
+    chipset: ws2812
+    rgb_order: GRB
+    pin: GPIO27
+    num_leds: 1
+    id: status_led
+    name: "Status LED"
+    restore_mode: ALWAYS_OFF
+
+# Button (GPIO39)
+binary_sensor:
+  - platform: gpio
+    id: atom_button
+    name: "Button"
+    pin:
+      number: GPIO39
+      inverted: true
+
+# --- Optional: Bluetooth Proxy ---
+# bluetooth_proxy:
+#   active: true

@@ -1,0 +1,95 @@
+esphome:
+  name: esp32-ble-bridge
+  friendly_name: "ESP32 BLE Bridge"
+
+# ESP-IDF is required (not Arduino) because Bluedroid's notification limit
+# is only configurable via sdkconfig.  Arduino uses precompiled libbt.a with
+# BTA_GATTC_NOTIF_REG_MAX=5 — Sonicare needs 11 subscriptions.
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"    # default 40; Sonicare has ~45 attributes
+      CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"     # default 5; we subscribe to 11 chars
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "ESP32-BLE-Bridge-Fallback"
+    password: !secret fallback_password
+
+captive_portal:
+
+# --- BLE ---
+
+esp32_ble:
+  io_capability: no_input_no_output
+  max_notifications: 20
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+    interval: 211ms
+    window: 120ms
+
+ble_client:
+  - mac_address: "XX:XX:XX:XX:XX:XX"       # <-- Replace with your Sonicare's MAC
+    id: philips_sonicare_ble
+    auto_connect: true
+    on_connect:
+      then:
+        - logger.log: "Connected to Sonicare"
+    on_disconnect:
+      then:
+        - logger.log: "Disconnected from Sonicare"
+
+# --- Philips Sonicare Component ---
+# No pairing required — Sonicare uses open GATT.
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/mtheli/philips_sonicare_ble
+      ref: main
+      path: esphome/components
+    components: [philips_sonicare]
+    refresh: 0s                  # always fetch latest code on build
+
+philips_sonicare:
+  ble_client_id: philips_sonicare_ble
+  connected:
+    name: "Sonicare Connected"
+
+# --- Optional: Status LED ---
+# Uncomment and adjust GPIO for your board if you want a status indicator.
+#
+# For boards with a built-in LED (e.g. GPIO2 on many DevKit boards):
+# light:
+#   - platform: binary
+#     output: status_led_output
+#     id: status_led
+#     name: "Status LED"
+#
+# output:
+#   - platform: gpio
+#     id: status_led_output
+#     pin: GPIO2
+
+# --- Optional: Bluetooth Proxy ---
+# The ESP32 can also act as a standard BLE proxy for other sensors
+# (e.g. Xiaomi temperature sensors) while maintaining the Sonicare connection.
+# bluetooth_proxy:
+#   active: true
