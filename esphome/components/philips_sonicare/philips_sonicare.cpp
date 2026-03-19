@@ -256,13 +256,8 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
     }
 
     case ESP_GATTC_NOTIFY_EVT: {
-      // Confirm indication (is_notify==false) before processing — the
-      // toothbrush won't send further indications until it receives the ACK.
-      if (!param->notify.is_notify) {
-        esp_ble_gattc_send_response(
-            this->gattc_if_, this->conn_id_, param->notify.handle,
-            param->notify.value_len, param->notify.value, ESP_GATT_OK);
-      }
+      // Note: indication confirmations (ATT_HANDLE_VALUE_CFM) are sent
+      // automatically by the ESP-IDF GATTC stack — no manual ACK needed.
 
       auto it = this->notify_map_.find(param->notify.handle);
       if (it == this->notify_map_.end())
