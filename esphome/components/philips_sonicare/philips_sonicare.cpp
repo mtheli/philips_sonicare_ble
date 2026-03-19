@@ -120,6 +120,7 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
       this->name_handle_ = 0;
       this->notify_map_.clear();
       this->cccd_map_.clear();
+      this->char_props_map_.clear();
       this->last_notify_ms_.clear();
       char reason_str[5];
       snprintf(reason_str, sizeof(reason_str), "0x%02X", param->disconnect.reason);
@@ -225,17 +226,27 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
 
         auto it = this->cccd_map_.find(param->reg_for_notify.handle);
         if (it != this->cccd_map_.end()) {
-          uint16_t notify_en = 0x0001;
+          // Use 0x0002 for indicate, 0x0001 for notify, 0x0003 for both
+          uint16_t cccd_val = 0x0001;
+          auto props_it = this->char_props_map_.find(param->reg_for_notify.handle);
+          if (props_it != this->char_props_map_.end()) {
+            bool has_notify = props_it->second & ESP_GATT_CHAR_PROP_BIT_NOTIFY;
+            bool has_indicate = props_it->second & ESP_GATT_CHAR_PROP_BIT_INDICATE;
+            if (has_indicate && has_notify)
+              cccd_val = 0x0003;
+            else if (has_indicate)
+              cccd_val = 0x0002;
+          }
           esp_ble_gattc_write_char_descr(
               gattc_if,
               this->parent()->get_conn_id(),
               it->second,
-              sizeof(notify_en),
-              (uint8_t *) &notify_en,
+              sizeof(cccd_val),
+              (uint8_t *) &cccd_val,
               ESP_GATT_WRITE_TYPE_RSP,
               ESP_GATT_AUTH_REQ_NONE);
-          ESP_LOGI(TAG, "CCCD written for handle 0x%04X (descr 0x%04X)",
-                   param->reg_for_notify.handle, it->second);
+          ESP_LOGI(TAG, "CCCD written for handle 0x%04X (descr 0x%04X, value 0x%04X)",
+                   param->reg_for_notify.handle, it->second, cccd_val);
         }
       } else {
         ESP_LOGW(TAG, "Notify registration failed, status=%d",
@@ -245,6 +256,14 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
     }
 
     case ESP_GATTC_NOTIFY_EVT: {
+      // Confirm indication (is_notify==false) before processing — the
+      // toothbrush won't send further indications until it receives the ACK.
+      if (!param->notify.is_notify) {
+        esp_ble_gattc_send_response(
+            this->gattc_if_, this->conn_id_, param->notify.handle,
+            param->notify.value_len, param->notify.value, ESP_GATT_OK);
+      }
+
       auto it = this->notify_map_.find(param->notify.handle);
       if (it == this->notify_map_.end())
         break;
@@ -261,7 +280,8 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
       std::string hex_payload =
           format_hex(param->notify.value, param->notify.value_len);
 
-      ESP_LOGD(TAG, "Notify %s: %s (%d bytes)",
+      ESP_LOGD(TAG, "%s %s: %s (%d bytes)",
+               param->notify.is_notify ? "Notify" : "Indicate",
                it->second.c_str(),
                hex_payload.c_str(), param->notify.value_len);
 
@@ -373,6 +393,7 @@ void PhilipsSonicare::on_subscribe(std::string service_uuid,
              cccd_handle);
   }
   this->cccd_map_[chr->handle] = cccd_handle;
+  this->char_props_map_[chr->handle] = chr->properties;
 
   this->notify_map_[chr->handle] = characteristic_uuid;
 
@@ -552,6 +573,7 @@ void PhilipsSonicare::resubscribe_all_() {
     }
 
     this->cccd_map_[chr->handle] = cccd_handle;
+    this->char_props_map_[chr->handle] = chr->properties;
     this->notify_map_[chr->handle] = chr_uuid_str;
 
     auto status = esp_ble_gattc_register_for_notify(

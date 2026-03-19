@@ -67,6 +67,8 @@ class PhilipsSonicare : public ble_client::BLEClientNode,
   std::map<uint16_t, std::string> notify_map_;
   // char_handle -> cccd_handle for writing notification enable
   std::map<uint16_t, uint16_t> cccd_map_;
+  // char_handle -> characteristic properties (to distinguish notify vs indicate)
+  std::map<uint16_t, uint8_t> char_props_map_;
   // Subscriptions that should be restored after reconnect (service_uuid, char_uuid)
   std::vector<std::pair<std::string, std::string>> desired_subscriptions_;
 
