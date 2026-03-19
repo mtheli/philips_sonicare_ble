@@ -14,7 +14,7 @@
 namespace esphome {
 namespace philips_sonicare {
 
-static const char *const PHILIPS_SONICARE_VERSION = "1.0.0";
+static const char *const PHILIPS_SONICARE_VERSION = "1.1.0";
 
 class PhilipsSonicare : public ble_client::BLEClientNode,
                         public Component,
