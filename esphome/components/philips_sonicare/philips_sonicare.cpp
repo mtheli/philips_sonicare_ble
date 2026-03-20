@@ -219,6 +219,16 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
       break;
     }
 
+    case ESP_GATTC_WRITE_CHAR_EVT: {
+      if (param->write.status == ESP_GATT_OK) {
+        ESP_LOGI(TAG, "Write confirmed for handle 0x%04X", param->write.handle);
+      } else {
+        ESP_LOGW(TAG, "Write FAILED for handle 0x%04X, status=%d",
+                 param->write.handle, param->write.status);
+      }
+      break;
+    }
+
     case ESP_GATTC_REG_FOR_NOTIFY_EVT: {
       if (param->reg_for_notify.status == ESP_GATT_OK) {
         ESP_LOGI(TAG, "Notify registered for handle 0x%04X",
