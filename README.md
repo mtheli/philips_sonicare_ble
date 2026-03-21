@@ -10,7 +10,7 @@ This is a custom component for Home Assistant to integrate **Philips Sonicare BL
 
 | Model | Type | Direct BLE | ESP32 Bridge | Tested by |
 | :--- | :--- | :---: | :---: | :--- |
-| [**DiamondClean 9000 / HX992X**](https://www.philips.com/c-p/HX9911_09/diamondclean-9000-sonic-electric-toothbrush-with-app) | Toothbrush | :white_check_mark: | | Maintainer |
+| [**DiamondClean 9000 / HX992B**](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app/partsandaccessories) | Toothbrush | :white_check_mark: | | Maintainer |
 
 Other BLE-enabled Philips Sonicare toothbrushes using the Legacy protocol (service UUID `477ea600-a260-11e4-ae37-0002a5d50001`) should also work. The integration auto-discovers compatible devices via BLE.
 
@@ -29,12 +29,29 @@ The integration connects to your toothbrush via **Bluetooth Low Energy (BLE)** t
 | Entity | Type | Description |
 | :--- | :--- | :--- |
 | **Handle State** | Sensor | Current state (`Off`, `Standby`, `Running`, `Charging`, `Shutdown`). |
+| **Activity** | Sensor | Composite state derived from handle + brushing state (`Off`, `Standby`, `Brushing`, `Paused`, `Charging`). |
 | **Brushing State** | Sensor | Detailed brushing status (`Off`, `On`, `Pause`, `Session Complete`, `Session Aborted`). |
-| **Brushing Mode** | Sensor | Active cleaning mode (`Clean`, `White+`, `Gum Health`, `Deep Clean+`). |
+| **Brushing Mode** | Sensor | Active cleaning mode (`Clean`, `White+`, `Gum Health`, `Deep Clean+`, `Sensitive`, `Tongue Care`). |
 | **Intensity** | Sensor | Current intensity level (`Low`, `Medium`, `High`). |
 | **Battery Level** | Sensor | Battery charge level (`%`). |
 | **Brushing** | Binary Sensor | Indicates if actively brushing. |
 | **Charging** | Binary Sensor | Indicates if currently charging. |
+| **Pressure Alert** | Binary Sensor | Indicates if too much pressure is applied (during brushing). |
+
+### Controls
+| Entity | Type | Description |
+| :--- | :--- | :--- |
+| **Brushing Mode** | Select | Set the brushing mode for the next session. Shows only modes available on your device. |
+
+### Sensor Data (live during brushing)
+
+These sensors are only available while actively brushing and stream live data from the toothbrush IMU.
+
+| Entity | Type | Description |
+| :--- | :--- | :--- |
+| **Pressure** | Sensor | Brushing pressure force (`g`). |
+| **Pressure State** | Sensor | Pressure classification (`No Contact`, `Optimal`, `Too High`). |
+| **Temperature** | Sensor | Handle temperature (`°C`). |
 
 ### Brushing Session
 | Entity | Type | Description |
@@ -51,17 +68,23 @@ The integration connects to your toothbrush via **Bluetooth Low Energy (BLE)** t
 | **Brush Head Wear** | Sensor | Brush head wear level (`%`, computed from usage/lifetime limit). |
 | **Brush Head Usage** | Sensor | Accumulated brush head usage counter. |
 | **Brush Head Limit** | Sensor | Maximum brush head lifetime. |
+| **Brush Head Type** | Sensor | Brush head type (`Adaptive Clean`, `Adaptive White`, `Tongue Care`, `Adaptive Gums`, `Sensitive`). |
 | **Brush Head Serial** | Sensor | Brush head serial number (from NFC tag). |
 | **Brush Head Date** | Sensor | Brush head manufacturing date. |
 | **Brush Head Ring ID** | Sensor | Color ring identifier (for family brush head tracking). |
+| **Brush Head NFC Version** | Sensor | NFC chip version on the brush head. |
+| **Brush Head Payload** | Sensor | Raw NFC payload data (hex). |
 
 ### Diagnostics
 | Entity | Type | Description |
 | :--- | :--- | :--- |
 | **Motor Runtime** | Sensor | Cumulative motor runtime (seconds). |
-| **Model Number** | Sensor | Device model number (e.g., HX992X). |
+| **Handle Time** | Sensor | Total handle operating time since manufacture (seconds). |
+| **Model Number** | Sensor | Device model number (e.g., HX992B). |
 | **Firmware** | Sensor | Installed firmware version. |
 | **Last Seen** | Sensor | Timestamp of last successful data read. |
+| **RSSI** | Sensor | BLE signal strength in dBm (Direct BLE only). |
+| **Bridge Version** | Sensor | ESP bridge firmware version (ESP Bridge only). |
 
 ---
 
@@ -112,6 +135,10 @@ The integration connects to your toothbrush via **Bluetooth Low Energy (BLE)** t
 | :--- | :--- | :--- |
 | Poll Interval | 60s | How often to poll when live connection is unavailable (30-300s). |
 | Live Updates | Enabled | Use BLE notifications for real-time updates during brushing. |
+| Pressure Sensor | Enabled | Stream live pressure data during brushing. |
+| Temperature Sensor | Enabled | Stream live temperature data during brushing. |
+| Gyroscope Sensor | Disabled | Stream live 6-axis IMU data during brushing (experimental). |
+| Notify Throttle | 500ms | Minimum interval between BLE notification updates (ESP Bridge only, 100-5000ms). |
 
 ---
 
@@ -149,7 +176,7 @@ Toothbrush wakes up
 
 For a detailed technical description of the BLE protocol including all service UUIDs, characteristic reference, data formats, and enum values, see **[PROTOCOL.md](PROTOCOL.md)**.
 
-The protocol was documented through BLE analysis and verified against a real HX992X device.
+The protocol was documented through BLE analysis and verified against a real HX992B device.
 
 ---
 
