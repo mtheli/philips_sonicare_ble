@@ -17,14 +17,20 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.const import UnitOfTime, PERCENTAGE
 
 from .coordinator import PhilipsSonicareCoordinator
+from homeassistant.components.bluetooth import async_last_service_info
+
 from .const import (
     DOMAIN,
     HANDLE_STATES,
     BRUSHING_MODES,
     BRUSHING_STATES,
     INTENSITIES,
+    PRESSURE_ALARM_STATES,
+    BRUSHHEAD_TYPES,
+    CONF_TRANSPORT_TYPE,
+    TRANSPORT_ESP_BRIDGE,
 )
-from .entity import PhilipsSonicareEntity
+from .entity import PhilipsSonicareEntity, PhilipsBrushHeadEntity, PhilipsBridgeEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +42,7 @@ async def async_setup_entry(
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
     entities: list[PhilipsSonicareEntity] = [
+        # Toothbrush handle sensors
         SonicareBatterySensor(coordinator, entry),
         SonicareHandleStateSensor(coordinator, entry),
         SonicareBrushingModeSensor(coordinator, entry),
@@ -47,18 +54,33 @@ async def async_setup_entry(
         SonicareLatestSessionIdSensor(coordinator, entry),
         SonicareSessionCountSensor(coordinator, entry),
         SonicareMotorRuntimeSensor(coordinator, entry),
+        SonicareModelNumberSensor(coordinator, entry),
+        SonicareFirmwareSensor(coordinator, entry),
+        SonicareLastSeenSensor(coordinator, entry),
+        SonicarePressureSensor(coordinator, entry),
+        SonicarePressureStateSensor(coordinator, entry),
+        SonicareTemperatureSensor(coordinator, entry),
+        SonicareHandleTimeSensor(coordinator, entry),
+        SonicareActivitySensor(coordinator, entry),
+        # Brush head sub-device sensors
         SonicareBrushHeadWearSensor(coordinator, entry),
         SonicareBrushHeadUsageSensor(coordinator, entry),
         SonicareBrushHeadLimitSensor(coordinator, entry),
         SonicareBrushHeadSerialSensor(coordinator, entry),
         SonicareBrushHeadDateSensor(coordinator, entry),
         SonicareBrushHeadRingIdSensor(coordinator, entry),
-        SonicareModelNumberSensor(coordinator, entry),
-        SonicareFirmwareSensor(coordinator, entry),
-        SonicareLastSeenSensor(coordinator, entry),
-        SonicarePressureSensor(coordinator, entry),
-        SonicareTemperatureSensor(coordinator, entry),
+        SonicareBrushHeadNfcVersionSensor(coordinator, entry),
+        SonicareBrushHeadTypeSensor(coordinator, entry),
+        SonicareBrushHeadPayloadSensor(coordinator, entry),
     ]
+
+    # RSSI sensor (direct BLE only — ESP bridge has no advertisement RSSI)
+    if entry.data.get(CONF_TRANSPORT_TYPE) != TRANSPORT_ESP_BRIDGE:
+        entities.append(SonicareRssiSensor(coordinator, entry))
+
+    # ESP bridge sub-device sensor (only for ESP transport)
+    if entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE:
+        entities.append(SonicareBridgeVersionSensor(coordinator, entry))
 
     async_add_entities(entities)
 
@@ -364,7 +386,7 @@ class SonicareMotorRuntimeSensor(PhilipsSonicareEntity, SensorEntity):
 # ---------------------------------------------------------------------------
 # Brush Head Wear %
 # ---------------------------------------------------------------------------
-class SonicareBrushHeadWearSensor(PhilipsSonicareEntity, SensorEntity):
+class SonicareBrushHeadWearSensor(PhilipsBrushHeadEntity, SensorEntity):
     """Brush head wear percentage."""
 
     _attr_translation_key = "brushhead_wear"
@@ -388,7 +410,7 @@ class SonicareBrushHeadWearSensor(PhilipsSonicareEntity, SensorEntity):
 # ---------------------------------------------------------------------------
 # Brush Head Usage
 # ---------------------------------------------------------------------------
-class SonicareBrushHeadUsageSensor(PhilipsSonicareEntity, SensorEntity):
+class SonicareBrushHeadUsageSensor(PhilipsBrushHeadEntity, SensorEntity):
     """Brush head lifetime usage (raw value)."""
 
     _attr_translation_key = "brushhead_usage"
@@ -411,7 +433,7 @@ class SonicareBrushHeadUsageSensor(PhilipsSonicareEntity, SensorEntity):
 # ---------------------------------------------------------------------------
 # Brush Head Limit
 # ---------------------------------------------------------------------------
-class SonicareBrushHeadLimitSensor(PhilipsSonicareEntity, SensorEntity):
+class SonicareBrushHeadLimitSensor(PhilipsBrushHeadEntity, SensorEntity):
     """Brush head lifetime limit (raw value)."""
 
     _attr_translation_key = "brushhead_limit"
@@ -434,7 +456,7 @@ class SonicareBrushHeadLimitSensor(PhilipsSonicareEntity, SensorEntity):
 # ---------------------------------------------------------------------------
 # Brush Head Serial
 # ---------------------------------------------------------------------------
-class SonicareBrushHeadSerialSensor(PhilipsSonicareEntity, SensorEntity):
+class SonicareBrushHeadSerialSensor(PhilipsBrushHeadEntity, SensorEntity):
     """Brush head serial number."""
 
     _attr_translation_key = "brushhead_serial"
@@ -456,7 +478,7 @@ class SonicareBrushHeadSerialSensor(PhilipsSonicareEntity, SensorEntity):
 # ---------------------------------------------------------------------------
 # Brush Head Date
 # ---------------------------------------------------------------------------
-class SonicareBrushHeadDateSensor(PhilipsSonicareEntity, SensorEntity):
+class SonicareBrushHeadDateSensor(PhilipsBrushHeadEntity, SensorEntity):
     """Brush head production date."""
 
     _attr_translation_key = "brushhead_date"
@@ -478,7 +500,7 @@ class SonicareBrushHeadDateSensor(PhilipsSonicareEntity, SensorEntity):
 # ---------------------------------------------------------------------------
 # Brush Head Ring ID
 # ---------------------------------------------------------------------------
-class SonicareBrushHeadRingIdSensor(PhilipsSonicareEntity, SensorEntity):
+class SonicareBrushHeadRingIdSensor(PhilipsBrushHeadEntity, SensorEntity):
     """Brush head NFC ring ID."""
 
     _attr_translation_key = "brushhead_ring_id"
@@ -496,6 +518,75 @@ class SonicareBrushHeadRingIdSensor(PhilipsSonicareEntity, SensorEntity):
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("brushhead_ring_id")
+
+
+# ---------------------------------------------------------------------------
+# Brush Head NFC Version
+# ---------------------------------------------------------------------------
+class SonicareBrushHeadNfcVersionSensor(PhilipsBrushHeadEntity, SensorEntity):
+    """Brush head NFC chip version."""
+
+    _attr_translation_key = "brushhead_nfc_version"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:nfc"
+    _data_key = "brushhead_nfc_version"
+    _restore_type = int
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_brushhead_nfc_version"
+
+    @property
+    def native_value(self) -> int | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("brushhead_nfc_version")
+
+
+# ---------------------------------------------------------------------------
+# Brush Head Type
+# ---------------------------------------------------------------------------
+class SonicareBrushHeadTypeSensor(PhilipsBrushHeadEntity, SensorEntity):
+    """Brush head type (adaptive_clean, sensitive, ...)."""
+
+    _attr_translation_key = "brushhead_type"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(BRUSHHEAD_TYPES.values())
+    _attr_icon = "mdi:toothbrush"
+    _data_key = "brushhead_type"
+    _restore_type = str
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_brushhead_type"
+
+    @property
+    def native_value(self) -> str | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("brushhead_type")
+
+
+# ---------------------------------------------------------------------------
+# Brush Head NFC Payload (raw hex)
+# ---------------------------------------------------------------------------
+class SonicareBrushHeadPayloadSensor(PhilipsBrushHeadEntity, SensorEntity):
+    """Brush head NFC payload (raw hex data)."""
+
+    _attr_translation_key = "brushhead_payload"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:nfc-variant"
+    _data_key = "brushhead_payload"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_brushhead_payload"
+
+    @property
+    def native_value(self) -> str | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("brushhead_payload")
 
 
 # ---------------------------------------------------------------------------
@@ -578,6 +669,60 @@ class SonicareLastSeenSensor(PhilipsSonicareEntity, SensorEntity):
 
 
 # ---------------------------------------------------------------------------
+# Activity (composite state derived from handle_state + brushing_state)
+# ---------------------------------------------------------------------------
+_ACTIVITY_STATES = ["initializing", "off", "standby", "brushing", "paused", "charging"]
+
+_ACTIVITY_ICONS = {
+    "initializing": "mdi:loading",
+    "off": "mdi:power-standby",
+    "standby": "mdi:toothbrush",
+    "brushing": "mdi:toothbrush-electric",
+    "paused": "mdi:pause-circle-outline",
+    "charging": "mdi:battery-charging-outline",
+}
+
+
+class SonicareActivitySensor(PhilipsSonicareEntity, SensorEntity):
+    """Composite activity sensor derived from handle_state + brushing_state."""
+
+    _attr_translation_key = "activity"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = _ACTIVITY_STATES
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_activity"
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @property
+    def native_value(self) -> str:
+        data = self.coordinator.data
+        if not data or data.get("handle_state") is None:
+            return "initializing"
+
+        handle = data.get("handle_state")
+        brushing = data.get("brushing_state")
+
+        if handle == "run" or brushing == "on":
+            return "brushing"
+        if brushing == "pause":
+            return "paused"
+        if handle == "charge":
+            return "charging"
+        if handle == "standby":
+            return "standby"
+        return "off"
+
+    @property
+    def icon(self) -> str:
+        return _ACTIVITY_ICONS.get(self.native_value, "mdi:help-circle")
+
+
+# ---------------------------------------------------------------------------
 # Pressure (from sensor data stream 0x4130)
 # ---------------------------------------------------------------------------
 class SonicarePressureSensor(PhilipsSonicareEntity, SensorEntity):
@@ -593,6 +738,12 @@ class SonicarePressureSensor(PhilipsSonicareEntity, SensorEntity):
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{self._device_id}_pressure"
+
+    @property
+    def available(self) -> bool:
+        if not self.coordinator.data:
+            return False
+        return self.coordinator.data.get("brushing_state") == "on"
 
     @property
     def native_value(self) -> int | None:
@@ -619,7 +770,113 @@ class SonicareTemperatureSensor(PhilipsSonicareEntity, SensorEntity):
         self._attr_unique_id = f"{self._device_id}_temperature"
 
     @property
+    def available(self) -> bool:
+        if not self.coordinator.data:
+            return False
+        return self.coordinator.data.get("brushing_state") == "on"
+
+    @property
     def native_value(self) -> float | None:
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("temperature")
+
+
+# ---------------------------------------------------------------------------
+# Pressure State (from sensor data stream 0x4130)
+# ---------------------------------------------------------------------------
+class SonicarePressureStateSensor(PhilipsSonicareEntity, SensorEntity):
+    """Pressure state enum (no_contact, optimal, too_high)."""
+
+    _attr_translation_key = "pressure_state"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(PRESSURE_ALARM_STATES.values())
+    _attr_icon = "mdi:arrow-collapse-down"
+    _data_key = "pressure_state"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_pressure_state"
+
+    @property
+    def available(self) -> bool:
+        if not self.coordinator.data:
+            return False
+        return self.coordinator.data.get("brushing_state") == "on"
+
+    @property
+    def native_value(self) -> str | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("pressure_state")
+
+
+# ---------------------------------------------------------------------------
+# Handle Time (total operating time since manufacture)
+# ---------------------------------------------------------------------------
+class SonicareHandleTimeSensor(PhilipsSonicareEntity, SensorEntity):
+    """Total handle operating time in seconds."""
+
+    _attr_translation_key = "handle_time"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_suggested_display_precision = 0
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:clock-outline"
+    _data_key = "handle_time"
+    _restore_type = int
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_handle_time"
+
+    @property
+    def native_value(self) -> int | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("handle_time")
+
+
+# ---------------------------------------------------------------------------
+# RSSI (BLE signal strength, direct BLE only)
+# ---------------------------------------------------------------------------
+class SonicareRssiSensor(PhilipsSonicareEntity, SensorEntity):
+    """BLE RSSI signal strength."""
+
+    _attr_translation_key = "rssi"
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_native_unit_of_measurement = "dBm"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_rssi"
+
+    @property
+    def native_value(self) -> int | None:
+        service_info = async_last_service_info(self.hass, self._device_id)
+        if service_info is None:
+            return None
+        return service_info.rssi
+
+
+# ---------------------------------------------------------------------------
+# ESP Bridge Version (on bridge sub-device)
+# ---------------------------------------------------------------------------
+class SonicareBridgeVersionSensor(PhilipsBridgeEntity, SensorEntity):
+    """ESP bridge firmware component version."""
+
+    _attr_translation_key = "bridge_version"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:chip"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_bridge_version"
+
+    @property
+    def native_value(self) -> str | None:
+        transport = self.coordinator.transport
+        return getattr(transport, "bridge_version", None)

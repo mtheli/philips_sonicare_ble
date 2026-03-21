@@ -360,10 +360,15 @@ class EspBridgeTransport(SonicareTransport):
                 self._device_connected = ble_connected
                 if not ble_connected:
                     self._cancel_pending_reads()
-            elif status in ("connected", "ready"):
+            elif status == "ready":
+                # Only mark device connected after GATT discovery is
+                # complete ("ready"), not on "connected" (GATT_OPEN_EVT)
+                # which fires before the characteristic table is populated.
                 self._device_connected = True
-                if status == "ready":
-                    self._needs_resubscribe = True
+                self._needs_resubscribe = True
+            elif status == "connected":
+                pass  # GATT discovery still in progress
+
             elif status == "disconnected":
                 self._device_connected = False
                 self._cancel_pending_reads()

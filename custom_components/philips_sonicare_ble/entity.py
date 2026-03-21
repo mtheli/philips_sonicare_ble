@@ -12,7 +12,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 
 from .coordinator import PhilipsSonicareCoordinator
-from .const import DOMAIN, CONF_ADDRESS
+from .const import DOMAIN, CONF_ADDRESS, CONF_TRANSPORT_TYPE, TRANSPORT_ESP_BRIDGE, CONF_ESP_DEVICE_NAME
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,7 +32,10 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator], Resto
         """Initialize the entity."""
         super().__init__(coordinator)
         self.entry = entry
-        self._device_id = entry.data["address"]
+        self._device_id = entry.data.get("address", entry.data.get("esp_device_name", "unknown"))
+        self._is_esp_bridge = (
+            entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
+        )
 
         # Build device name from coordinator data
         model = coordinator.data.get("model_number") if coordinator.data else None
@@ -92,7 +95,16 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator], Resto
     @property
     def available(self) -> bool:
         """Return True if the device is reachable."""
-        # Check if device is advertising via BLE
+        # ESP bridge: use transport state and last_seen, no BLE advertisement check
+        if self._is_esp_bridge:
+            if self.coordinator.transport.is_connected:
+                return True
+            last_seen = self.coordinator.data.get("last_seen") if self.coordinator.data else None
+            if last_seen:
+                return (datetime.now(timezone.utc) - last_seen).total_seconds() < 600
+            return False
+
+        # Direct BLE: check if device is advertising
         service_info = async_last_service_info(self.hass, self._device_id)
         if service_info is not None:
             return True
@@ -103,3 +115,47 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator], Resto
             return (datetime.now(timezone.utc) - last_seen).total_seconds() < 600
 
         return False
+
+
+class PhilipsBrushHeadEntity(PhilipsSonicareEntity):
+    """Base class for entities on the Brush Head sub-device."""
+
+    def __init__(
+        self,
+        coordinator: PhilipsSonicareCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator, entry)
+        # Override device_info to register on the brush head sub-device
+        self._attr_device_info = dr.DeviceInfo(
+            identifiers={(DOMAIN, f"{self._device_id}_brushhead")},
+            manufacturer="Philips",
+            name="Brush Head",
+            via_device=(DOMAIN, self._device_id),
+        )
+
+
+class PhilipsBridgeEntity(PhilipsSonicareEntity):
+    """Base class for entities on the ESP Bridge sub-device."""
+
+    def __init__(
+        self,
+        coordinator: PhilipsSonicareCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator, entry)
+        # Override device_info to register on the bridge sub-device
+        # Linking to the ESPHome parent device is done in __init__.py
+        self._attr_device_info = dr.DeviceInfo(
+            identifiers={(DOMAIN, f"{self._device_id}_bridge")},
+            manufacturer="Espressif",
+            name="ESP Bridge",
+        )
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self.async_write_ha_state()

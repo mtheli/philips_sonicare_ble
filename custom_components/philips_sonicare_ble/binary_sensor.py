@@ -97,6 +97,12 @@ class SonicarePressureAlertBinarySensor(PhilipsSonicareEntity, BinarySensorEntit
         self._attr_unique_id = f"{self._device_id}_pressure_alert"
 
     @property
+    def available(self) -> bool:
+        if not self.coordinator.data:
+            return False
+        return self.coordinator.data.get("brushing_state") == "on"
+
+    @property
     def is_on(self) -> bool | None:
         """Return True if overpressure is detected (alarm byte == 2)."""
         if not self.coordinator.data:

@@ -7,28 +7,55 @@
         "description": "Do you want to add **{name}** to Home Assistant?"
       },
       "user": {
-        "title": "Philips Sonicare BLE",
+        "title": "Add Philips Sonicare",
+        "description": "Choose how to connect to your toothbrush.",
+        "menu_options": {
+          "user_bleak": "Direct Bluetooth",
+          "esp_bridge": "ESP32 Bridge (ESPHome)"
+        }
+      },
+      "user_bleak": {
+        "title": "Direct Bluetooth",
         "description": "Select or enter BLE address of your Sonicare toothbrush.",
         "data": {
           "address": "BLE Address"
         }
       },
+      "esp_bridge": {
+        "title": "ESP32 Bridge (ESPHome)",
+        "description": "Select the ESPHome device that acts as the BLE bridge for your toothbrush.",
+        "data": {
+          "esp_device_name": "ESPHome Bridge Device"
+        },
+        "data_description": {
+          "esp_device_name": "The ESPHome device that runs the Philips Sonicare BLE bridge component."
+        }
+      },
+      "esp_select_device": {
+        "title": "Select BLE Device",
+        "description": "This ESP bridge has multiple Philips devices connected. Select the device you want to add.",
+        "data": {
+          "esp_device_id": "BLE Device"
+        }
+      },
+      "esp_bridge_status": {
+        "title": "Connection via ESP32 Bridge",
+        "description": "Setting up toothbrush via **ESP32 Bridge** ({device_name}).\n\n{status}\n\nClick Submit to read toothbrush capabilities."
+      },
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",
-        "description": "**Device Information**\n\n{device_info}\n\n**Detected Services**\n\n{services}",
+        "description": "Successfully connected to **{name}**{bridge_info}.\n\n**Device Information**\n\n{device_info}\n\n**Detected Services**\n\n{services}",
         "submit": "Set up"
-      },
-      "init": {
-        "title": "Philips Sonicare Options",
-        "data": {
-          "poll_interval": "Poll interval (seconds)",
-          "enable_live_updates": "Enable live updates (BLE notifications)"
-        }
       }
     },
     "error": {
       "cannot_connect": "Could not connect to the toothbrush. Make sure it is awake (press button or place on charger) and in range.",
+      "no_esphome_devices": "No ESPHome devices found. Please set up an ESPHome device with the BLE bridge component first.",
       "unknown": "Unexpected error. Check the logs for details."
+    },
+    "abort": {
+      "already_configured": "Device is already configured.",
+      "already_in_progress": "Configuration flow is already in progress."
     }
   },
   "options": {
@@ -37,7 +64,17 @@
         "title": "Philips Sonicare Options",
         "data": {
           "poll_interval": "Poll interval (seconds)",
-          "enable_live_updates": "Enable live updates (BLE notifications)"
+          "enable_live_updates": "Enable live updates (BLE notifications)",
+          "sensor_pressure": "Enable pressure sensor",
+          "sensor_temperature": "Enable temperature sensor",
+          "sensor_gyroscope": "Enable gyroscope sensor",
+          "notify_throttle_ms": "Notification throttle (ms)"
+        },
+        "data_description": {
+          "sensor_pressure": "Stream pressure data during brushing sessions (0x01).",
+          "sensor_temperature": "Stream temperature data during brushing sessions (0x02).",
+          "sensor_gyroscope": "Stream 6-axis IMU data during brushing sessions (0x04). High bandwidth — may impact ESP performance.",
+          "notify_throttle_ms": "Minimum interval between BLE notification events forwarded by the ESP bridge. Lower values give faster updates but may overload the ESP. Only applies to ESP32 bridge connections."
         }
       }
     }
@@ -63,7 +100,9 @@
           "clean": "Clean",
           "white_plus": "White+",
           "gum_health": "Gum Health",
-          "deep_clean_plus": "Deep Clean+"
+          "deep_clean_plus": "Deep Clean+",
+          "sensitive": "Sensitive",
+          "tongue_care": "Tongue Care"
         }
       },
       "brushing_state": {
@@ -90,22 +129,70 @@
       "latest_session_id": { "name": "Latest Session ID" },
       "session_count": { "name": "Session Count" },
       "motor_runtime": { "name": "Motor Runtime" },
-      "brushhead_wear": { "name": "Brush Head Wear" },
-      "brushhead_usage": { "name": "Brush Head Usage" },
-      "brushhead_limit": { "name": "Brush Head Limit" },
-      "brushhead_serial": { "name": "Brush Head Serial" },
-      "brushhead_date": { "name": "Brush Head Date" },
-      "brushhead_ring_id": { "name": "Brush Head Ring ID" },
+      "brushhead_wear": { "name": "Wear" },
+      "brushhead_usage": { "name": "Usage" },
+      "brushhead_limit": { "name": "Lifetime Limit" },
+      "brushhead_serial": { "name": "Serial" },
+      "brushhead_date": { "name": "Production Date" },
+      "brushhead_ring_id": { "name": "NFC Ring ID" },
+      "brushhead_nfc_version": { "name": "NFC Version" },
+      "brushhead_type": {
+        "name": "Brush Head Type",
+        "state": {
+          "unknown": "Unknown",
+          "adaptive_clean": "Adaptive Clean",
+          "adaptive_white": "Adaptive White",
+          "tongue_care": "Tongue Care",
+          "adaptive_gums": "Adaptive Gums",
+          "sensitive": "Sensitive"
+        }
+      },
+      "brushhead_payload": { "name": "NFC Payload" },
+      "bridge_version": { "name": "Version" },
       "model_number": { "name": "Model Number" },
       "firmware": { "name": "Firmware" },
       "last_seen": { "name": "Last Seen" },
       "pressure": { "name": "Pressure" },
-      "temperature": { "name": "Temperature" }
+      "pressure_state": {
+        "name": "Pressure State",
+        "state": {
+          "no_contact": "No Contact",
+          "optimal": "Optimal",
+          "too_high": "Too High"
+        }
+      },
+      "temperature": { "name": "Temperature" },
+      "handle_time": { "name": "Handle Time" },
+      "activity": {
+        "name": "Activity",
+        "state": {
+          "initializing": "Initializing",
+          "off": "Off",
+          "standby": "Standby",
+          "brushing": "Brushing",
+          "paused": "Paused",
+          "charging": "Charging"
+        }
+      },
+      "rssi": { "name": "RSSI" }
     },
     "binary_sensor": {
       "is_brushing": { "name": "Brushing" },
       "is_charging": { "name": "Charging" },
       "pressure_alert": { "name": "Pressure Alert" }
+    },
+    "select": {
+      "brushing_mode_select": {
+        "name": "Brushing Mode",
+        "state": {
+          "clean": "Clean",
+          "white_plus": "White+",
+          "gum_health": "Gum Health",
+          "deep_clean_plus": "Deep Clean+",
+          "sensitive": "Sensitive",
+          "tongue_care": "Tongue Care"
+        }
+      }
     }
   }
 }

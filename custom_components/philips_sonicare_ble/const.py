@@ -80,7 +80,7 @@ CHAR_SENSOR_UNKNOWN_4140 = "477ea600-a260-11e4-ae37-0002a5d54140"
 
 # ── Brush Head Service (0x0006) ──────────────────────────────────────────────
 CHAR_BRUSHHEAD_NFC_VERSION = "477ea600-a260-11e4-ae37-0002a5d54210"
-CHAR_BRUSHHEAD_FACTORY_MODE = "477ea600-a260-11e4-ae37-0002a5d54220"
+CHAR_BRUSHHEAD_TYPE = "477ea600-a260-11e4-ae37-0002a5d54220"
 CHAR_BRUSHHEAD_SERIAL = "477ea600-a260-11e4-ae37-0002a5d54230"
 CHAR_BRUSHHEAD_DATE = "477ea600-a260-11e4-ae37-0002a5d54240"
 CHAR_BRUSHHEAD_UNKNOWN_4250 = "477ea600-a260-11e4-ae37-0002a5d54250"
@@ -122,6 +122,8 @@ BRUSHING_MODES = {
     1: "white_plus",
     2: "gum_health",
     3: "deep_clean_plus",
+    4: "sensitive",
+    5: "tongue_care",
 }
 
 BRUSHING_STATES = {
@@ -138,13 +140,46 @@ INTENSITIES = {
     2: "high",
 }
 
+PRESSURE_ALARM_STATES = {
+    0: "no_contact",
+    1: "optimal",
+    2: "too_high",
+}
+
+BRUSHHEAD_TYPES = {
+    0: "unknown",
+    1: "adaptive_clean",
+    2: "adaptive_white",
+    3: "tongue_care",
+    4: "adaptive_gums",
+    5: "sensitive",
+}
+
+# Sensor enable bitmask values (written to CHAR_SENSOR_ENABLE 0x4120)
+SENSOR_ENABLE_PRESSURE = 0x01
+SENSOR_ENABLE_TEMPERATURE = 0x02
+SENSOR_ENABLE_GYROSCOPE = 0x04
+SENSOR_ENABLE_DEFAULT = SENSOR_ENABLE_PRESSURE | SENSOR_ENABLE_TEMPERATURE
+
+# ── Brush head chars (re-read after NFC scan completes) ──────────────────────
+BRUSHHEAD_CHARS = [
+    CHAR_BRUSHHEAD_NFC_VERSION,
+    CHAR_BRUSHHEAD_TYPE,
+    CHAR_BRUSHHEAD_SERIAL,
+    CHAR_BRUSHHEAD_DATE,
+    CHAR_BRUSHHEAD_LIFETIME_LIMIT,
+    CHAR_BRUSHHEAD_LIFETIME_USAGE,
+    CHAR_BRUSHHEAD_RING_ID,
+    CHAR_BRUSHHEAD_PAYLOAD,
+]
+
 # ── Characteristic lists for polling/live ────────────────────────────────────
 NOTIFICATION_CHARS = [
     # Priority 1: Core status (must have for basic functionality)
     CHAR_HANDLE_STATE,        # indicate — off/standby/run/charge
     CHAR_BRUSHING_TIME,       # notify — live brushing timer
     CHAR_BRUSHING_STATE,      # notify — on/off/pause/complete/aborted
-    CHAR_SENSOR_DATA,         # notify — pressure/temperature/gyro stream
+    # CHAR_SENSOR_DATA is subscribed dynamically during active sessions only
     # Priority 2: Session details
     CHAR_BRUSHING_MODE,       # indicate — clean/white+/gum/deep
     CHAR_INTENSITY,           # notify — low/medium/high
@@ -184,7 +219,7 @@ POLL_READ_CHARS = [
     CHAR_SESSION_COUNT,
     CHAR_SESSION_TYPE,
     CHAR_BRUSHHEAD_NFC_VERSION,
-    CHAR_BRUSHHEAD_FACTORY_MODE,
+    CHAR_BRUSHHEAD_TYPE,
     CHAR_BRUSHHEAD_SERIAL,
     CHAR_BRUSHHEAD_DATE,
     CHAR_BRUSHHEAD_LIFETIME_LIMIT,
@@ -197,8 +232,8 @@ POLL_READ_CHARS = [
     CHAR_SENSOR_ENABLE,
 ]
 
-# Live monitoring: only read dynamic chars before subscribing.
-# Static data (model, serial, firmware) is read by the poll cycle.
+# Live monitoring: only dynamic chars on reconnect.
+# On first connect, coordinator reads full POLL_READ_CHARS instead.
 LIVE_READ_CHARS = [
     CHAR_BATTERY_LEVEL,
     CHAR_HANDLE_STATE,
@@ -255,7 +290,7 @@ CHAR_SERVICE_MAP: dict[str, str] = {
     CHAR_SENSOR_UNKNOWN_4140: SVC_SENSOR,
     # Brush Head Service (0x0006)
     CHAR_BRUSHHEAD_NFC_VERSION: SVC_BRUSHHEAD,
-    CHAR_BRUSHHEAD_FACTORY_MODE: SVC_BRUSHHEAD,
+    CHAR_BRUSHHEAD_TYPE: SVC_BRUSHHEAD,
     CHAR_BRUSHHEAD_SERIAL: SVC_BRUSHHEAD,
     CHAR_BRUSHHEAD_DATE: SVC_BRUSHHEAD,
     CHAR_BRUSHHEAD_UNKNOWN_4250: SVC_BRUSHHEAD,
@@ -303,3 +338,10 @@ CONF_NOTIFY_THROTTLE = "notify_throttle_ms"
 DEFAULT_NOTIFY_THROTTLE = 500
 MIN_NOTIFY_THROTTLE = 100
 MAX_NOTIFY_THROTTLE = 5000
+
+CONF_SENSOR_PRESSURE = "sensor_pressure"
+CONF_SENSOR_TEMPERATURE = "sensor_temperature"
+CONF_SENSOR_GYROSCOPE = "sensor_gyroscope"
+DEFAULT_SENSOR_PRESSURE = True
+DEFAULT_SENSOR_TEMPERATURE = True
+DEFAULT_SENSOR_GYROSCOPE = False

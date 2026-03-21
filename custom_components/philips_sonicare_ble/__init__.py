@@ -9,18 +9,23 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.helpers import device_registry as dr
 
 from .const import (
     DOMAIN,
     CONF_ADDRESS,
+    CONF_TRANSPORT_TYPE,
+    TRANSPORT_ESP_BRIDGE,
+    CONF_ESP_DEVICE_NAME,
+    CONF_ESP_DEVICE_ID,
     CHAR_SERVICE_MAP,
 )
 from .coordinator import PhilipsSonicareCoordinator
-from .transport import BleakTransport
+from .transport import BleakTransport, EspBridgeTransport
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT]
 
 SERVICE_READ_CHARACTERISTIC = "read_characteristic"
 SERVICE_WRITE_CHARACTERISTIC = "write_characteristic"
@@ -34,10 +39,61 @@ def _get_coordinator(hass: HomeAssistant, entry_id: str | None):
     return first["coordinator"] if first else None
 
 
+def _async_link_via_esp_device(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Link the Sonicare device to its ESP32 bridge in the device registry."""
+    esp_device_name = entry.data[CONF_ESP_DEVICE_NAME]
+    dev_reg = dr.async_get(hass)
+
+    # Find the ESPHome config entry matching our bridge device name
+    esp_mac: str | None = None
+    normalized = esp_device_name.replace("_", "-")
+    for esphome_entry in hass.config_entries.async_entries("esphome"):
+        entry_name = esphome_entry.data.get("device_name", "")
+        if entry_name == esp_device_name or entry_name == normalized:
+            esp_mac = esphome_entry.unique_id
+            break
+
+    if not esp_mac:
+        _LOGGER.debug("ESPHome config entry for '%s' not found", esp_device_name)
+        return
+
+    esp_device = dev_reg.async_get_device(
+        connections={(dr.CONNECTION_NETWORK_MAC, esp_mac)}
+    )
+    if not esp_device:
+        _LOGGER.debug("ESPHome device for '%s' not in registry", esp_device_name)
+        return
+
+    device_id = entry.data.get(CONF_ADDRESS) or esp_device_name
+
+    # Link Sonicare toothbrush device → ESPHome device
+    sonicare_device = dev_reg.async_get_device(
+        identifiers={(DOMAIN, device_id)}
+    )
+    if sonicare_device:
+        dev_reg.async_update_device(sonicare_device.id, via_device_id=esp_device.id)
+        _LOGGER.info("Linked Sonicare device to ESP bridge '%s'", esp_device_name)
+
+    # Link ESP Bridge sub-device → ESPHome device
+    bridge_device = dev_reg.async_get_device(
+        identifiers={(DOMAIN, f"{device_id}_bridge")}
+    )
+    if bridge_device:
+        dev_reg.async_update_device(bridge_device.id, via_device_id=esp_device.id)
+        _LOGGER.info("Linked Bridge sub-device to ESP '%s'", esp_device_name)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Philips Sonicare from a config entry."""
-    address = entry.data["address"]
-    transport = BleakTransport(hass, address)
+    address = entry.data.get("address", "")
+    transport_type = entry.data.get(CONF_TRANSPORT_TYPE)
+
+    if transport_type == TRANSPORT_ESP_BRIDGE:
+        esp_device_name = entry.data[CONF_ESP_DEVICE_NAME]
+        esp_device_id = entry.data.get(CONF_ESP_DEVICE_ID, "")
+        transport = EspBridgeTransport(hass, address, esp_device_name, esp_device_id)
+    else:
+        transport = BleakTransport(hass, address)
 
     coordinator = PhilipsSonicareCoordinator(hass, entry, transport)
 
@@ -48,6 +104,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Link device to ESP bridge in device registry
+    if transport_type == TRANSPORT_ESP_BRIDGE:
+        _async_link_via_esp_device(hass, entry)
 
     # Start polling/live monitoring after platforms are registered
     await coordinator.async_start()
@@ -186,6 +246,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for svc in (SERVICE_READ_CHARACTERISTIC, SERVICE_WRITE_CHARACTERISTIC):
             if hass.services.has_service(DOMAIN, svc):
                 hass.services.async_remove(DOMAIN, svc)
+
+    # Allow re-discovery for direct BLE devices
+    if entry.data.get(CONF_TRANSPORT_TYPE) != TRANSPORT_ESP_BRIDGE:
+        from homeassistant.components.bluetooth import async_rediscover_address
+        async_rediscover_address(hass, entry.data["address"])
 
     _LOGGER.info("Unloading Philips Sonicare integration finished")
     return True

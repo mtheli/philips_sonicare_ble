@@ -35,11 +35,17 @@ from .const import (
     CONF_ESP_DEVICE_NAME,
     CONF_ESP_DEVICE_ID,
     CONF_NOTIFY_THROTTLE,
+    CONF_SENSOR_PRESSURE,
+    CONF_SENSOR_TEMPERATURE,
+    CONF_SENSOR_GYROSCOPE,
     TRANSPORT_BLEAK,
     TRANSPORT_ESP_BRIDGE,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_ENABLE_LIVE_UPDATES,
     DEFAULT_NOTIFY_THROTTLE,
+    DEFAULT_SENSOR_PRESSURE,
+    DEFAULT_SENSOR_TEMPERATURE,
+    DEFAULT_SENSOR_GYROSCOPE,
     MIN_POLL_INTERVAL,
     MAX_POLL_INTERVAL,
     MIN_NOTIFY_THROTTLE,
@@ -714,6 +720,9 @@ class PhilipsSonicareOptionsFlow(OptionsFlow):
             data = {
                 CONF_POLL_INTERVAL: user_input[CONF_POLL_INTERVAL],
                 CONF_ENABLE_LIVE_UPDATES: user_input[CONF_ENABLE_LIVE_UPDATES],
+                CONF_SENSOR_PRESSURE: user_input.get(CONF_SENSOR_PRESSURE, DEFAULT_SENSOR_PRESSURE),
+                CONF_SENSOR_TEMPERATURE: user_input.get(CONF_SENSOR_TEMPERATURE, DEFAULT_SENSOR_TEMPERATURE),
+                CONF_SENSOR_GYROSCOPE: user_input.get(CONF_SENSOR_GYROSCOPE, DEFAULT_SENSOR_GYROSCOPE),
             }
             if is_esp and CONF_NOTIFY_THROTTLE in user_input:
                 data[CONF_NOTIFY_THROTTLE] = int(user_input[CONF_NOTIFY_THROTTLE])
@@ -728,6 +737,18 @@ class PhilipsSonicareOptionsFlow(OptionsFlow):
             vol.Required(
                 CONF_ENABLE_LIVE_UPDATES,
                 default=options.get(CONF_ENABLE_LIVE_UPDATES, DEFAULT_ENABLE_LIVE_UPDATES),
+            ): bool,
+            vol.Required(
+                CONF_SENSOR_PRESSURE,
+                default=options.get(CONF_SENSOR_PRESSURE, DEFAULT_SENSOR_PRESSURE),
+            ): bool,
+            vol.Required(
+                CONF_SENSOR_TEMPERATURE,
+                default=options.get(CONF_SENSOR_TEMPERATURE, DEFAULT_SENSOR_TEMPERATURE),
+            ): bool,
+            vol.Required(
+                CONF_SENSOR_GYROSCOPE,
+                default=options.get(CONF_SENSOR_GYROSCOPE, DEFAULT_SENSOR_GYROSCOPE),
             ): bool,
         }
 
