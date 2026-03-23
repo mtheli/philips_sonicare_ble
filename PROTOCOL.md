@@ -126,6 +126,8 @@ Where `XXXX` is the characteristic or service short ID. Standard BLE characteris
 | 1 | White+ |
 | 2 | Gum Health |
 | 3 | Deep Clean+ |
+| 4 | Sensitive |
+| 5 | Tongue Care |
 
 #### Brushing State Enum (0x4082)
 
