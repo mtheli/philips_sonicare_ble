@@ -6,6 +6,10 @@
 
 This is a custom component for Home Assistant to integrate **Philips Sonicare BLE toothbrushes**.
 
+<p align="center">
+  <img src="screenshots/ToothBrush1.png" alt="Toothbrush device page" width="800">
+</p>
+
 ### Tested Models
 
 | Model | Type | Direct BLE | ESP32 Bridge | Tested by |
@@ -20,6 +24,31 @@ The integration connects to your toothbrush via **Bluetooth Low Energy (BLE)** t
 
 1.  **Direct Bluetooth** -- connects from the HA host's Bluetooth adapter. Uses a persistent live connection with a poll fallback.
 2.  **ESP32 BLE Bridge** -- an ESP32 running ESPHome acts as a wireless BLE relay. Ideal when the toothbrush is out of Bluetooth range of the HA host. -->
+
+---
+
+## Screenshots
+
+<details>
+<summary>Toothbrush sensors & diagnostics</summary>
+
+![Toothbrush sensors](screenshots/ToothBrush2.png)
+
+</details>
+
+<details>
+<summary>Integration overview</summary>
+
+![Integration overview](screenshots/DeviceOverview.png)
+
+</details>
+
+<details>
+<summary>Brush head device</summary>
+
+![Brush head device](screenshots/BrushHead.png)
+
+</details>
 
 ---
 
@@ -41,7 +70,7 @@ The integration connects to your toothbrush via **Bluetooth Low Energy (BLE)** t
 ### Controls
 | Entity | Type | Description |
 | :--- | :--- | :--- |
-| **Brushing Mode** | Select | Set the brushing mode for the next session. Shows only modes available on your device. |
+| **Brushing Mode** | Select | Set the brushing mode for the next session. Shows only modes available on your device. **Disabled by default** -- see [Known Issues](#known-issues). |
 
 ### Sensor Data (live during brushing)
 
@@ -85,6 +114,16 @@ These sensors are only available while actively brushing and stream live data fr
 | **Last Seen** | Sensor | Timestamp of last successful data read. |
 | **RSSI** | Sensor | BLE signal strength in dBm (Direct BLE only). |
 | **Bridge Version** | Sensor | ESP bridge firmware version (ESP Bridge only). |
+
+---
+
+## Dashboard Card
+
+For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.com/mtheli/toothbrush-card) -- a custom Lovelace card with live sector tracking, pressure display, and brush head wear indicator. Works with both Philips Sonicare and Oral-B toothbrushes.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/mtheli/toothbrush-card/main/screenshots/Sonicare.png" alt="Toothbrush Card with Sonicare" width="400">
+</p>
 
 ---
 
@@ -177,6 +216,12 @@ Toothbrush wakes up
 For a detailed technical description of the BLE protocol including all service UUIDs, characteristic reference, data formats, and enum values, see **[PROTOCOL.md](PROTOCOL.md)**.
 
 The protocol was documented through BLE analysis and verified against a real HX992B device.
+
+---
+
+## Known Issues
+
+* **Brushing Mode Select has no effect**: On BrushSync-enabled models (e.g. DiamondClean Smart HX992B), the toothbrush accepts BLE mode writes at the GATT level but ignores them on the firmware level. The brushing mode is determined by the attached brush head (BrushSync) or the physical button. The Select entity is disabled by default. If you have a non-BrushSync model where mode writes work, please open an issue.
 
 ---
 

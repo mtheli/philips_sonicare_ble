@@ -31,6 +31,7 @@ class SonicareBrushingModeSelect(PhilipsSonicareEntity, SelectEntity):
 
     _attr_translation_key = "brushing_mode_select"
     _attr_icon = "mdi:toothbrush-electric"
+    _attr_entity_registry_enabled_default = False
 
     def __init__(
         self,

@@ -615,7 +615,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             ble_connected = info.get("ble_connected") == "true"
             mac = info.get("mac", "")
 
-            ble_status = "Connected" if ble_connected else "Disconnected"
+            ble_status = "\u2705 Connected" if ble_connected else "\u274c Disconnected"
 
             rows = [
                 f"<tr><td><b>Version</b></td><td>v{version}</td></tr>",
