@@ -122,7 +122,7 @@ These sensors are only available while actively brushing and stream live data fr
 For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.com/mtheli/toothbrush-card) -- a custom Lovelace card with live sector tracking, pressure display, and brush head wear indicator. Works with both Philips Sonicare and Oral-B toothbrushes.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/mtheli/toothbrush-card/main/screenshots/Sonicare.png" alt="Toothbrush Card with Sonicare" width="400">
+  <img src="screenshots/Card.png" alt="Toothbrush Card with Sonicare" width="400">
 </p>
 
 ---
