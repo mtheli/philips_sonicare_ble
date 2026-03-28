@@ -4,7 +4,7 @@ DOMAIN = "philips_sonicare_ble"
 
 # ── Discovery ────────────────────────────────────────────────────────────────
 SONICARE_SERVICE_UUIDS = [
-    "477ea600-a260-11e4-ae37-0002a5d50001",  # Sonicare Service (Legacy primary)
+    "477ea600-a260-11e4-ae37-0002a5d50001",  # Sonicare Service (primary)
     "477ea600-a260-11e4-ae37-0002a5d50002",  # Routine Service
     "477ea600-a260-11e4-ae37-0002a5d50004",  # Storage Service
     "477ea600-a260-11e4-ae37-0002a5d50005",  # Sensor Service
@@ -27,7 +27,7 @@ SVC_SENSOR = "477ea600-a260-11e4-ae37-0002a5d50005"
 SVC_BRUSHHEAD = "477ea600-a260-11e4-ae37-0002a5d50006"
 SVC_DIAGNOSTIC = "477ea600-a260-11e4-ae37-0002a5d50007"
 SVC_EXTENDED = "477ea600-a260-11e4-ae37-0002a5d50008"
-SVC_BYTESTREAM_LEGACY = "a651fff1-4074-4131-bce9-56d4261bc7b1"
+SVC_BYTESTREAM = "a651fff1-4074-4131-bce9-56d4261bc7b1"
 
 # ── Standard BLE Characteristics ─────────────────────────────────────────────
 CHAR_BATTERY_LEVEL = "00002a19-0000-1000-8000-00805f9b34fb"

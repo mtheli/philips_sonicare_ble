@@ -1,17 +1,17 @@
 # Philips Sonicare BLE Protocol
 
-This document describes the Bluetooth Low Energy (BLE) GATT protocol used by Philips Sonicare toothbrushes with the **Legacy** protocol. Documented through BLE analysis and verified against a real HX992X (DiamondClean 9000).
+This document describes the Bluetooth Low Energy (BLE) GATT protocol used by Philips Sonicare toothbrushes. Documented through BLE analysis and verified against a real HX992X (DiamondClean 9000).
 
 ## Protocol Variants
 
-Philips uses two BLE protocols for oral care devices:
+Philips Sonicare devices expose two BLE service stacks. Most current models support both simultaneously:
 
-| Protocol | Primary Service UUID | Devices | Method |
-| :--- | :--- | :--- | :--- |
-| **Legacy** (this document) | `477ea600-a260-11e4-ae37-0002a5d50001` | DiamondClean Smart, FlexCare, HX992X | Direct GATT characteristics |
-| **Condor** | `e50ba3c0-af04-4564-92ad-fef019489de6` | Newer models (9900 Prestige) | ByteStreaming binary channel |
+| Protocol | Primary Service UUID | Method |
+| :--- | :--- | :--- |
+| **GATT** (this document) | `477ea600-a260-11e4-ae37-0002a5d50001` | Direct GATT characteristics |
+| **ByteStreaming** | `e50ba3c0-af04-4564-92ad-fef019489de6` | Binary streaming channel (not yet documented) |
 
-This integration supports the **Legacy** protocol.
+This integration uses the **GATT** protocol, which is supported by all known BLE-enabled Sonicare models.
 
 ---
 
@@ -233,7 +233,7 @@ Brush head wear percentage is computed as: `(usage / limit) * 100`
 | `0x4410` | Read, Write | bytes | Unknown |
 | `0x4420` | Read, Write | uint32 LE | Settings |
 
-### ByteStreaming Service (Legacy)
+### ByteStreaming Service
 
 Used for firmware updates and extended data transfer.
 
@@ -301,7 +301,7 @@ The Sonicare app includes a proprietary native library `libwatsonWrapper.so` for
 
 ## References
 
-- [python-sonicare](https://github.com/joushx/python-sonicare) — Python BLE library for Sonicare (Legacy protocol)
+- [python-sonicare](https://github.com/joushx/python-sonicare) — Python BLE library for Sonicare
 - [sonicare-ble-hacs](https://github.com/GrumpyMeow/sonicare-ble-hacs) — Earlier HA integration (unmaintained)
 - [My toothbrush streams gyroscope data](https://blog.johannes-mittendorfer.com/artikel/2020/10/my-toothbrush-streams-gyroscope-data) — Blog post on Sonicare BLE gyroscope streaming
 - [ROBAS-UCLA/Toothbrushing-region-detection](https://github.com/ROBAS-UCLA/Toothbrushing-region-detection) — Academic brushing region detection using IMU

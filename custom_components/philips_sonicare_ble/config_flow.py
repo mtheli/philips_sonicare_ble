@@ -63,7 +63,7 @@ from .const import (
     SVC_BRUSHHEAD,
     SVC_DIAGNOSTIC,
     SVC_EXTENDED,
-    SVC_BYTESTREAM_LEGACY,
+    SVC_BYTESTREAM,
 )
 from .transport import EspBridgeTransport
 from .exceptions import TransportError
@@ -100,7 +100,7 @@ SERVICE_NAMES: dict[str, str] = {
     SVC_BRUSHHEAD.lower(): "Brush Head",
     SVC_DIAGNOSTIC.lower(): "Diagnostic",
     SVC_EXTENDED.lower(): "Extended / Settings",
-    SVC_BYTESTREAM_LEGACY.lower(): "ByteStreaming (Legacy)",
+    SVC_BYTESTREAM.lower(): "ByteStreaming",
 }
 
 # Map each service to one representative characteristic for ESP probing
@@ -273,7 +273,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     f"<tr><td>❌</td><td>{name}</td><td><code>{short}</code></td></tr>"
                 )
 
-        known_all = _EXPECTED_SERVICES | {SVC_BYTESTREAM_LEGACY.lower()}
+        known_all = _EXPECTED_SERVICES | {SVC_BYTESTREAM.lower()}
         for uuid in sorted(fetched_lower - _EXPECTED_SERVICES):
             name = SERVICE_NAMES.get(uuid, "Unknown")
             short = uuid.split("-")[0]

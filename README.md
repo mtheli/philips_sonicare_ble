@@ -16,7 +16,7 @@ This is a custom component for Home Assistant to integrate **Philips Sonicare BL
 | :--- | :--- | :---: | :---: | :--- |
 | [**DiamondClean 9000 / HX992B**](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app/partsandaccessories) | Toothbrush | :white_check_mark: | | Maintainer |
 
-Other BLE-enabled Philips Sonicare toothbrushes using the Legacy protocol (service UUID `477ea600-a260-11e4-ae37-0002a5d50001`) should also work. The integration auto-discovers compatible devices via BLE.
+Any BLE-enabled Philips Sonicare toothbrush should work (DiamondClean Smart, Expert Clean, Sonicare 6500/7100, 9900 Prestige, and more). The integration auto-discovers compatible devices via BLE. If you have a different model — happy to hear your test results!
 
 The integration connects to your toothbrush via **Bluetooth Low Energy (BLE)** to provide battery status, brushing session data, brush head wear tracking, and more. All communication is fully local -- no cloud, no app required.
 
