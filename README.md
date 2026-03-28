@@ -133,7 +133,7 @@ For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.co
 * A Home Assistant instance with the **Bluetooth integration** enabled and a working Bluetooth adapter.
 * **No pairing required** -- the Sonicare uses open GATT without BLE bonding. Simply close any Sonicare phone app to free the BLE connection.
 
-> **Note:** The toothbrush only advertises via BLE when it is awake -- on the charging stand, or shortly after being turned on/off. It enters deep sleep after approximately 20 seconds of inactivity.
+> **Note:** The toothbrush only advertises via BLE for a short time after being picked up from the charger or turned on/off. It enters deep sleep after approximately 20 seconds of inactivity. While on the charging stand, it is **not reachable** via BLE.
 
 ---
 
@@ -158,7 +158,7 @@ For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.co
 
 ### Automatic Discovery
 
-1.  Wake up your toothbrush (place it on the charger or briefly turn it on).
+1.  Wake up your toothbrush (pick it up from the charger or briefly turn it on).
 2.  Navigate to **Settings > Devices & Services**.
 3.  The toothbrush should appear under **Discovered** -- click **Configure**.
 4.  Click **Submit**. The integration connects and reads device information.
@@ -227,7 +227,7 @@ The protocol was documented through BLE analysis and verified against a real HX9
 
 ## Troubleshooting
 
-* **Toothbrush not discovered**: Wake it up by placing it on the charger or briefly turning it on. It must be advertising for HA to detect it.
+* **Toothbrush not discovered**: Wake it up by picking it up from the charger or briefly turning it on. The toothbrush is not reachable via BLE while on the charging stand.
 * **Slow connection**: The toothbrush advertises every 10-30 seconds. The integration connects as soon as the first advertisement is received, but the BLE stack adds ~6 seconds overhead.
 * **Connection drops quickly**: This is normal when the toothbrush is idle. It sleeps after ~20 seconds. The integration will reconnect automatically on the next wake.
 * **Phone app conflict**: The toothbrush supports only one BLE connection. Close or uninstall the Sonicare phone app if you experience connection issues.

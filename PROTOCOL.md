@@ -25,7 +25,7 @@ This integration uses the **GATT** protocol, which is supported by all known BLE
 | **iBeacon** | Yes (Apple Manufacturer ID 76, prefix `0215`, Sonicare UUID as beacon UUID) |
 | **Pairing** | None required (open GATT, `BondInitiator.NONE`) |
 | **Advertisement Interval** | ~10-30 seconds |
-| **Advertisement on charger** | Reduced (primary service UUID only) |
+| **Advertisement on charger** | None (device enters deep sleep shortly after placement) |
 | **Advertisement active/standby** | Full (all service UUIDs) |
 
 ---
@@ -252,10 +252,10 @@ Used for firmware updates and extended data transfer.
 ### Advertisement Pattern
 
 - **Interval:** ~10-30 seconds (very slow compared to typical BLE devices)
-- **On charger:** Reduced advertisement with primary service UUID only (`...0001`)
+- **On charger:** Device enters deep sleep shortly after being placed — no advertisement (unreachable)
 - **Active/standby:** Full advertisement with all service UUIDs
 - **Deep sleep:** No advertisement (device unreachable)
-- **Wake triggers:** Placed on charger, button press, brush head insertion
+- **Wake triggers:** Picked up from charger, button press, brush head insertion
 
 ### Connection Timing
 
