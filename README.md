@@ -234,6 +234,10 @@ The protocol was documented through BLE analysis and verified against a real HX9
 
 ---
 
+## Disclaimer
+
+This is an independent community project and is not affiliated with, endorsed by, or sponsored by Philips. All product names, trademarks, and registered trademarks are property of their respective owners.
+
 ## License
 
 [MIT](LICENSE)
