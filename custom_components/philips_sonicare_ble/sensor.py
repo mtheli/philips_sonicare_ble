@@ -345,6 +345,7 @@ class SonicareSessionCountSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_icon = "mdi:counter"
     _data_key = "session_count"
     _restore_type = int
+    _static_sensor = True
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -371,6 +372,7 @@ class SonicareMotorRuntimeSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_icon = "mdi:engine"
     _data_key = "motor_runtime"
     _restore_type = int
+    _static_sensor = True
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -599,6 +601,7 @@ class SonicareModelNumberSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:information-outline"
     _data_key = "model_number"
+    _static_sensor = True
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -621,6 +624,7 @@ class SonicareFirmwareSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:chip"
     _data_key = "firmware"
+    _static_sensor = True
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -826,6 +830,7 @@ class SonicareHandleTimeSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_icon = "mdi:clock-outline"
     _data_key = "handle_time"
     _restore_type = int
+    _static_sensor = True
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)

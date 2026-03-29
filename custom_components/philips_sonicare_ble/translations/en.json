@@ -139,12 +139,13 @@
       "brushhead_type": {
         "name": "Brush Head Type",
         "state": {
-          "unknown": "Unknown",
           "adaptive_clean": "Adaptive Clean",
           "adaptive_white": "Adaptive White",
-          "tongue_care": "Tongue Care",
           "adaptive_gums": "Adaptive Gums",
-          "sensitive": "Sensitive"
+          "tongue_clean": "Tongue Clean",
+          "premium_all_in_one": "Premium All-in-One",
+          "sensitive": "Sensitive",
+          "non_rfid": "Non-RFID"
         }
       },
       "brushhead_payload": { "name": "NFC Payload" },

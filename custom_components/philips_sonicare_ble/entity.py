@@ -23,6 +23,7 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator], Resto
     _attr_has_entity_name = True
     _data_key: str | None = None
     _restore_type: type = str  # int, float, or str
+    _static_sensor: bool = False
 
     def __init__(
         self,
@@ -95,6 +96,11 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator], Resto
     @property
     def available(self) -> bool:
         """Return True if the device is reachable."""
+        # Static sensors stay available as long as they have data
+        if self._static_sensor and self._data_key:
+            if self.coordinator.data and self.coordinator.data.get(self._data_key) is not None:
+                return True
+
         # ESP bridge: use transport state and last_seen, no BLE advertisement check
         if self._is_esp_bridge:
             if self.coordinator.transport.is_connected:
@@ -119,6 +125,8 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator], Resto
 
 class PhilipsBrushHeadEntity(PhilipsSonicareEntity):
     """Base class for entities on the Brush Head sub-device."""
+
+    _static_sensor = True
 
     def __init__(
         self,

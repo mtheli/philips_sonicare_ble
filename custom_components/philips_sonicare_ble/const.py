@@ -147,12 +147,13 @@ PRESSURE_ALARM_STATES = {
 }
 
 BRUSHHEAD_TYPES = {
-    0: "unknown",
-    1: "adaptive_clean",
-    2: "adaptive_white",
-    3: "tongue_care",
-    4: "adaptive_gums",
+    0: "adaptive_clean",
+    1: "adaptive_white",
+    2: "adaptive_gums",
+    3: "tongue_clean",
+    4: "premium_all_in_one",
     5: "sensitive",
+    6: "non_rfid",
 }
 
 # Sensor enable bitmask values (written to CHAR_SENSOR_ENABLE 0x4120)
