@@ -50,6 +50,7 @@ async def async_setup_entry(
         SonicareIntensitySensor(coordinator, entry),
         SonicareBrushingTimeSensor(coordinator, entry),
         SonicareRoutineLengthSensor(coordinator, entry),
+        SonicareRoutineCountdownSensor(coordinator, entry),
         SonicareSessionIdSensor(coordinator, entry),
         SonicareLatestSessionIdSensor(coordinator, entry),
         SonicareSessionCountSensor(coordinator, entry),
@@ -286,6 +287,36 @@ class SonicareRoutineLengthSensor(PhilipsSonicareEntity, SensorEntity):
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("routine_length")
+
+
+# ---------------------------------------------------------------------------
+# Routine Countdown
+# ---------------------------------------------------------------------------
+class SonicareRoutineCountdownSensor(PhilipsSonicareEntity, SensorEntity):
+    """Remaining brushing time (routine_length - brushing_time)."""
+
+    _attr_translation_key = "routine_countdown"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_suggested_display_precision = 0
+    _data_key = "brushing_time"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_routine_countdown"
+
+    @property
+    def native_value(self) -> int | None:
+        if not self.coordinator.data:
+            return None
+        # Only show countdown during active brushing
+        if self.coordinator.data.get("brushing_state") != "on":
+            return None
+        routine = self.coordinator.data.get("routine_length")
+        elapsed = self.coordinator.data.get("brushing_time")
+        if routine is None or elapsed is None:
+            return None
+        return max(0, routine - elapsed)
 
 
 # ---------------------------------------------------------------------------

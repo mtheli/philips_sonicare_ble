@@ -138,12 +138,20 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     # ------------------------------------------------------------------
     async def _async_fetch_capabilities(self, address: str) -> dict[str, Any]:
         """Connect to the device and read capabilities via direct BLE."""
-        result: dict[str, Any] = {"services": []}
-
+        # Pre-fill services from advertisement data (available before connect)
+        adv_services: list[str] = []
         if self._discovery_info is not None:
+            adv_services = [
+                u.lower() for u in (self._discovery_info.service_uuids or [])
+            ]
+
+        result: dict[str, Any] = {"services": list(adv_services)}
+
+        # Always get the freshest BLEDevice reference — the discovery_info
+        # device may be stale if the user waited before clicking Submit.
+        device = async_ble_device_from_address(self.hass, address)
+        if not device and self._discovery_info is not None:
             device = self._discovery_info.device
-        else:
-            device = async_ble_device_from_address(self.hass, address)
 
         if not device:
             _LOGGER.warning("Device %s not found in range", address)
@@ -153,12 +161,15 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         try:
             client = await bleak_establish(
                 BleakClient, device, "philips_sonicare_ble",
-                use_services_cache=True, timeout=15.0,
+                use_services_cache=True, timeout=30.0,
             )
             if not client or not client.is_connected:
                 return result
 
-            result["services"] = [str(s.uuid).lower() for s in client.services]
+            # GATT services are more complete than advertisement — use them
+            gatt_services = [str(s.uuid).lower() for s in client.services]
+            if gatt_services:
+                result["services"] = gatt_services
 
             for char_uuid, key in (
                 (CHAR_BATTERY_LEVEL, "battery"),
@@ -307,6 +318,20 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             return "Could not read device information"
         return "<table>" + "".join(rows) + "</table>"
 
+    @staticmethod
+    def _has_sonicare_services(data: dict[str, Any]) -> bool:
+        """Check if any Sonicare-specific GATT services were discovered."""
+        services = data.get("services", [])
+        fetched_lower = {s.lower() for s in services} - _STANDARD_BLE_SERVICES
+        return bool(fetched_lower & _EXPECTED_SERVICES)
+
+    @staticmethod
+    def _get_connection_status_text(
+        name: str, bridge_info: str, data: dict[str, Any]
+    ) -> str:
+        """Return connection status message based on fetched data."""
+        return f"✅ Successfully connected to **{name}**{bridge_info}."
+
     # ------------------------------------------------------------------
     # ESP bridge helpers
     # ------------------------------------------------------------------
@@ -357,6 +382,28 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self.context["title_placeholders"] = {"name": self._name}
         return await self.async_step_bluetooth_confirm()
 
+    def _get_adv_status_text(self) -> str:
+        """Determine brush connection state from advertisement data."""
+        if self._discovery_info is None:
+            return "Not connected"
+        adv_uuids = {u.lower() for u in (self._discovery_info.service_uuids or [])}
+        sonicare_extra = {
+            SVC_ROUTINE.lower(), SVC_STORAGE.lower(), SVC_SENSOR.lower(),
+            SVC_BRUSHHEAD.lower(), SVC_DIAGNOSTIC.lower(), SVC_EXTENDED.lower(),
+        }
+        if adv_uuids & sonicare_extra:
+            return "✅ **Active** — keep the toothbrush on and click Submit"
+        if SVC_SONICARE.lower() in adv_uuids:
+            return "💤 **Sleeping** — turn on the toothbrush before clicking Submit"
+        return "Unknown"
+
+    def _get_adv_services_text(self) -> str:
+        """Format advertised services as HTML table."""
+        if self._discovery_info is None:
+            return "No services detected"
+        adv_uuids = [u.lower() for u in (self._discovery_info.service_uuids or [])]
+        return self._get_service_status_text(adv_uuids)
+
     async def async_step_bluetooth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -364,13 +411,22 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is None:
             return self.async_show_form(
                 step_id="bluetooth_confirm",
-                description_placeholders={"name": self._name},
+                description_placeholders={
+                    "name": self._name,
+                    "address": self._address,
+                    "brush_status": self._get_adv_status_text(),
+                    "services": self._get_adv_services_text(),
+                },
             )
 
         errors: dict[str, str] = {}
         try:
             self._fetched_data = await self._async_fetch_capabilities(self._address)
-            if self._fetched_data.get("services"):
+            has_device_info = any(
+                self._fetched_data.get(k)
+                for k in ("model", "serial", "firmware", "battery")
+            )
+            if has_device_info and self._has_sonicare_services(self._fetched_data):
                 self._transport_type = TRANSPORT_BLEAK
                 return await self.async_step_show_capabilities()
             errors["base"] = "cannot_connect"
@@ -380,7 +436,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="bluetooth_confirm",
-            description_placeholders={"name": self._name},
+            description_placeholders={
+                "name": self._name,
+                "address": self._address,
+                "brush_status": self._get_adv_status_text(),
+                "services": self._get_adv_services_text(),
+            },
             errors=errors,
         )
 
@@ -415,7 +476,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
             try:
                 self._fetched_data = await self._async_fetch_capabilities(address)
-                if self._fetched_data.get("services"):
+                has_device_info = any(
+                    self._fetched_data.get(k)
+                    for k in ("model", "serial", "firmware", "battery")
+                )
+                if has_device_info and self._has_sonicare_services(self._fetched_data):
                     self._transport_type = TRANSPORT_BLEAK
                     return await self.async_step_show_capabilities()
                 return self.async_create_entry(
@@ -683,14 +748,18 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         else:
             bridge_info = " via **Direct Bluetooth**"
 
+        connection_status = self._get_connection_status_text(
+            str(self._name), bridge_info, self._fetched_data
+        )
+
         return self.async_show_form(
             step_id="show_capabilities",
             data_schema=vol.Schema({}),
             description_placeholders={
                 "name": str(self._name),
+                "connection_status": connection_status,
                 "device_info": device_info_text,
                 "services": services_text,
-                "bridge_info": bridge_info,
             },
         )
 

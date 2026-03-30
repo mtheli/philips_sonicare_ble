@@ -161,7 +161,7 @@ For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.co
 1.  Wake up your toothbrush (pick it up from the charger or briefly turn it on).
 2.  Navigate to **Settings > Devices & Services**.
 3.  The toothbrush should appear under **Discovered** -- click **Configure**.
-4.  Click **Submit**. The integration connects and reads device information.
+4.  The confirmation dialog shows the current brush status and detected services. Make sure the toothbrush is **turned on** (status shows "Active") before clicking **Submit**.
 
 ### Manual Setup
 

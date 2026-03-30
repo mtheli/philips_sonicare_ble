@@ -119,7 +119,7 @@ class BleakTransport(SonicareTransport):
             service_info.device,
             "philips_sonicare",
             disconnected_callback=_on_disconnect,
-            timeout=15.0,
+            timeout=30.0,
         )
 
     async def disconnect(self) -> None:
@@ -154,7 +154,7 @@ class BleakTransport(SonicareTransport):
         client: BleakClient | None = None
         try:
             client = await bleak_establish(
-                BleakClient, service_info.device, "philips_sonicare", timeout=15.0
+                BleakClient, service_info.device, "philips_sonicare", timeout=30.0
             )
             if not client or not client.is_connected:
                 return results

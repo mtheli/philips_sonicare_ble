@@ -4,7 +4,7 @@
     "step": {
       "bluetooth_confirm": {
         "title": "Confirm Philips Sonicare",
-        "description": "Do you want to add **{name}** to Home Assistant?"
+        "description": "**{name}** discovered at `{address}` via Direct Bluetooth.\n\n**Status:** {brush_status}\n\n**Detected Services**\n\n{services}"
       },
       "user": {
         "title": "Add Philips Sonicare",
@@ -16,7 +16,7 @@
       },
       "user_bleak": {
         "title": "Direct Bluetooth",
-        "description": "Select or enter BLE address of your Sonicare toothbrush.",
+        "description": "Select or enter BLE address of your Sonicare toothbrush.\n\n**Important:** Turn on your toothbrush before clicking Submit. The brush must be active during setup so that services can be read.",
         "data": {
           "address": "BLE Address"
         }
@@ -44,7 +44,7 @@
       },
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",
-        "description": "Successfully connected to **{name}**{bridge_info}.\n\n**Device Information**\n\n{device_info}\n\n**Detected Services**\n\n{services}",
+        "description": "{connection_status}\n\n**Device Information**\n\n{device_info}\n\n**Detected Services**\n\n{services}",
         "submit": "Set up"
       }
     },
@@ -125,6 +125,7 @@
       },
       "brushing_time": { "name": "Brushing Time" },
       "routine_length": { "name": "Routine Length" },
+      "routine_countdown": { "name": "Routine Countdown" },
       "session_id": { "name": "Session ID" },
       "latest_session_id": { "name": "Latest Session ID" },
       "session_count": { "name": "Session Count" },
