@@ -19,7 +19,8 @@ static espbt::ESPBTUUID parse_uuid(const std::string &uuid_str) {
 }
 
 void PhilipsSonicare::setup() {
-  // No SMP/pairing needed — Sonicare uses open GATT
+  // Pairing is model-dependent: DiamondClean Smart uses open GATT,
+  // ExpertClean/Prestige require BLE bonding (handled via on_connect lambda)
 
   this->register_service(&PhilipsSonicare::on_read_characteristic,
                           this->svc_name_("ble_read_char"), {"service_uuid", "char_uuid"});

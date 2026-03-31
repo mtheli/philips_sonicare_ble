@@ -59,7 +59,8 @@ ble_client:
         - logger.log: "Disconnected from Sonicare"
 
 # --- Philips Sonicare Component ---
-# No pairing required — Sonicare uses open GATT.
+# Most models use open GATT (no pairing). Some models (ExpertClean,
+# Prestige) require BLE bonding — add esp_ble_set_encryption() to on_connect.
 
 external_components:
   - source:

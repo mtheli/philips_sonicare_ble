@@ -182,8 +182,10 @@ integration reconnects automatically when the toothbrush wakes up.
 
 Some community ESPHome configs (notably Andrecall/esphome-sonicare) call
 `pair()` or `esp_ble_set_encryption()` in the `on_connect` handler. This is
-unnecessary — the Sonicare uses open GATT without BLE bonding. All
-characteristics are readable/writable with `ESP_GATT_AUTH_REQ_NONE`.
+unnecessary on DiamondClean Smart (HX992X) models which use open GATT.
+However, on models that require BLE bonding (ExpertClean HX962X, Prestige
+HX999X), the `pair()` call is actually needed — Andrecall likely had
+such a model.
 
 The `pair()` call happens to be harmless when using `ble_client` directly
 (the auth failure is handled gracefully), but it contributes to confusion

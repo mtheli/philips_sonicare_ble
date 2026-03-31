@@ -125,7 +125,7 @@ These sensors are only available while actively brushing and stream live data fr
 
 * A compatible Philips Sonicare toothbrush (see [Tested Models](#tested-models) above).
 * **Either** a Home Assistant instance with the **Bluetooth integration** enabled and a working Bluetooth adapter, **or** an ESP32 running the [BLE Bridge component](docs/ESP32_BRIDGE.md).
-* **No pairing required** -- the Sonicare uses open GATT without BLE bonding. Simply close any Sonicare phone app to free the BLE connection.
+* **Pairing depends on the model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X) and some other models require BLE pairing. Simply close any Sonicare phone app to free the BLE connection.
 
 > [!NOTE]
 > The toothbrush only advertises via BLE for a short time after being picked up from the charger or turned on/off. It enters deep sleep after approximately 20 seconds of inactivity. While on the charging stand, it is **not reachable** via BLE.
@@ -174,7 +174,7 @@ The integration supports two connection methods:
 4.  The confirmation dialog shows the current brush status and detected services. Make sure the toothbrush is **turned on** (status shows "Active") before clicking **Submit**.
 
 > [!TIP]
-> No pairing is needed -- unlike Philips Shavers, the Sonicare uses open GATT. Simply close the Sonicare phone app to free the BLE connection, and the integration connects automatically.
+> Most Sonicare models (DiamondClean Smart) use open GATT and connect without pairing. Some models (ExpertClean, Prestige) require BLE bonding -- pairing support is in progress. Simply close the Sonicare phone app to free the BLE connection.
 
 ### Option B: ESP32 BLE Bridge
 
@@ -208,7 +208,7 @@ The Sonicare toothbrush has unique BLE behavior compared to other Philips device
 
 * **Slow advertising** -- the toothbrush sends BLE advertisements only every 10-30 seconds (most BLE devices: every 100-500ms).
 * **Short wake window** -- after turning off, the toothbrush stays connectable for only ~20 seconds before entering deep sleep.
-* **No pairing** -- unlike Philips Shavers, the Sonicare uses open GATT without BLE bonding.
+* **Pairing varies by model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X), Prestige (HX999X), and newer models require BLE pairing.
 
 The integration handles this with:
 

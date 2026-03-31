@@ -168,9 +168,10 @@ Make sure the toothbrush is awake (pick it up from the charger or press the butt
 ```
 
 > [!NOTE]
-> Unlike Philips shavers, the Sonicare uses **open GATT without BLE bonding** —
-> no `auth success` line is expected. The connection is unencrypted and works
-> immediately without pairing.
+> Most Sonicare models (DiamondClean Smart HX992X) use **open GATT without
+> bonding** — no `auth success` line is expected. Some models (ExpertClean
+> HX962X, Prestige HX999X) require BLE pairing — you will see `auth success`
+> in the logs after a successful connection.
 
 The toothbrush only stays awake for ~20 seconds after waking up. Once connected
 with active subscriptions, the connection keeps the toothbrush awake indefinitely.
