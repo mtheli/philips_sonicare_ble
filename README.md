@@ -6,53 +6,57 @@
 
 This is a custom component for Home Assistant to integrate **Philips Sonicare BLE toothbrushes**.
 
-<p align="center">
-  <img src="screenshots/ToothBrush1.png" alt="Toothbrush device page" width="800">
-</p>
-
-### Tested Models
-
-| Model | Type | Direct BLE | ESP32 Bridge | Tested by |
-| :--- | :--- | :---: | :---: | :--- |
-| [**DiamondClean 9000 / HX992B**](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app/partsandaccessories) | Toothbrush | :white_check_mark: | | Maintainer |
-
-Any BLE-enabled Philips Sonicare toothbrush should work (DiamondClean Smart, Expert Clean, Sonicare 6500/7100, 9900 Prestige, and more). The integration auto-discovers compatible devices via BLE. If you have a different model — happy to hear your test results!
-
 The integration connects to your toothbrush via **Bluetooth Low Energy (BLE)** to provide battery status, brushing session data, brush head wear tracking, and more. All communication is fully local -- no cloud, no app required.
 
-<!-- Two connection methods are supported:
+![Device overview in Home Assistant](screenshots/ToothBrush1.png)
 
-1.  **Direct Bluetooth** -- connects from the HA host's Bluetooth adapter. Uses a persistent live connection with a poll fallback.
-2.  **ESP32 BLE Bridge** -- an ESP32 running ESPHome acts as a wireless BLE relay. Ideal when the toothbrush is out of Bluetooth range of the HA host. -->
+Two connection methods are supported:
+
+1.  **Direct Bluetooth** -- connects from the HA host's Bluetooth adapter (built-in or USB). Uses a persistent live connection with a poll fallback.
+2.  **ESP32 BLE Bridge** -- an ESP32 running a custom ESPHome component acts as a wireless BLE relay. Ideal when the toothbrush is out of Bluetooth range of the HA host.
+
+See [Configuration](#configuration) for setup instructions.
 
 ---
 
-## Screenshots
+## Table of Contents
 
-<details>
-<summary>Toothbrush sensors & diagnostics</summary>
+- [Tested Models](#tested-models)
+- [Dashboard Card](#dashboard-card)
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Configuration](#configuration)
+  - [Option A: Direct Bluetooth](#option-a-direct-bluetooth)
+  - [Option B: ESP32 BLE Bridge](#option-b-esp32-ble-bridge)
+- [How It Works](#how-it-works)
+- [Troubleshooting & Caveats](#troubleshooting--caveats)
+- [BLE Protocol](#ble-protocol)
+- [Screenshots](#screenshots)
 
-![Toothbrush sensors](screenshots/ToothBrush2.png)
+---
 
-</details>
+## Tested Models
 
-<details>
-<summary>Integration overview</summary>
+| Model | Type | Direct BLE | ESP32 Bridge | Tested by |
+| :--- | :--- | :---: | :---: | :--- |
+| [**DiamondClean 9000 / HX992B**](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app/partsandaccessories) | Toothbrush | :white_check_mark: | :white_check_mark: | Maintainer |
 
-![Integration overview](screenshots/DeviceOverview.png)
+Any BLE-enabled Philips Sonicare toothbrush should work (DiamondClean Smart, Expert Clean, Sonicare 6500/7100, 9900 Prestige, and more). The integration auto-discovers compatible devices via BLE. If you have a different model — happy to hear your test results!
 
-</details>
+---
 
-<details>
-<summary>Brush head device</summary>
+## Dashboard Card
 
-![Brush head device](screenshots/BrushHead.png)
+For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.com/mtheli/toothbrush-card) -- a custom Lovelace card with live sector tracking, pressure display, and brush head wear indicator. Works with both Philips Sonicare and Oral-B toothbrushes.
 
-</details>
+![Toothbrush Card with Sonicare](screenshots/Card.png)
 
 ---
 
 ## Features
+
+This integration creates a new device for your toothbrush and provides the following entities based on your device's hardware:
 
 ### Main Status
 | Entity | Type | Description |
@@ -117,29 +121,22 @@ These sensors are only available while actively brushing and stream live data fr
 
 ---
 
-## Dashboard Card
-
-For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.com/mtheli/toothbrush-card) -- a custom Lovelace card with live sector tracking, pressure display, and brush head wear indicator. Works with both Philips Sonicare and Oral-B toothbrushes.
-
-<p align="center">
-  <img src="screenshots/Card.png" alt="Toothbrush Card with Sonicare" width="400">
-</p>
-
----
-
 ## Prerequisites
 
 * A compatible Philips Sonicare toothbrush (see [Tested Models](#tested-models) above).
-* A Home Assistant instance with the **Bluetooth integration** enabled and a working Bluetooth adapter.
+* **Either** a Home Assistant instance with the **Bluetooth integration** enabled and a working Bluetooth adapter, **or** an ESP32 running the [BLE Bridge component](docs/ESP32_BRIDGE.md).
 * **No pairing required** -- the Sonicare uses open GATT without BLE bonding. Simply close any Sonicare phone app to free the BLE connection.
 
-> **Note:** The toothbrush only advertises via BLE for a short time after being picked up from the charger or turned on/off. It enters deep sleep after approximately 20 seconds of inactivity. While on the charging stand, it is **not reachable** via BLE.
+> [!NOTE]
+> The toothbrush only advertises via BLE for a short time after being picked up from the charger or turned on/off. It enters deep sleep after approximately 20 seconds of inactivity. While on the charging stand, it is **not reachable** via BLE.
 
 ---
 
 ## Installation
 
 ### HACS (Recommended)
+
+> Don't have HACS yet? Follow the [HACS installation guide](https://hacs.xyz/docs/use/) first.
 
 1.  Go to **HACS** > **Integrations** in your Home Assistant UI.
 2.  Click the three-dot menu in the top right and select **Custom repositories**.
@@ -156,17 +153,39 @@ For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.co
 
 ## Configuration
 
-### Automatic Discovery
+The integration supports two connection methods:
+
+| | Method | Best for |
+| :--- | :--- | :--- |
+| **[Option A](#option-a-direct-bluetooth)** | **Direct Bluetooth** | HA host is within Bluetooth range of the toothbrush (typically 5-10 m / 15-30 ft, less through walls) |
+| **[Option B](#option-b-esp32-ble-bridge)** | **ESP32 BLE Bridge** | Toothbrush is out of range -- a small ESP32 device placed near the toothbrush relays data over WiFi |
+
+> [!IMPORTANT]
+> The standard ESPHome `bluetooth_proxy` is **not compatible** with the Sonicare --
+> the ESP32 crashes during GATT service discovery. Use the dedicated
+> [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) instead.
+
+### Option A: Direct Bluetooth
 
 1.  Wake up your toothbrush (pick it up from the charger or briefly turn it on).
 2.  Navigate to **Settings > Devices & Services**.
 3.  The toothbrush should appear under **Discovered** -- click **Configure**.
+    - If not discovered automatically, click **+ Add Integration**, search for "**Philips Sonicare**", and enter the MAC address manually.
 4.  The confirmation dialog shows the current brush status and detected services. Make sure the toothbrush is **turned on** (status shows "Active") before clicking **Submit**.
 
-### Manual Setup
+> [!TIP]
+> No pairing is needed -- unlike Philips Shavers, the Sonicare uses open GATT. Simply close the Sonicare phone app to free the BLE connection, and the integration connects automatically.
 
-1.  Click **+ Add Integration** and search for "**Philips Sonicare**".
-2.  Enter the BLE MAC address of your toothbrush.
+### Option B: ESP32 BLE Bridge
+
+If your Home Assistant host is too far from the toothbrush for a direct Bluetooth connection, you can use an [ESP32](https://esphome.io/components/esp32.html) as a wireless BLE bridge. The ESP32 connects to the toothbrush and relays data to HA over WiFi.
+
+This is **not** a standard ESPHome Bluetooth Proxy -- it is a dedicated component that manages the BLE connection directly on the ESP32 and provides full read/write/subscribe access to all GATT characteristics.
+
+> [!NOTE]
+> This option requires basic [ESPHome](https://esphome.io/) knowledge (flashing firmware, editing YAML configs). If you're new to ESPHome, check out [Getting Started with ESPHome](https://esphome.io/guides/getting_started_hassio) first.
+
+For the complete setup guide, see **[ESP32 Bridge Setup Guide](docs/ESP32_BRIDGE.md)**.
 
 ### Options
 
@@ -211,26 +230,39 @@ Toothbrush wakes up
 
 ---
 
-## BLE Protocol
-
-For a detailed technical description of the BLE protocol including all service UUIDs, characteristic reference, data formats, and enum values, see **[PROTOCOL.md](PROTOCOL.md)**.
-
-The protocol was documented through BLE analysis and verified against a real HX992B device.
-
----
-
-## Known Issues
-
-* **Brushing Mode Select has no effect**: On BrushSync-enabled models (e.g. DiamondClean Smart HX992B), the toothbrush accepts BLE mode writes at the GATT level but ignores them on the firmware level. The brushing mode is determined by the attached brush head (BrushSync) or the physical button. The Select entity is disabled by default. If you have a non-BrushSync model where mode writes work, please open an issue.
-
----
-
-## Troubleshooting
+## Troubleshooting & Caveats
 
 * **Toothbrush not discovered**: Wake it up by picking it up from the charger or briefly turning it on. The toothbrush is not reachable via BLE while on the charging stand.
 * **Slow connection**: The toothbrush advertises every 10-30 seconds. The integration connects as soon as the first advertisement is received, but the BLE stack adds ~6 seconds overhead.
 * **Connection drops quickly**: This is normal when the toothbrush is idle. It sleeps after ~20 seconds. The integration will reconnect automatically on the next wake.
 * **Phone app conflict**: The toothbrush supports only one BLE connection. Close or uninstall the Sonicare phone app if you experience connection issues.
+* **ESPHome Bluetooth Proxy**: The standard ESPHome `bluetooth_proxy` is not compatible with the Sonicare -- the ESP32 crashes during GATT service discovery. Use the dedicated [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) instead.
+
+### Known Issues
+
+* **Brushing Mode Select has no effect**: On BrushSync-enabled models (e.g. DiamondClean Smart HX992B), the toothbrush accepts BLE mode writes at the GATT level but ignores them on the firmware level. The brushing mode is determined by the attached brush head (BrushSync) or the physical button. The Select entity is disabled by default. If you have a non-BrushSync model where mode writes work, please open an issue.
+
+---
+
+## BLE Protocol
+
+The integration communicates directly via BLE -- no cloud, no app required. All communication is fully local.
+
+The toothbrush exposes multiple GATT services with individual characteristics for each data point (battery, brushing state, pressure, brush head, etc.). Data is read directly from these characteristics and live updates are received via GATT notifications.
+
+For a detailed technical description of the BLE protocol including service UUIDs, characteristic reference, data formats, and enum values, see [PROTOCOL.md](docs/PROTOCOL.md).
+
+---
+
+## Screenshots
+
+| Sensors & Controls | Diagnostics | Dashboard Card |
+| :---: | :---: | :---: |
+| ![Sensors](screenshots/ToothBrush1.png) | ![Diagnostics](screenshots/ToothBrush2.png) | ![Card](screenshots/Card.png) |
+
+| Device Overview | Brush Head |
+| :---: | :---: |
+| ![Overview](screenshots/DeviceOverview.png) | ![Brush Head](screenshots/BrushHead.png) |
 
 ---
 

@@ -40,7 +40,7 @@
       },
       "esp_bridge_status": {
         "title": "Connection via ESP32 Bridge",
-        "description": "Setting up toothbrush via **ESP32 Bridge** ({device_name}).\n\n{status}\n\nClick Submit to read toothbrush capabilities."
+        "description": "Setting up toothbrush via **ESP32 Bridge** ({device_name}).\n\n{status}\n\nMake sure the toothbrush is **turned on** (press button or pick up from charger), then click Submit to read capabilities."
       },
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",

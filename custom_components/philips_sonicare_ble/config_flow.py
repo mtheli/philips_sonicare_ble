@@ -404,10 +404,30 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         adv_uuids = [u.lower() for u in (self._discovery_info.service_uuids or [])]
         return self._get_service_status_text(adv_uuids)
 
+    def _find_esp_bridge(self) -> str | None:
+        """Find an ESP device running the philips_sonicare component."""
+        esphome_entries = self.hass.config_entries.async_entries("esphome")
+        for entry in esphome_entries:
+            device_name = entry.data.get("device_name")
+            if device_name and self._detect_esp_device_ids(device_name):
+                return device_name
+        return None
+
     async def async_step_bluetooth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Confirm Bluetooth discovery."""
+        # If an ESP bridge with our component is available, skip Direct BLE
+        # and go straight to the ESP Bridge flow.
+        esp_device = self._find_esp_bridge()
+        if esp_device:
+            self._esp_device_name = esp_device
+            self._esp_device_ids = self._detect_esp_device_ids(esp_device)
+            if len(self._esp_device_ids) > 1:
+                return await self.async_step_esp_select_device()
+            self._esp_device_id = self._esp_device_ids[0]
+            return await self._esp_bridge_health_check()
+
         if user_input is None:
             return self.async_show_form(
                 step_id="bluetooth_confirm",
