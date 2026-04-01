@@ -807,12 +807,22 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
             ble_status = "\u2705 Connected" if ble_connected else "\u274c Disconnected"
 
+            paired_str = info.get("paired", "")
+            if paired_str == "true":
+                paired_text = "Paired (bonded)"
+            elif paired_str == "false":
+                paired_text = "Open GATT (no pairing)"
+            else:
+                paired_text = ""
+
             rows = [
                 f"<tr><td><b>Version</b></td><td>v{version}</td></tr>",
                 f"<tr><td><b>BLE</b></td><td>{ble_status}</td></tr>",
             ]
             if mac and mac != "00:00:00:00:00:00":
                 rows.append(f"<tr><td><b>MAC</b></td><td><code>{mac}</code></td></tr>")
+            if paired_text:
+                rows.append(f"<tr><td><b>Security</b></td><td>{paired_text}</td></tr>")
 
             status_text = "<table>" + "".join(rows) + "</table>"
         else:
