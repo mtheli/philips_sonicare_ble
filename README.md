@@ -40,9 +40,15 @@ See [Configuration](#configuration) for setup instructions.
 
 | Model | Type | Direct BLE | ESP32 Bridge | Tested by |
 | :--- | :--- | :---: | :---: | :--- |
-| [**DiamondClean 9000 / HX992B**](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app/partsandaccessories) | Toothbrush | :white_check_mark: | :white_check_mark: | Maintainer |
+| [**DiamondClean 9000 / HX992X**](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app/partsandaccessories) | Toothbrush | :white_check_mark: | :white_check_mark: | Maintainer |
+| **Prestige 9900** | Toothbrush | :white_check_mark: | — | Community |
+| **ExpertClean / HX962V** | Toothbrush | — | :white_check_mark: | Community |
+| **HX991M** | Toothbrush | :white_check_mark: | — | Community |
 
-Any BLE-enabled Philips Sonicare toothbrush should work (DiamondClean Smart, Expert Clean, Sonicare 6500/7100, 9900 Prestige, and more). The integration auto-discovers compatible devices via BLE. If you have a different model — happy to hear your test results!
+Any BLE-enabled Philips Sonicare toothbrush should work (DiamondClean Smart, ExpertClean, Sonicare 6500/7100, 9900 Prestige, and more). The integration auto-discovers compatible devices via BLE. If you have a different model — happy to hear your test results!
+
+> [!NOTE]
+> Some models (ExpertClean, HX991M) require **BLE bonding**. The integration detects this automatically and pairs the device during setup. Models like DiamondClean Smart and Prestige 9900 use open GATT and connect without pairing.
 
 ---
 
@@ -174,7 +180,7 @@ The integration supports two connection methods:
 4.  The confirmation dialog shows the current brush status and detected services. Make sure the toothbrush is **turned on** (status shows "Active") before clicking **Submit**.
 
 > [!TIP]
-> Most Sonicare models (DiamondClean Smart) use open GATT and connect without pairing. Some models (ExpertClean, Prestige) require BLE bonding -- pairing support is in progress. Simply close the Sonicare phone app to free the BLE connection.
+> Some models (ExpertClean, HX991M) require BLE bonding -- the integration detects this automatically and pairs the device during setup via D-Bus. If auto-pairing is not available (e.g. HAOS without D-Bus), manual pairing instructions are shown. Simply close the Sonicare phone app to free the BLE connection.
 
 ### Option B: ESP32 BLE Bridge
 
@@ -208,7 +214,7 @@ The Sonicare toothbrush has unique BLE behavior compared to other Philips device
 
 * **Slow advertising** -- the toothbrush sends BLE advertisements only every 10-30 seconds (most BLE devices: every 100-500ms).
 * **Short wake window** -- after turning off, the toothbrush stays connectable for only ~20 seconds before entering deep sleep.
-* **Pairing varies by model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X), Prestige (HX999X), and newer models require BLE pairing.
+* **Pairing varies by model** -- DiamondClean Smart (HX992X) and Prestige 9900 use open GATT without bonding. ExpertClean (HX962X) and HX991M require BLE pairing. The integration handles both cases automatically.
 
 The integration handles this with:
 
@@ -236,6 +242,7 @@ Toothbrush wakes up
 * **Slow connection**: The toothbrush advertises every 10-30 seconds. The integration connects as soon as the first advertisement is received, but the BLE stack adds ~6 seconds overhead.
 * **Connection drops quickly**: This is normal when the toothbrush is idle. It sleeps after ~20 seconds. The integration will reconnect automatically on the next wake.
 * **Phone app conflict**: The toothbrush supports only one BLE connection. Close or uninstall the Sonicare phone app if you experience connection issues.
+* **Pairing issues**: If a model that requires bonding won't connect, remove the toothbrush from your phone's Bluetooth settings first (Settings → Bluetooth → Philips Sonicare → Forget/Unpair). The integration handles stale bonds automatically, but the phone's bond may block the connection.
 * **ESPHome Bluetooth Proxy**: The standard ESPHome `bluetooth_proxy` is not compatible with the Sonicare -- the ESP32 crashes during GATT service discovery. Use the dedicated [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) instead.
 
 ### Known Issues
