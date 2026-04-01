@@ -232,6 +232,7 @@ class EspBridgeTransport(SonicareTransport):
         self._notify_callbacks: dict[str, Callable[[str, bytes], None]] = {}
         self._detected_mac: str | None = None
         self._bridge_version: str | None = None
+        self._ble_paired: str | None = None
         self._needs_resubscribe = False
 
     def _svc_name(self, action: str) -> str:
@@ -262,6 +263,10 @@ class EspBridgeTransport(SonicareTransport):
     @property
     def bridge_version(self) -> str | None:
         return self._bridge_version
+
+    @property
+    def ble_paired(self) -> str | None:
+        return self._ble_paired
 
     @property
     def is_bridge_alive(self) -> bool:
@@ -355,7 +360,11 @@ class EspBridgeTransport(SonicareTransport):
             if not self._esp_alive:
                 self._esp_alive = True
 
-            if status == "heartbeat":
+            if status == "info":
+                paired = event.data.get("paired")
+                if paired is not None:
+                    self._ble_paired = paired
+            elif status == "heartbeat":
                 ble_connected = event.data.get("ble_connected") == "true"
                 self._device_connected = ble_connected
                 if not ble_connected:

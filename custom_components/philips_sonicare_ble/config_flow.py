@@ -715,10 +715,23 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         try:
             await transport.connect()
+            # Request info event (includes paired status)
+            try:
+                await self.hass.services.async_call(
+                    "esphome",
+                    f"{self._esp_device_name}_ble_get_info"
+                    + (f"_{self._esp_device_id}" if self._esp_device_id else ""),
+                    {},
+                    blocking=True,
+                )
+                await asyncio.sleep(1)  # wait for info event
+            except Exception:
+                pass
             self._bridge_info = {
                 "version": transport.bridge_version or "?",
                 "ble_connected": str(transport.is_device_connected).lower(),
                 "mac": transport.detected_mac or "",
+                "paired": transport.ble_paired or "",
             }
         except TransportError:
             _LOGGER.error("ESP bridge not reachable: %s", self._esp_device_name)
@@ -759,6 +772,13 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 else:
                     await self.async_set_unique_id(f"esp_{self._esp_device_name}")
                 self._abort_if_unique_id_configured()
+
+                # Add pairing status from bridge info
+                paired_str = (self._bridge_info or {}).get("paired", "")
+                if paired_str == "true":
+                    capabilities["pairing"] = "bonded"
+                elif paired_str == "false":
+                    capabilities["pairing"] = "open_gatt"
 
                 self._fetched_data = capabilities
                 self._address = sonicare_mac
