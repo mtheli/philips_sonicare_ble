@@ -189,11 +189,7 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
 
     case ESP_GATTC_SEARCH_CMPL_EVT: {
       ESP_LOGI(TAG, "Service discovery complete");
-      // Initiate encryption after service discovery.  For models that
-      // require bonding this triggers the SMP handshake; for models
-      // with open GATT it completes instantly or is a no-op.
-      esp_ble_set_encryption(this->parent()->get_remote_bda(),
-                              ESP_BLE_SEC_ENCRYPT_MITM);
+      this->encryption_requested_ = false;
       if (!this->desired_subscriptions_.empty()) {
         ESP_LOGI(TAG, "Restoring %d notification subscription(s)...",
                  this->desired_subscriptions_.size());
@@ -242,6 +238,16 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
       }
 
       if (param->read.status != ESP_GATT_OK) {
+        // Insufficient Authentication / Encryption → initiate pairing
+        if ((param->read.status == ESP_GATT_INSUF_AUTHENTICATION ||
+             param->read.status == ESP_GATT_INSUF_ENCRYPTION) &&
+            !this->encryption_requested_) {
+          ESP_LOGI(TAG, "Read requires authentication (status=%d) — initiating encryption",
+                   param->read.status);
+          this->encryption_requested_ = true;
+          esp_ble_set_encryption(this->parent()->get_remote_bda(),
+                                  ESP_BLE_SEC_ENCRYPT_MITM);
+        }
         ESP_LOGW(TAG, "Read failed for %s, status=%d",
                  this->pending_char_uuid_.c_str(), param->read.status);
         this->fire_homeassistant_event(

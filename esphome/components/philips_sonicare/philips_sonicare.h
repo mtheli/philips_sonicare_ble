@@ -81,6 +81,9 @@ class PhilipsSonicare : public ble_client::BLEClientNode,
   uint32_t notify_throttle_ms_{500};
   std::map<uint16_t, uint32_t> last_notify_ms_;
 
+  // Encryption: only request after INSUF_AUTH on read (not unconditionally)
+  bool encryption_requested_{false};
+
   // Auth tracking for stale bond detection
   bool auth_completed_{false};
   uint32_t connect_time_ms_{0};
