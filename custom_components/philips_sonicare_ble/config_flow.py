@@ -66,7 +66,7 @@ from .const import (
     SVC_BYTESTREAM,
 )
 from .transport import EspBridgeTransport
-from .exceptions import TransportError
+from .exceptions import NotPairedException, TransportError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -187,8 +187,19 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                         else:
                             result[key] = raw.decode("utf-8", "ignore").strip("\x00 ")
                 except (BleakError, TimeoutError, Exception) as err:
+                    err_msg = str(err).lower()
+                    if any(
+                        hint in err_msg
+                        for hint in (
+                            "0x05", "0x0e", "0x0f",
+                            "insufficient auth", "insufficient enc",
+                        )
+                    ):
+                        raise NotPairedException from err
                     _LOGGER.debug("Failed to read %s: %s", key, err)
 
+        except NotPairedException:
+            raise
         except Exception as err:
             _LOGGER.warning("Could not connect during capabilities fetch: %s", err)
         finally:
@@ -199,6 +210,41 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     pass
 
         return result
+
+    # ------------------------------------------------------------------
+    # BLE pairing helpers
+    # ------------------------------------------------------------------
+    async def _try_auto_pair(self, address: str) -> bool:
+        """Attempt D-Bus auto-pairing. Returns True on success."""
+        from .dbus_pairing import PairingError, async_pair_and_trust, is_dbus_available
+
+        if not is_dbus_available():
+            _LOGGER.debug("D-Bus not available — cannot auto-pair")
+            return False
+
+        try:
+            _LOGGER.info("Auto-pairing %s via D-Bus ...", address)
+            await async_pair_and_trust(address)
+            await asyncio.sleep(2)  # let BlueZ key distribution settle
+            return True
+        except PairingError as err:
+            _LOGGER.warning("Auto-pairing failed for %s: %s", address, err)
+            return False
+
+    async def _fetch_with_pair_retry(self, address: str) -> dict[str, Any]:
+        """Fetch capabilities, auto-pairing on auth errors.
+
+        Raises NotPairedException if pairing fails or is not possible.
+        """
+        try:
+            return await self._async_fetch_capabilities(address)
+        except NotPairedException:
+            if await self._try_auto_pair(address):
+                try:
+                    return await self._async_fetch_capabilities(address)
+                except NotPairedException:
+                    pass
+            raise
 
     # ------------------------------------------------------------------
     # Capabilities fetch (ESP bridge)
@@ -441,7 +487,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         errors: dict[str, str] = {}
         try:
-            self._fetched_data = await self._async_fetch_capabilities(self._address)
+            self._fetched_data = await self._fetch_with_pair_retry(self._address)
             has_device_info = any(
                 self._fetched_data.get(k)
                 for k in ("model", "serial", "firmware", "battery")
@@ -450,6 +496,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._transport_type = TRANSPORT_BLEAK
                 return await self.async_step_show_capabilities()
             errors["base"] = "cannot_connect"
+        except NotPairedException:
+            return await self.async_step_not_paired()
         except Exception:
             _LOGGER.exception("Unexpected error during capabilities fetch")
             errors["base"] = "unknown"
@@ -495,7 +543,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             self._name = address
 
             try:
-                self._fetched_data = await self._async_fetch_capabilities(address)
+                self._fetched_data = await self._fetch_with_pair_retry(address)
                 has_device_info = any(
                     self._fetched_data.get(k)
                     for k in ("model", "serial", "firmware", "battery")
@@ -511,6 +559,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_SERVICES: [],
                     },
                 )
+            except NotPairedException:
+                return await self.async_step_not_paired()
             except Exception:
                 _LOGGER.exception("Unexpected error during manual setup")
                 errors["base"] = "cannot_connect"
@@ -780,6 +830,51 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "connection_status": connection_status,
                 "device_info": device_info_text,
                 "services": services_text,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Pairing fallback (manual instructions)
+    # ------------------------------------------------------------------
+    async def async_step_not_paired(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show manual pairing instructions when auto-pairing failed."""
+        if user_input is not None:
+            # User clicked retry after manual pairing
+            errors: dict[str, str] = {}
+            try:
+                self._fetched_data = await self._async_fetch_capabilities(
+                    self._address
+                )
+                has_device_info = any(
+                    self._fetched_data.get(k)
+                    for k in ("model", "serial", "firmware", "battery")
+                )
+                if has_device_info and self._has_sonicare_services(
+                    self._fetched_data
+                ):
+                    self._transport_type = TRANSPORT_BLEAK
+                    return await self.async_step_show_capabilities()
+                errors["base"] = "cannot_connect"
+            except NotPairedException:
+                errors["base"] = "pairing_failed"
+            except Exception:
+                _LOGGER.exception("Error after manual pairing retry")
+                errors["base"] = "unknown"
+
+            return self.async_show_form(
+                step_id="not_paired",
+                description_placeholders={
+                    "address": self._address or "",
+                },
+                errors=errors,
+            )
+
+        return self.async_show_form(
+            step_id="not_paired",
+            description_placeholders={
+                "address": self._address or "",
             },
         )
 

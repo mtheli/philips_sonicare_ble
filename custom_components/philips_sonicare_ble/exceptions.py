@@ -17,3 +17,7 @@ class CannotConnectException(PhilipsSonicareException):
 
 class TransportError(PhilipsSonicareException):
     """Transport-level error."""
+
+
+class NotPairedException(PhilipsSonicareException):
+    """Device requires BLE bonding but is not paired."""
