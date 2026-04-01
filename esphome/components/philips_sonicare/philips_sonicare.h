@@ -64,6 +64,8 @@ class PhilipsSonicare : public ble_client::BLEClientNode,
   std::string pending_char_uuid_;
   // Cached BLE device name (read from GAP 0x2A00 after service discovery)
   uint16_t name_handle_{0};
+  // Pairing probe handle (Sonicare 0x4010, read after service discovery)
+  uint16_t probe_handle_{0};
   std::string remote_name_;
   // handle -> char_uuid for active notification subscriptions
   std::map<uint16_t, std::string> notify_map_;

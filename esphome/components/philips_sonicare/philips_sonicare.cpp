@@ -210,6 +210,23 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
           }
         }
       }
+      // Pairing probe: read Handle State (0x4010) from the Sonicare
+      // service.  GAP 0x2A00 may be readable without auth, but
+      // proprietary characteristics require bonding on some models.
+      {
+        auto sonicare_svc = espbt::ESPBTUUID::from_raw(
+            "477ea600-a260-11e4-ae37-0002a5d50001");
+        auto handle_state = espbt::ESPBTUUID::from_raw(
+            "477ea600-a260-11e4-ae37-0002a5d54010");
+        auto *chr = this->parent()->get_characteristic(sonicare_svc, handle_state);
+        if (chr) {
+          this->probe_handle_ = chr->handle;
+          esp_ble_gattc_read_char(
+              this->parent()->get_gattc_if(),
+              this->parent()->get_conn_id(),
+              chr->handle, ESP_GATT_AUTH_REQ_NONE);
+        }
+      }
       this->fire_homeassistant_event(
           "esphome.philips_sonicare_ble_status",
           {
@@ -221,27 +238,40 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
     }
 
     case ESP_GATTC_READ_CHAR_EVT: {
-      // Handle device name read (from GAP 0x2A00) — also serves as
-      // pairing probe: success = open GATT, INSUF_AUTH = bonding needed
+      // Handle device name read (GAP 0x2A00) — just for display
       if (this->name_handle_ != 0 && param->read.handle == this->name_handle_) {
         if (param->read.status == ESP_GATT_OK && param->read.value_len > 0) {
           this->remote_name_ = std::string(
               reinterpret_cast<const char *>(param->read.value),
               param->read.value_len);
-          ESP_LOGI(TAG, "Device: %s — open GATT (no pairing required)",
-                   this->remote_name_.c_str());
+          ESP_LOGI(TAG, "Device name: %s", this->remote_name_.c_str());
+        } else {
+          ESP_LOGD(TAG, "Device name read failed, status=%d", param->read.status);
+        }
+        this->name_handle_ = 0;
+        break;
+      }
+
+      // Pairing probe: Handle State (0x4010) from Sonicare service
+      if (this->probe_handle_ != 0 && param->read.handle == this->probe_handle_) {
+        if (param->read.status == ESP_GATT_OK) {
+          const char *state_names[] = {"Off", "Standby", "Running", "Charging", "Shutdown"};
+          uint8_t state = (param->read.value_len > 0) ? param->read.value[0] : 0xFF;
+          const char *state_name = (state <= 4) ? state_names[state] : "Unknown";
+          ESP_LOGI(TAG, "Pairing probe: open GATT (no pairing required) — handle state: %s (%d)",
+                   state_name, state);
         } else if (param->read.status == ESP_GATT_INSUF_AUTHENTICATION ||
                    param->read.status == ESP_GATT_INSUF_ENCRYPTION) {
-          ESP_LOGW(TAG, "Device requires BLE bonding (probe status=%d) — initiating pairing",
+          ESP_LOGW(TAG, "Pairing probe: device requires BLE bonding (status=%d) — initiating pairing",
                    param->read.status);
           this->encryption_requested_ = true;
           this->apply_smp_params_();
           esp_ble_set_encryption(this->parent()->get_remote_bda(),
                                   ESP_BLE_SEC_ENCRYPT_MITM);
         } else {
-          ESP_LOGD(TAG, "Device name read failed, status=%d", param->read.status);
+          ESP_LOGD(TAG, "Pairing probe failed, status=%d", param->read.status);
         }
-        this->name_handle_ = 0;
+        this->probe_handle_ = 0;
         break;
       }
 
