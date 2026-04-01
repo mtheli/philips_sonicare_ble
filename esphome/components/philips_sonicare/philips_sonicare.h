@@ -76,6 +76,7 @@ class PhilipsSonicare : public ble_client::BLEClientNode,
 
   void resubscribe_all_();
   void apply_smp_params_();
+  uint16_t find_cccd_handle_(uint16_t char_handle);
 
   // Notification throttle: min interval between events per characteristic
   uint32_t notify_throttle_ms_{500};

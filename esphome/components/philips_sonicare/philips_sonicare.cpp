@@ -3,6 +3,7 @@
 #include "esphome/core/helpers.h"
 #include "esp_system.h"
 #include "esp_gap_ble_api.h"
+#include "esp_gattc_api.h"
 
 namespace espbt = esphome::esp32_ble_tracker;
 
@@ -457,20 +458,7 @@ void PhilipsSonicare::on_subscribe(std::string service_uuid,
     return;
   }
 
-  // Find CCCD descriptor (0x2902) for this characteristic
-  uint16_t cccd_handle = 0;
-  for (auto *desc : chr->descriptors) {
-    if (desc->uuid == espbt::ESPBTUUID::from_uint16(0x2902)) {
-      cccd_handle = desc->handle;
-      break;
-    }
-  }
-
-  if (cccd_handle == 0) {
-    cccd_handle = chr->handle + 1;
-    ESP_LOGW(TAG, "No CCCD descriptor found, using fallback handle 0x%04X",
-             cccd_handle);
-  }
+  uint16_t cccd_handle = this->find_cccd_handle_(chr->handle);
   this->cccd_map_[chr->handle] = cccd_handle;
   this->char_props_map_[chr->handle] = chr->properties;
 
@@ -643,6 +631,37 @@ void PhilipsSonicare::on_get_info() {
            this->remote_name_.empty() ? "(none)" : this->remote_name_.c_str());
 }
 
+uint16_t PhilipsSonicare::find_cccd_handle_(uint16_t char_handle) {
+  // Try ESP-IDF API first — queries the GATT table directly,
+  // bypassing ESPHome's potentially empty descriptor cache.
+  uint16_t count = 1;
+  esp_gattc_descr_elem_t result;
+  memset(&result, 0, sizeof(result));
+  esp_bt_uuid_t cccd_uuid;
+  cccd_uuid.len = ESP_UUID_LEN_16;
+  cccd_uuid.uuid.uuid16 = 0x2902;
+
+  auto status = esp_ble_gattc_get_descr_by_char_handle(
+      this->parent()->get_gattc_if(),
+      this->parent()->get_conn_id(),
+      char_handle,
+      cccd_uuid,
+      &result,
+      &count);
+
+  if (status == ESP_GATT_OK && count > 0) {
+    ESP_LOGD(TAG, "CCCD found via ESP-IDF API: handle 0x%04X for char 0x%04X",
+             result.handle, char_handle);
+    return result.handle;
+  }
+
+  // Fallback: handle + 1 (standard BLE layout)
+  uint16_t fallback = char_handle + 1;
+  ESP_LOGW(TAG, "CCCD not found via API for char 0x%04X, using fallback 0x%04X",
+           char_handle, fallback);
+  return fallback;
+}
+
 void PhilipsSonicare::resubscribe_all_() {
   for (const auto &entry : this->desired_subscriptions_) {
     const auto &svc_uuid_str = entry.first;
@@ -658,19 +677,7 @@ void PhilipsSonicare::resubscribe_all_() {
       continue;
     }
 
-    uint16_t cccd_handle = 0;
-    for (auto *desc : chr->descriptors) {
-      if (desc->uuid == espbt::ESPBTUUID::from_uint16(0x2902)) {
-        cccd_handle = desc->handle;
-        break;
-      }
-    }
-    if (cccd_handle == 0) {
-      cccd_handle = chr->handle + 1;
-      ESP_LOGW(TAG, "Resubscribe: no CCCD for %s, using fallback 0x%04X",
-               chr_uuid_str.c_str(), cccd_handle);
-    }
-
+    uint16_t cccd_handle = this->find_cccd_handle_(chr->handle);
     this->cccd_map_[chr->handle] = cccd_handle;
     this->char_props_map_[chr->handle] = chr->properties;
     this->notify_map_[chr->handle] = chr_uuid_str;
