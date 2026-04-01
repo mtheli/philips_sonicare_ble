@@ -257,15 +257,21 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             if paired is False:
                 _LOGGER.info("Device %s known to BlueZ but not paired — pairing first", address)
                 if await self._try_auto_pair(address):
-                    return await self._async_fetch_capabilities(address)
+                    result = await self._async_fetch_capabilities(address)
+                    result["pairing"] = "bonded"
+                    return result
                 raise NotPairedException
 
         try:
-            return await self._async_fetch_capabilities(address)
+            result = await self._async_fetch_capabilities(address)
+            result["pairing"] = "open_gatt"
+            return result
         except NotPairedException:
             if await self._try_auto_pair(address):
                 try:
-                    return await self._async_fetch_capabilities(address)
+                    result = await self._async_fetch_capabilities(address)
+                    result["pairing"] = "bonded"
+                    return result
                 except NotPairedException:
                     pass
             raise
@@ -384,6 +390,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             rows.append(f"<tr><td><b>Firmware</b></td><td>{firmware}</td></tr>")
         if (battery := data.get("battery")) is not None:
             rows.append(f"<tr><td><b>Battery</b></td><td>{battery}%</td></tr>")
+        pairing = data.get("pairing")
+        if pairing == "bonded":
+            rows.append("<tr><td><b>BLE Security</b></td><td>Paired (bonded)</td></tr>")
+        elif pairing == "open_gatt":
+            rows.append("<tr><td><b>BLE Security</b></td><td>Open GATT (no pairing)</td></tr>")
         if not rows:
             return "Could not read device information"
         return "<table>" + "".join(rows) + "</table>"
