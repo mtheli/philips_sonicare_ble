@@ -220,13 +220,23 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
     }
 
     case ESP_GATTC_READ_CHAR_EVT: {
-      // Handle device name read (from GAP 0x2A00)
+      // Handle device name read (from GAP 0x2A00) — also serves as
+      // pairing probe: success = open GATT, INSUF_AUTH = bonding needed
       if (this->name_handle_ != 0 && param->read.handle == this->name_handle_) {
         if (param->read.status == ESP_GATT_OK && param->read.value_len > 0) {
           this->remote_name_ = std::string(
               reinterpret_cast<const char *>(param->read.value),
               param->read.value_len);
-          ESP_LOGI(TAG, "Device name: %s", this->remote_name_.c_str());
+          ESP_LOGI(TAG, "Device: %s — open GATT (no pairing required)",
+                   this->remote_name_.c_str());
+        } else if (param->read.status == ESP_GATT_INSUF_AUTHENTICATION ||
+                   param->read.status == ESP_GATT_INSUF_ENCRYPTION) {
+          ESP_LOGW(TAG, "Device requires BLE bonding (probe status=%d) — initiating pairing",
+                   param->read.status);
+          this->encryption_requested_ = true;
+          this->apply_smp_params_();
+          esp_ble_set_encryption(this->parent()->get_remote_bda(),
+                                  ESP_BLE_SEC_ENCRYPT_MITM);
         } else {
           ESP_LOGD(TAG, "Device name read failed, status=%d", param->read.status);
         }
@@ -700,7 +710,7 @@ void PhilipsSonicare::gap_event_handler(esp_gap_ble_cb_event_t event,
         break;
 
       if (auth.success) {
-        ESP_LOGI(TAG, "Authentication complete (mode=%d)", auth.auth_mode);
+        ESP_LOGI(TAG, "Pairing successful — device bonded (auth_mode=%d)", auth.auth_mode);
         this->auth_completed_ = true;
         this->rapid_disconnect_count_ = 0;
         this->auth_fail_count_ = 0;
