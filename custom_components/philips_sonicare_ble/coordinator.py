@@ -78,6 +78,7 @@ from .const import (
     CONF_ENABLE_LIVE_UPDATES,
     CONF_TRANSPORT_TYPE,
     TRANSPORT_ESP_BRIDGE,
+    MIN_BRIDGE_VERSION,
     CONF_NOTIFY_THROTTLE,
     DEFAULT_POLL_INTERVAL,
     DEFAULT_ENABLE_LIVE_UPDATES,
@@ -562,6 +563,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                     if self._is_esp_bridge:
                         self._update_bridge_device_version()
+                        self._check_bridge_version()
                         # Clear the resubscribe flag that was set by the
                         # initial "ready" event — we just completed a fresh
                         # setup, so there is nothing to re-subscribe.
@@ -640,6 +642,41 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         if bridge_device:
             dev_reg.async_update_device(bridge_device.id, sw_version=version)
+
+    def _check_bridge_version(self) -> None:
+        """Create or clear a HA repair issue if the ESP bridge firmware is outdated."""
+        assert isinstance(self.transport, EspBridgeTransport)
+        version = self.transport.bridge_version
+        if not version:
+            return
+        from packaging.version import Version
+        try:
+            outdated = Version(version) < Version(MIN_BRIDGE_VERSION)
+        except Exception:
+            _LOGGER.debug("Cannot parse bridge version '%s'", version)
+            return
+        from homeassistant.helpers import issue_registry as ir
+        if outdated:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                "esp_bridge_outdated",
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="esp_bridge_outdated",
+                translation_placeholders={
+                    "version": version,
+                    "min_version": MIN_BRIDGE_VERSION,
+                },
+            )
+            _LOGGER.warning(
+                "ESP bridge v%s is outdated (minimum: v%s) — "
+                "rebuild and flash your ESPHome device",
+                version,
+                MIN_BRIDGE_VERSION,
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, "esp_bridge_outdated")
 
     async def _wait_before_retry(self, backoff: int) -> bool:
         """Wait before retrying live connection.
