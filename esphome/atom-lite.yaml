@@ -51,8 +51,9 @@ esp32_ble_tracker:
 # Replace the MAC address with your Sonicare's Bluetooth address.
 # You can find the MAC in the Philips app or via a BLE scanner.
 #
-# Most models use open GATT (no pairing). Some models (ExpertClean,
-# Prestige) require BLE bonding — add esp_ble_set_encryption() to on_connect.
+# BLE bonding is handled automatically by the component.  Models that
+# require bonding (ExpertClean, HX991M) are paired via SMP after service
+# discovery; models with open GATT (DiamondClean) work as before.
 
 ble_client:
   - mac_address: "XX:XX:XX:XX:XX:XX"          # <-- Replace with your Sonicare's MAC

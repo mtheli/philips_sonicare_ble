@@ -14,7 +14,7 @@
 namespace esphome {
 namespace philips_sonicare {
 
-static const char *const PHILIPS_SONICARE_VERSION = "1.1.0";
+static const char *const PHILIPS_SONICARE_VERSION = "1.2.0";
 
 class PhilipsSonicare : public ble_client::BLEClientNode,
                         public Component,
@@ -30,6 +30,8 @@ class PhilipsSonicare : public ble_client::BLEClientNode,
   void gattc_event_handler(esp_gattc_cb_event_t event,
                             esp_gatt_if_t gattc_if,
                             esp_ble_gattc_cb_param_t *param) override;
+  void gap_event_handler(esp_gap_ble_cb_event_t event,
+                          esp_ble_gap_cb_param_t *param) override;
 
   void on_read_characteristic(std::string service_uuid,
                                std::string characteristic_uuid);
@@ -73,10 +75,24 @@ class PhilipsSonicare : public ble_client::BLEClientNode,
   std::vector<std::pair<std::string, std::string>> desired_subscriptions_;
 
   void resubscribe_all_();
+  void apply_smp_params_();
 
   // Notification throttle: min interval between events per characteristic
   uint32_t notify_throttle_ms_{500};
   std::map<uint16_t, uint32_t> last_notify_ms_;
+
+  // Auth tracking for stale bond detection
+  bool auth_completed_{false};
+  uint32_t connect_time_ms_{0};
+  uint8_t rapid_disconnect_count_{0};
+  static const uint8_t MAX_RAPID_DISCONNECTS = 3;
+  static const uint32_t RAPID_DISCONNECT_THRESHOLD_MS = 5000;
+
+  // Auth failure backoff: disable reconnection after repeated failures
+  uint8_t auth_fail_count_{0};
+  uint32_t backoff_until_ms_{0};
+  static const uint8_t MAX_AUTH_FAILURES = 3;
+  static const uint32_t AUTH_BACKOFF_MS = 60000;  // 60 seconds
 
   // Heartbeat: periodic status event to HA
   static const uint32_t HEARTBEAT_INTERVAL_MS = 15000;

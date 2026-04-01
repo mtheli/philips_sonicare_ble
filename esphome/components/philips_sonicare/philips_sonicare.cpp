@@ -2,6 +2,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include "esp_system.h"
+#include "esp_gap_ble_api.h"
 
 namespace espbt = esphome::esp32_ble_tracker;
 
@@ -18,9 +19,32 @@ static espbt::ESPBTUUID parse_uuid(const std::string &uuid_str) {
   return espbt::ESPBTUUID::from_raw(uuid_str);
 }
 
+void PhilipsSonicare::apply_smp_params_() {
+  // LE Secure Connections pairing parameters.
+  // Models that don't need bonding (e.g. DiamondClean) will simply
+  // skip the pairing handshake.  Models that require bonding (e.g.
+  // ExpertClean, HX991M) negotiate the best supported level.
+  uint8_t auth_req = 0x2D;  // Bond(1) | MITM(4) | SC(8) | CT2(0x20)
+  esp_ble_io_cap_t io_cap = ESP_IO_CAP_IO;  // DisplayYesNo
+  uint8_t key_size = 16;
+  uint8_t init_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
+  uint8_t rsp_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
+
+  esp_ble_gap_set_security_param(ESP_BLE_SM_AUTHEN_REQ_MODE,
+                                  &auth_req, sizeof(auth_req));
+  esp_ble_gap_set_security_param(ESP_BLE_SM_IOCAP_MODE,
+                                  &io_cap, sizeof(io_cap));
+  esp_ble_gap_set_security_param(ESP_BLE_SM_MAX_KEY_SIZE,
+                                  &key_size, sizeof(key_size));
+  esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY,
+                                  &init_key, sizeof(init_key));
+  esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY,
+                                  &rsp_key, sizeof(rsp_key));
+  ESP_LOGD(TAG, "SMP parameters applied (auth=0x%02X, io_cap=%d)", auth_req, io_cap);
+}
+
 void PhilipsSonicare::setup() {
-  // Pairing is model-dependent: DiamondClean Smart uses open GATT,
-  // ExpertClean/Prestige require BLE bonding (handled via on_connect lambda)
+  this->apply_smp_params_();
 
   this->register_service(&PhilipsSonicare::on_read_characteristic,
                           this->svc_name_("ble_read_char"), {"service_uuid", "char_uuid"});
@@ -39,6 +63,14 @@ void PhilipsSonicare::setup() {
 
 void PhilipsSonicare::loop() {
   uint32_t now = millis();
+
+  // Auth failure backoff recovery
+  if (this->backoff_until_ms_ != 0 && now >= this->backoff_until_ms_) {
+    ESP_LOGI(TAG, "Auth backoff expired — re-enabling BLE");
+    this->backoff_until_ms_ = 0;
+    this->auth_fail_count_ = 0;
+    this->parent()->set_enabled(true);
+  }
 
   if ((now - this->last_heartbeat_ms_) >= HEARTBEAT_INTERVAL_MS) {
     this->last_heartbeat_ms_ = now;
@@ -93,6 +125,10 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
   switch (event) {
     case ESP_GATTC_OPEN_EVT: {
       if (param->open.status == ESP_GATT_OK) {
+        // Re-apply SMP params before service discovery triggers pairing
+        this->apply_smp_params_();
+        this->auth_completed_ = false;
+        this->connect_time_ms_ = millis();
         ESP_LOGI(TAG, "Connected to Sonicare (%s)", this->get_device_mac_().c_str());
         this->connected_ = true;
         if (this->connected_sensor_ != nullptr)
@@ -110,6 +146,21 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
     }
 
     case ESP_GATTC_DISCONNECT_EVT: {
+      // Stale bond detection: if auth never completed and disconnect
+      // was rapid, the bond keys may be out of sync.
+      if (!this->auth_completed_ && this->connect_time_ms_ != 0) {
+        uint32_t elapsed = millis() - this->connect_time_ms_;
+        if (elapsed < RAPID_DISCONNECT_THRESHOLD_MS) {
+          this->rapid_disconnect_count_++;
+          ESP_LOGW(TAG, "Rapid disconnect without auth (%d/%d)",
+                   this->rapid_disconnect_count_, MAX_RAPID_DISCONNECTS);
+          if (this->rapid_disconnect_count_ >= MAX_RAPID_DISCONNECTS) {
+            ESP_LOGW(TAG, "Removing stale bond for %s", this->get_device_mac_().c_str());
+            esp_ble_remove_bond_device(this->parent()->get_remote_bda());
+            this->rapid_disconnect_count_ = 0;
+          }
+        }
+      }
       ESP_LOGW(TAG, "Disconnected from Sonicare (reason=0x%02X). "
                "%d subscription(s) will be restored on reconnect.",
                param->disconnect.reason,
@@ -137,6 +188,11 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
 
     case ESP_GATTC_SEARCH_CMPL_EVT: {
       ESP_LOGI(TAG, "Service discovery complete");
+      // Initiate encryption after service discovery.  For models that
+      // require bonding this triggers the SMP handshake; for models
+      // with open GATT it completes instantly or is a no-op.
+      esp_ble_set_encryption(this->parent()->get_remote_bda(),
+                              ESP_BLE_SEC_ENCRYPT_MITM);
       if (!this->desired_subscriptions_.empty()) {
         ESP_LOGI(TAG, "Restoring %d notification subscription(s)...",
                  this->desired_subscriptions_.size());
@@ -596,6 +652,53 @@ void PhilipsSonicare::resubscribe_all_() {
       this->notify_map_.erase(chr->handle);
       this->cccd_map_.erase(chr->handle);
     }
+  }
+}
+
+void PhilipsSonicare::gap_event_handler(esp_gap_ble_cb_event_t event,
+                                         esp_ble_gap_cb_param_t *param) {
+  switch (event) {
+    case ESP_GAP_BLE_NC_REQ_EVT: {
+      ESP_LOGI(TAG, "Numeric Comparison request — auto-confirming (passkey %06lu)",
+               (unsigned long) param->ble_security.key_notif.passkey);
+      esp_ble_confirm_reply(param->ble_security.key_notif.bd_addr, true);
+      break;
+    }
+
+    case ESP_GAP_BLE_AUTH_CMPL_EVT: {
+      auto &auth = param->ble_security.auth_cmpl;
+      // Only handle events for our device
+      auto *our_bda = this->parent()->get_remote_bda();
+      if (memcmp(auth.bd_addr, our_bda, 6) != 0)
+        break;
+
+      if (auth.success) {
+        ESP_LOGI(TAG, "Authentication complete (mode=%d)", auth.auth_mode);
+        this->auth_completed_ = true;
+        this->rapid_disconnect_count_ = 0;
+        this->auth_fail_count_ = 0;
+      } else {
+        ESP_LOGW(TAG, "Authentication FAILED (reason=0x%X)", auth.fail_reason);
+        esp_ble_remove_bond_device(auth.bd_addr);
+        this->auth_fail_count_++;
+        if (this->auth_fail_count_ >= MAX_AUTH_FAILURES) {
+          ESP_LOGE(TAG, "Too many auth failures (%d) — backing off for %lus",
+                   this->auth_fail_count_, AUTH_BACKOFF_MS / 1000);
+          this->backoff_until_ms_ = millis() + AUTH_BACKOFF_MS;
+          this->parent()->set_enabled(false);
+          this->fire_homeassistant_event(
+              "esphome.philips_sonicare_ble_status",
+              {
+                  {"status", "auth_failed"},
+                  {"mac", this->get_device_mac_()},
+              });
+        }
+      }
+      break;
+    }
+
+    default:
+      break;
   }
 }
 
