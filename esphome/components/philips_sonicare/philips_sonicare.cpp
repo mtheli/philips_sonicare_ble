@@ -44,7 +44,6 @@ void PhilipsSonicare::apply_smp_params_() {
 }
 
 void PhilipsSonicare::setup() {
-  this->apply_smp_params_();
 
   this->register_service(&PhilipsSonicare::on_read_characteristic,
                           this->svc_name_("ble_read_char"), {"service_uuid", "char_uuid"});
@@ -125,8 +124,6 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
   switch (event) {
     case ESP_GATTC_OPEN_EVT: {
       if (param->open.status == ESP_GATT_OK) {
-        // Re-apply SMP params before service discovery triggers pairing
-        this->apply_smp_params_();
         this->auth_completed_ = false;
         this->connect_time_ms_ = millis();
         ESP_LOGI(TAG, "Connected to Sonicare (%s)", this->get_device_mac_().c_str());
@@ -205,7 +202,7 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
           auto status = esp_ble_gattc_read_char(
               this->parent()->get_gattc_if(),
               this->parent()->get_conn_id(),
-              chr->handle, ESP_GATT_AUTH_REQ_NO_MITM);
+              chr->handle, ESP_GATT_AUTH_REQ_NONE);
           if (status != ESP_GATT_OK) {
             ESP_LOGD(TAG, "Failed to initiate device name read: %d", status);
             this->name_handle_ = 0;
@@ -245,6 +242,7 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
           ESP_LOGI(TAG, "Read requires authentication (status=%d) — initiating encryption",
                    param->read.status);
           this->encryption_requested_ = true;
+          this->apply_smp_params_();
           esp_ble_set_encryption(this->parent()->get_remote_bda(),
                                   ESP_BLE_SEC_ENCRYPT_MITM);
         }
@@ -318,7 +316,7 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
               sizeof(cccd_val),
               (uint8_t *) &cccd_val,
               ESP_GATT_WRITE_TYPE_RSP,
-              ESP_GATT_AUTH_REQ_NO_MITM);
+              ESP_GATT_AUTH_REQ_NONE);
           ESP_LOGI(TAG, "CCCD written for handle 0x%04X (descr 0x%04X, value 0x%04X)",
                    param->reg_for_notify.handle, it->second, cccd_val);
         }
@@ -412,7 +410,7 @@ void PhilipsSonicare::on_read_characteristic(std::string service_uuid,
       this->parent()->get_gattc_if(),
       this->parent()->get_conn_id(),
       chr->handle,
-      ESP_GATT_AUTH_REQ_NO_MITM);
+      ESP_GATT_AUTH_REQ_NONE);
 
   if (status != ESP_OK) {
     ESP_LOGW(TAG, "Read request failed: %d", status);
@@ -567,7 +565,7 @@ void PhilipsSonicare::on_write_characteristic(std::string service_uuid,
       bytes.size(),
       bytes.data(),
       ESP_GATT_WRITE_TYPE_RSP,
-      ESP_GATT_AUTH_REQ_NO_MITM);
+      ESP_GATT_AUTH_REQ_NONE);
 
   if (status != ESP_OK) {
     ESP_LOGW(TAG, "Write request failed: %d", status);
