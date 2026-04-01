@@ -84,7 +84,7 @@ class PhilipsSonicare : public ble_client::BLEClientNode,
   // Encryption: only request after INSUF_AUTH on read (not unconditionally)
   bool encryption_requested_{false};
 
-  // Auth tracking for stale bond detection
+  // Auth tracking
   bool auth_completed_{false};
   uint32_t connect_time_ms_{0};
   uint8_t rapid_disconnect_count_{0};

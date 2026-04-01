@@ -236,12 +236,14 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
 
       if (param->read.status != ESP_GATT_OK) {
         // Insufficient Authentication / Encryption → initiate pairing
+        // and retry the read after successful auth (don't report error yet)
         if ((param->read.status == ESP_GATT_INSUF_AUTHENTICATION ||
              param->read.status == ESP_GATT_INSUF_ENCRYPTION) &&
             !this->encryption_requested_) {
           ESP_LOGI(TAG, "Read requires authentication (status=%d) — initiating encryption",
                    param->read.status);
           this->encryption_requested_ = true;
+          this->pending_handle_ = 0;
           this->apply_smp_params_();
           esp_ble_set_encryption(this->parent()->get_remote_bda(),
                                   ESP_BLE_SEC_ENCRYPT_MITM);
