@@ -23,7 +23,7 @@ This integration uses the **GATT** protocol, which is supported by all known BLE
 | **Local Name** | `Philips Sonicare` or `Philips OHC` |
 | **Primary Service UUID** | `477ea600-a260-11e4-ae37-0002a5d50001` |
 | **iBeacon** | Yes (Apple Manufacturer ID 76, prefix `0215`, Sonicare UUID as beacon UUID) |
-| **Pairing** | Model-dependent: DiamondClean Smart (HX992X) uses open GATT; ExpertClean (HX962X), Prestige (HX999X) and newer models require BLE bonding |
+| **Pairing** | Model-dependent: DiamondClean Smart (HX992X) and Prestige 9900 use open GATT; ExpertClean (HX962V) and HX991M require BLE bonding |
 | **Advertisement Interval** | ~10-30 seconds |
 | **Advertisement on charger** | None (device enters deep sleep shortly after placement) |
 | **Advertisement active/standby** | Full (all service UUIDs) |
