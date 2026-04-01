@@ -148,17 +148,18 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
     case ESP_GATTC_DISCONNECT_EVT: {
       // Stale bond detection: if auth never completed and disconnect
       // was rapid, the bond keys may be out of sync.
-      if (!this->auth_completed_ && this->connect_time_ms_ != 0) {
-        uint32_t elapsed = millis() - this->connect_time_ms_;
-        if (elapsed < RAPID_DISCONNECT_THRESHOLD_MS) {
-          this->rapid_disconnect_count_++;
-          ESP_LOGW(TAG, "Rapid disconnect without auth (%d/%d)",
-                   this->rapid_disconnect_count_, MAX_RAPID_DISCONNECTS);
-          if (this->rapid_disconnect_count_ >= MAX_RAPID_DISCONNECTS) {
-            ESP_LOGW(TAG, "Removing stale bond for %s", this->get_device_mac_().c_str());
-            esp_ble_remove_bond_device(this->parent()->get_remote_bda());
-            this->rapid_disconnect_count_ = 0;
-          }
+      if (this->auth_completed_ ||
+          this->connect_time_ms_ == 0 ||
+          (millis() - this->connect_time_ms_) > RAPID_DISCONNECT_THRESHOLD_MS) {
+        this->rapid_disconnect_count_ = 0;
+      } else {
+        this->rapid_disconnect_count_++;
+        ESP_LOGW(TAG, "Rapid disconnect without auth (%d/%d)",
+                 this->rapid_disconnect_count_, MAX_RAPID_DISCONNECTS);
+        if (this->rapid_disconnect_count_ >= MAX_RAPID_DISCONNECTS) {
+          ESP_LOGW(TAG, "Removing stale bond for %s", this->get_device_mac_().c_str());
+          esp_ble_remove_bond_device(this->parent()->get_remote_bda());
+          this->rapid_disconnect_count_ = 0;
         }
       }
       ESP_LOGW(TAG, "Disconnected from Sonicare (reason=0x%02X). "
@@ -208,7 +209,7 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
           auto status = esp_ble_gattc_read_char(
               this->parent()->get_gattc_if(),
               this->parent()->get_conn_id(),
-              chr->handle, ESP_GATT_AUTH_REQ_NONE);
+              chr->handle, ESP_GATT_AUTH_REQ_NO_MITM);
           if (status != ESP_GATT_OK) {
             ESP_LOGD(TAG, "Failed to initiate device name read: %d", status);
             this->name_handle_ = 0;
@@ -311,7 +312,7 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
               sizeof(cccd_val),
               (uint8_t *) &cccd_val,
               ESP_GATT_WRITE_TYPE_RSP,
-              ESP_GATT_AUTH_REQ_NONE);
+              ESP_GATT_AUTH_REQ_NO_MITM);
           ESP_LOGI(TAG, "CCCD written for handle 0x%04X (descr 0x%04X, value 0x%04X)",
                    param->reg_for_notify.handle, it->second, cccd_val);
         }
@@ -405,7 +406,7 @@ void PhilipsSonicare::on_read_characteristic(std::string service_uuid,
       this->parent()->get_gattc_if(),
       this->parent()->get_conn_id(),
       chr->handle,
-      ESP_GATT_AUTH_REQ_NONE);
+      ESP_GATT_AUTH_REQ_NO_MITM);
 
   if (status != ESP_OK) {
     ESP_LOGW(TAG, "Read request failed: %d", status);
@@ -560,7 +561,7 @@ void PhilipsSonicare::on_write_characteristic(std::string service_uuid,
       bytes.size(),
       bytes.data(),
       ESP_GATT_WRITE_TYPE_RSP,
-      ESP_GATT_AUTH_REQ_NONE);
+      ESP_GATT_AUTH_REQ_NO_MITM);
 
   if (status != ESP_OK) {
     ESP_LOGW(TAG, "Write request failed: %d", status);
@@ -586,10 +587,30 @@ void PhilipsSonicare::on_get_info() {
   char throttle_str[16];
   snprintf(throttle_str, sizeof(throttle_str), "%u", this->notify_throttle_ms_);
 
+  // Check bond status
+  int bond_count = esp_ble_get_bond_device_num();
+  bool is_paired = false;
+  if (bond_count > 0) {
+    esp_ble_bond_dev_t *bonded = (esp_ble_bond_dev_t *) malloc(
+        bond_count * sizeof(esp_ble_bond_dev_t));
+    if (bonded) {
+      esp_ble_get_bond_device_list(&bond_count, bonded);
+      auto *our_bda = this->parent()->get_remote_bda();
+      for (int i = 0; i < bond_count; i++) {
+        if (memcmp(bonded[i].bd_addr, our_bda, 6) == 0) {
+          is_paired = true;
+          break;
+        }
+      }
+      free(bonded);
+    }
+  }
+
   std::map<std::string, std::string> info = {
       {"status", "info"},
       {"version", PHILIPS_SONICARE_VERSION},
       {"ble_connected", this->connected_ ? "true" : "false"},
+      {"paired", is_paired ? "true" : "false"},
       {"mac", this->get_device_mac_()},
       {"uptime_s", std::string(uptime_str)},
       {"free_heap", std::string(heap_str)},
@@ -686,11 +707,16 @@ void PhilipsSonicare::gap_event_handler(esp_gap_ble_cb_event_t event,
                    this->auth_fail_count_, AUTH_BACKOFF_MS / 1000);
           this->backoff_until_ms_ = millis() + AUTH_BACKOFF_MS;
           this->parent()->set_enabled(false);
+          char fail_str[4], backoff_str[8];
+          snprintf(fail_str, sizeof(fail_str), "%d", this->auth_fail_count_);
+          snprintf(backoff_str, sizeof(backoff_str), "%lu", AUTH_BACKOFF_MS / 1000);
           this->fire_homeassistant_event(
               "esphome.philips_sonicare_ble_status",
               {
                   {"status", "auth_failed"},
                   {"mac", this->get_device_mac_()},
+                  {"fail_count", std::string(fail_str)},
+                  {"backoff_s", std::string(backoff_str)},
               });
         }
       }

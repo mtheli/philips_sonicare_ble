@@ -46,10 +46,16 @@
         "title": "Philips Sonicare — {name}",
         "description": "{connection_status}\n\n**Device Information**\n\n{device_info}\n\n**Detected Services**\n\n{services}",
         "submit": "Set up"
+      },
+      "not_paired": {
+        "title": "BLE Pairing Required",
+        "description": "Your toothbrush at `{address}` requires **BLE bonding** before characteristics can be read. Auto-pairing was not successful.\n\nPlease pair manually via SSH:\n\n```\nbluetoothctl pair {address}\nbluetoothctl trust {address}\n```\n\nMake sure the toothbrush is **awake** (press button) while pairing. Then click **Retry**.",
+        "submit": "Retry"
       }
     },
     "error": {
       "cannot_connect": "Could not connect to the toothbrush. Make sure it is awake (press button or place on charger) and in range.",
+      "pairing_failed": "Device is still not paired. Make sure the toothbrush is awake and try pairing again.",
       "no_esphome_devices": "No ESPHome devices found. Please set up an ESPHome device with the BLE bridge component first.",
       "unknown": "Unexpected error. Check the logs for details."
     },

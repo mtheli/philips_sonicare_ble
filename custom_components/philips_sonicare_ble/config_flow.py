@@ -192,14 +192,22 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                         hint in err_msg
                         for hint in (
                             "0x05", "0x0e", "0x0f",
+                            "unlikely error",
                             "insufficient auth", "insufficient enc",
+                            "not permitted", "authentication", "security",
                         )
-                    ):
+                    ) or (client and client.is_connected):
                         raise NotPairedException from err
                     _LOGGER.debug("Failed to read %s: %s", key, err)
 
         except NotPairedException:
             raise
+        except (BleakError, TimeoutError) as err:
+            err_msg = str(err).lower()
+            if "failed to discover services" in err_msg:
+                _LOGGER.warning("Service discovery failed (stale bond?): %s", err)
+                raise NotPairedException from err
+            _LOGGER.warning("Could not connect during capabilities fetch: %s", err)
         except Exception as err:
             _LOGGER.warning("Could not connect during capabilities fetch: %s", err)
         finally:
@@ -234,8 +242,24 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     async def _fetch_with_pair_retry(self, address: str) -> dict[str, Any]:
         """Fetch capabilities, auto-pairing on auth errors.
 
+        Uses a D-Bus pre-check to skip the slow connect attempt when the
+        device is known to be unpaired.  Falls back to probe-read error
+        detection if the pre-check is inconclusive.
+
         Raises NotPairedException if pairing fails or is not possible.
         """
+        from .dbus_pairing import async_is_device_paired, is_dbus_available
+
+        # Fast path: if BlueZ already knows the device is unpaired,
+        # pair first instead of waiting 30s for a failed connect.
+        if is_dbus_available():
+            paired = await async_is_device_paired(address)
+            if paired is False:
+                _LOGGER.info("Device %s known to BlueZ but not paired — pairing first", address)
+                if await self._try_auto_pair(address):
+                    return await self._async_fetch_capabilities(address)
+                raise NotPairedException
+
         try:
             return await self._async_fetch_capabilities(address)
         except NotPairedException:
