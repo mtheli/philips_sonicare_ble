@@ -148,7 +148,7 @@ class BleakTransport(SonicareTransport):
         results: dict[str, bytes | None] = {u: None for u in char_uuids}
         service_info = async_last_service_info(self._hass, self._address)
         if not service_info:
-            _LOGGER.warning("Device %s not in range", self._address)
+            _LOGGER.debug("Device %s not in range", self._address)
             return results
 
         client: BleakClient | None = None
