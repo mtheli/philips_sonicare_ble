@@ -374,7 +374,11 @@ class EspBridgeTransport(SonicareTransport):
                 # complete ("ready"), not on "connected" (GATT_OPEN_EVT)
                 # which fires before the characteristic table is populated.
                 self._device_connected = True
-                self._needs_resubscribe = True
+                # Only flag resubscribe if HA has no active subscriptions.
+                # The bridge re-fires "ready" on every heartbeat when it
+                # has no subscriptions — ignore if HA already subscribed.
+                if not self._notify_callbacks:
+                    self._needs_resubscribe = True
             elif status == "connected":
                 pass  # GATT discovery still in progress
 
