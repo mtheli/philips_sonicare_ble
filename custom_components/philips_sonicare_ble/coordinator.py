@@ -611,9 +611,15 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     continue
 
                 except Exception as err:
-                    _LOGGER.error(
-                        "Live monitoring error: %s - retrying in %ds", err, backoff
-                    )
+                    err_msg = str(err).lower()
+                    if "no longer reachable" in err_msg or "connection slot" in err_msg:
+                        _LOGGER.debug(
+                            "Device not reachable (likely sleeping) - retrying in %ds", backoff
+                        )
+                    else:
+                        _LOGGER.warning(
+                            "Live monitoring error: %s - retrying in %ds", err, backoff
+                        )
                     try:
                         await self.transport.disconnect()
                     except Exception:
