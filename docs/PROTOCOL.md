@@ -1,6 +1,6 @@
 # Philips Sonicare BLE Protocol
 
-This document describes the Bluetooth Low Energy (BLE) GATT protocol used by Philips Sonicare toothbrushes. Documented through BLE analysis and verified against a real HX992X (DiamondClean 9000).
+This document describes the Bluetooth Low Energy (BLE) GATT protocol used by Philips Sonicare toothbrushes. Documented through BLE analysis and verified against a real HX992X (DiamondClean 9000) and HX6340 (Sonicare For Kids).
 
 ## Protocol Variants
 
@@ -23,7 +23,7 @@ This integration uses the **GATT** protocol, which is supported by all known BLE
 | **Local Name** | `Philips Sonicare` or `Philips OHC` |
 | **Primary Service UUID** | `477ea600-a260-11e4-ae37-0002a5d50001` |
 | **iBeacon** | Yes (Apple Manufacturer ID 76, prefix `0215`, Sonicare UUID as beacon UUID) |
-| **Pairing** | Model-dependent: DiamondClean Smart (HX992X) and Prestige 9900 use open GATT; ExpertClean (HX962V) and HX991M require BLE bonding |
+| **Pairing** | Model-dependent: DiamondClean Smart (HX992X), Prestige 9900, and Sonicare For Kids (HX6340) use open GATT; ExpertClean (HX962V) and HX991M require BLE bonding |
 | **Advertisement Interval** | ~10-30 seconds |
 | **Advertisement on charger** | None (device enters deep sleep shortly after placement) |
 | **Advertisement active/standby** | Full (all service UUIDs) |
@@ -58,6 +58,22 @@ Where `XXXX` is the characteristic or service short ID. Standard BLE characteris
 | Device Information | — | `0000180a-0000-1000-8000-00805f9b34fb` |
 | GATT | — | `00001801-0000-1000-8000-00805f9b34fb` |
 
+### Service Availability by Model
+
+Not all models expose all services. The Sonicare For Kids (HX6340) has a reduced GATT table:
+
+| Service | HX992X | HX991M | HX999X | HX6340 (Kids) |
+| :--- | :---: | :---: | :---: | :---: |
+| Sonicare | ✓ | ✓ | ✓ | ✓ |
+| Routine | ✓ | ✓ | ✓ | ✓ (partial) |
+| Storage | ✓ | ✓ | ✓ | ✗ |
+| Sensor | ✓ | ✓ | ✓ | ✗ |
+| Brush Head | ✓ | ✓ | ✓ | ✗ |
+| Diagnostic | ✓ | ✓ | ✓ | ✗ |
+| Extended | ✓ | ✓ | ✓ | ✗ |
+
+Kids "partial" Routine: `0x4082` (Brushing State) and `0x4022` (Available Routine IDs) do not exist. `0x4070` (Session ID) exists but does not support notifications.
+
 ---
 
 ## Characteristics
@@ -88,7 +104,7 @@ Where `XXXX` is the characteristic or service short ID. Standard BLE characteris
 | :--- | :--- | :--- | :--- |
 | `0x4010` | Read, Write, Indicate | uint8 | **Handle State** — see enum below |
 | `0x4020` | Read | uint16 LE | Available brushing routines (bitmask) |
-| `0x4022` | Read | bytes | Available routine IDs (e.g., `00 01 02 04`) |
+| `0x4022` | Read | bytes | Available routine IDs (e.g., `00 01 02 04`). *Not on Kids.* |
 | `0x4030` | Read, Notify | uint16 LE | Unknown |
 | `0x4040` | Read | uint32 LE | Cumulative motor runtime (seconds) |
 | `0x4050` | Read, Write | uint32 LE | Handle time (seconds since epoch) |
@@ -109,9 +125,9 @@ Where `XXXX` is the characteristic or service short ID. Standard BLE characteris
 
 | Short ID | Properties | Format | Description |
 | :--- | :--- | :--- | :--- |
-| `0x4070` | Read, Notify | uint16 LE | Current session ID |
+| `0x4070` | Read, Notify | uint16 LE | Current session ID. *Kids: Read only, no Notify.* |
 | `0x4080` | Read, Indicate | uint8 | **Brushing Mode** — see enum below |
-| `0x4082` | Read, Write, Notify | uint8 | **Brushing State** — see enum below |
+| `0x4082` | Read, Write, Notify | uint8 | **Brushing State** — see enum below. *Not on Kids.* |
 | `0x4090` | Read, Notify | uint16 LE | Brushing time (seconds, live counter) |
 | `0x4091` | Read, Notify | uint16 LE | Routine length (seconds, typically 120) |
 | `0x40A0` | Read, Notify | uint8 | Unknown |
