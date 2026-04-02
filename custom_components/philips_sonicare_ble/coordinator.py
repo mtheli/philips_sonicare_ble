@@ -69,7 +69,7 @@ from .const import (
     BRUSHING_STATES,
     INTENSITIES,
     BRUSHHEAD_TYPES,
-    BRUSHHEAD_CHARS,
+    CHAR_SERVICE_MAP,
     NOTIFICATION_CHARS,
     POLL_READ_CHARS,
     LIVE_READ_CHARS,
@@ -77,6 +77,7 @@ from .const import (
     CONF_POLL_INTERVAL,
     CONF_ENABLE_LIVE_UPDATES,
     CONF_TRANSPORT_TYPE,
+    CONF_SERVICES,
     TRANSPORT_ESP_BRIDGE,
     MIN_BRIDGE_VERSION,
     CONF_NOTIFY_THROTTLE,
@@ -116,6 +117,31 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._poll_chars = list(POLL_READ_CHARS)
         self._live_chars = list(LIVE_READ_CHARS)
         self._notify_chars = list(NOTIFICATION_CHARS)
+
+        # Filter by service availability (from setup discovery)
+        services = {s.lower() for s in entry.data.get(CONF_SERVICES, [])}
+        for char, svc in CHAR_SERVICE_MAP.items():
+            if svc.lower() not in services:
+                if char in self._poll_chars:
+                    self._poll_chars.remove(char)
+                if char in self._live_chars:
+                    self._live_chars.remove(char)
+                if char in self._notify_chars:
+                    self._notify_chars.remove(char)
+
+        # Kids devices (HX63xx) have fewer chars within available services
+        model = entry.data.get("model", "")
+        if model.upper().startswith("HX63"):
+            for char in (CHAR_AVAILABLE_ROUTINE_IDS, CHAR_BRUSHING_STATE):
+                if char in self._poll_chars:
+                    self._poll_chars.remove(char)
+                if char in self._live_chars:
+                    self._live_chars.remove(char)
+                if char in self._notify_chars:
+                    self._notify_chars.remove(char)
+            # Session ID exists but doesn't support notify on Kids firmware
+            if CHAR_SESSION_ID in self._notify_chars:
+                self._notify_chars.remove(CHAR_SESSION_ID)
 
         self._connection_lock = asyncio.Lock()
         self._live_task: asyncio.Task | None = None

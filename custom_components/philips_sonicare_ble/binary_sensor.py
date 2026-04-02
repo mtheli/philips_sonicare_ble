@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import PhilipsSonicareCoordinator
 from .entity import PhilipsSonicareEntity
-from .const import DOMAIN
+from .const import DOMAIN, CONF_SERVICES, SVC_SENSOR
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,11 +23,16 @@ async def async_setup_entry(
     """Set up Philips Sonicare binary sensors based on a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
+    services = {s.lower() for s in entry.data.get(CONF_SERVICES, [])}
+
     entities = [
         SonicareIsBrushingBinarySensor(coordinator, entry),
         SonicareIsChargingBinarySensor(coordinator, entry),
-        SonicarePressureAlertBinarySensor(coordinator, entry),
     ]
+
+    # Pressure alert requires Sensor/IMU service
+    if SVC_SENSOR.lower() in services:
+        entities.append(SonicarePressureAlertBinarySensor(coordinator, entry))
 
     async_add_entities(entities)
 

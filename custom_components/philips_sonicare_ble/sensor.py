@@ -28,7 +28,11 @@ from .const import (
     PRESSURE_ALARM_STATES,
     BRUSHHEAD_TYPES,
     CONF_TRANSPORT_TYPE,
+    CONF_SERVICES,
     TRANSPORT_ESP_BRIDGE,
+    SVC_BRUSHHEAD,
+    SVC_STORAGE,
+    SVC_SENSOR,
 )
 from .entity import PhilipsSonicareEntity, PhilipsBrushHeadEntity, PhilipsBridgeEntity
 
@@ -41,39 +45,61 @@ async def async_setup_entry(
     """Set up Philips Sonicare sensors based on a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
+    services = {s.lower() for s in entry.data.get(CONF_SERVICES, [])}
+
+    model = entry.data.get("model", "")
+    is_kids = model.upper().startswith("HX63")
+
     entities: list[PhilipsSonicareEntity] = [
         # Toothbrush handle sensors
         SonicareBatterySensor(coordinator, entry),
         SonicareHandleStateSensor(coordinator, entry),
         SonicareBrushingModeSensor(coordinator, entry),
-        SonicareBrushingStateSensor(coordinator, entry),
         SonicareIntensitySensor(coordinator, entry),
         SonicareBrushingTimeSensor(coordinator, entry),
         SonicareRoutineLengthSensor(coordinator, entry),
         SonicareRoutineCountdownSensor(coordinator, entry),
-        SonicareSessionIdSensor(coordinator, entry),
-        SonicareLatestSessionIdSensor(coordinator, entry),
-        SonicareSessionCountSensor(coordinator, entry),
         SonicareMotorRuntimeSensor(coordinator, entry),
         SonicareModelNumberSensor(coordinator, entry),
         SonicareFirmwareSensor(coordinator, entry),
         SonicareLastSeenSensor(coordinator, entry),
-        SonicarePressureSensor(coordinator, entry),
-        SonicarePressureStateSensor(coordinator, entry),
-        SonicareTemperatureSensor(coordinator, entry),
         SonicareHandleTimeSensor(coordinator, entry),
         SonicareActivitySensor(coordinator, entry),
-        # Brush head sub-device sensors
-        SonicareBrushHeadWearSensor(coordinator, entry),
-        SonicareBrushHeadUsageSensor(coordinator, entry),
-        SonicareBrushHeadLimitSensor(coordinator, entry),
-        SonicareBrushHeadSerialSensor(coordinator, entry),
-        SonicareBrushHeadDateSensor(coordinator, entry),
-        SonicareBrushHeadRingIdSensor(coordinator, entry),
-        SonicareBrushHeadNfcVersionSensor(coordinator, entry),
-        SonicareBrushHeadTypeSensor(coordinator, entry),
-        SonicareBrushHeadPayloadSensor(coordinator, entry),
     ]
+
+    # Not available on Kids devices (HX63xx)
+    if not is_kids:
+        entities.append(SonicareBrushingStateSensor(coordinator, entry))
+        entities.append(SonicareSessionIdSensor(coordinator, entry))
+
+    # Storage service sensors (session history)
+    if SVC_STORAGE.lower() in services:
+        entities.extend([
+            SonicareLatestSessionIdSensor(coordinator, entry),
+            SonicareSessionCountSensor(coordinator, entry),
+        ])
+
+    # Sensor/IMU service sensors (pressure, temperature)
+    if SVC_SENSOR.lower() in services:
+        entities.extend([
+            SonicarePressureSensor(coordinator, entry),
+            SonicarePressureStateSensor(coordinator, entry),
+            SonicareTemperatureSensor(coordinator, entry),
+        ])
+
+    # Brush head sub-device sensors (NFC brush head detection)
+    if SVC_BRUSHHEAD.lower() in services:
+        entities.extend([
+            SonicareBrushHeadWearSensor(coordinator, entry),
+            SonicareBrushHeadUsageSensor(coordinator, entry),
+            SonicareBrushHeadLimitSensor(coordinator, entry),
+            SonicareBrushHeadSerialSensor(coordinator, entry),
+            SonicareBrushHeadDateSensor(coordinator, entry),
+            SonicareBrushHeadRingIdSensor(coordinator, entry),
+            SonicareBrushHeadNfcVersionSensor(coordinator, entry),
+            SonicareBrushHeadTypeSensor(coordinator, entry),
+            SonicareBrushHeadPayloadSensor(coordinator, entry),
+        ])
 
     # RSSI sensor (direct BLE only — ESP bridge has no advertisement RSSI)
     if entry.data.get(CONF_TRANSPORT_TYPE) != TRANSPORT_ESP_BRIDGE:
@@ -310,7 +336,11 @@ class SonicareRoutineCountdownSensor(PhilipsSonicareEntity, SensorEntity):
         if not self.coordinator.data:
             return None
         # Only show countdown during active brushing
-        if self.coordinator.data.get("brushing_state") != "on":
+        brushing = (
+            self.coordinator.data.get("brushing_state") == "on"
+            or self.coordinator.data.get("handle_state_value") == 2
+        )
+        if not brushing:
             return None
         routine = self.coordinator.data.get("routine_length")
         elapsed = self.coordinator.data.get("brushing_time")

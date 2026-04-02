@@ -256,10 +256,16 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             paired = await async_is_device_paired(address)
             if paired is False:
                 _LOGGER.info("Device %s known to BlueZ but not paired — pairing first", address)
-                if await self._try_auto_pair(address):
-                    result = await self._async_fetch_capabilities(address)
-                    result["pairing"] = "bonded"
-                    return result
+                # Try auto-pairing up to 2 times (first attempt often fails
+                # due to timing — the brush needs a moment after waking up)
+                for attempt in range(2):
+                    if await self._try_auto_pair(address):
+                        result = await self._async_fetch_capabilities(address)
+                        result["pairing"] = "bonded"
+                        return result
+                    if attempt == 0:
+                        _LOGGER.info("Retrying auto-pair for %s ...", address)
+                        await asyncio.sleep(3)
                 raise NotPairedException
 
         try:
@@ -463,28 +469,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self.context["title_placeholders"] = {"name": self._name}
         return await self.async_step_bluetooth_confirm()
 
-    def _get_adv_status_text(self) -> str:
-        """Determine brush connection state from advertisement data."""
-        if self._discovery_info is None:
-            return "Not connected"
-        adv_uuids = {u.lower() for u in (self._discovery_info.service_uuids or [])}
-        sonicare_extra = {
-            SVC_ROUTINE.lower(), SVC_STORAGE.lower(), SVC_SENSOR.lower(),
-            SVC_BRUSHHEAD.lower(), SVC_DIAGNOSTIC.lower(), SVC_EXTENDED.lower(),
-        }
-        if adv_uuids & sonicare_extra:
-            return "✅ **Active** — keep the toothbrush on and click Submit"
-        if SVC_SONICARE.lower() in adv_uuids:
-            return "💤 **Sleeping** — turn on the toothbrush before clicking Submit"
-        return "Unknown"
-
-    def _get_adv_services_text(self) -> str:
-        """Format advertised services as HTML table."""
-        if self._discovery_info is None:
-            return "No services detected"
-        adv_uuids = [u.lower() for u in (self._discovery_info.service_uuids or [])]
-        return self._get_service_status_text(adv_uuids)
-
     def _find_esp_bridge(self) -> str | None:
         """Find an ESP device running the philips_sonicare component."""
         esphome_entries = self.hass.config_entries.async_entries("esphome")
@@ -515,8 +499,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 description_placeholders={
                     "name": self._name,
                     "address": self._address,
-                    "brush_status": self._get_adv_status_text(),
-                    "services": self._get_adv_services_text(),
                 },
             )
 
@@ -542,8 +524,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "name": self._name,
                 "address": self._address,
-                "brush_status": self._get_adv_status_text(),
-                "services": self._get_adv_services_text(),
             },
             errors=errors,
         )
@@ -854,6 +834,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
             entry_data: dict[str, Any] = {
                 CONF_SERVICES: services,
+                "model": self._fetched_data.get("model", ""),
             }
 
             if self._transport_type == TRANSPORT_ESP_BRIDGE:

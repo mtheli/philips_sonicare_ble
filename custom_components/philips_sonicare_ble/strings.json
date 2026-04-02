@@ -10,7 +10,7 @@
     "step": {
       "bluetooth_confirm": {
         "title": "Confirm Philips Sonicare",
-        "description": "**{name}** discovered at `{address}` via Direct Bluetooth.\n\n**Status:** {brush_status}\n\n**Detected Services**\n\n{services}"
+        "description": "**{name}** discovered at `{address}` via Direct Bluetooth.\n\nMake sure your toothbrush is **turned on** (press the button), then click **Submit**."
       },
       "user": {
         "title": "Add Philips Sonicare",
