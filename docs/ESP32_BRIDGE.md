@@ -16,8 +16,8 @@ for direct Bluetooth access from the HA host.
 
 | Board | Status |
 |-------|--------|
-| Generic ESP32-DevKit | Confirmed working (used by maintainer) |
-| [M5Stack Atom Lite](https://docs.m5stack.com/en/core/ATOM%20Lite) (ESP32-PICO) | Should work (same SoC) |
+| [M5Stack Atom Lite](https://docs.m5stack.com/en/core/ATOM%20Lite) (ESP32-PICO) | Confirmed working (used by maintainer) |
+| Generic ESP32-DevKit | Should work (same SoC) |
 | ESP32-S3 / ESP32-C3 | Should work — BLE stack is compatible |
 
 ## Prerequisites
