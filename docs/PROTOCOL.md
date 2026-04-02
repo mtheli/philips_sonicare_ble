@@ -2,6 +2,30 @@
 
 This document describes the Bluetooth Low Energy (BLE) GATT protocol used by Philips Sonicare toothbrushes. Documented through BLE analysis and verified against a real HX992X (DiamondClean 9000) and HX6340 (Sonicare For Kids).
 
+## Table of Contents
+
+- [Protocol Variants](#protocol-variants)
+- [Discovery](#discovery)
+- [UUID Schema](#uuid-schema)
+- [Services](#services)
+  - [Service Availability by Model](#service-availability-by-model)
+- [Characteristics](#characteristics)
+  - [Battery Service](#battery-service-0x180f)
+  - [Device Information Service](#device-information-service-0x180a)
+  - [Sonicare Service](#sonicare-service-0x0001)
+  - [Routine Service](#routine-service-0x0002)
+  - [Storage Service](#storage-service-0x0004)
+  - [Sensor Service](#sensor-service-0x0005)
+  - [Brush Head Service](#brush-head-service-0x0006)
+  - [Diagnostic Service](#diagnostic-service-0x0007)
+  - [Extended Service](#extended-service-0x0008)
+  - [ByteStreaming Service](#bytestreaming-service)
+- [Connection Behavior](#connection-behavior)
+- [Position Detection (Watson)](#position-detection-watson)
+- [References](#references)
+
+---
+
 ## Protocol Variants
 
 Philips Sonicare devices expose two BLE service stacks. Most current models support both simultaneously:
