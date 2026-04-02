@@ -40,10 +40,11 @@ See [Configuration](#configuration) for setup instructions.
 
 | Model | Type | Direct BLE | ESP32 Bridge | Tested by |
 | :--- | :--- | :---: | :---: | :--- |
-| [**DiamondClean 9000 / HX992X**](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app/partsandaccessories) | Toothbrush | :white_check_mark: | :white_check_mark: | Maintainer |
-| **Prestige 9900** | Toothbrush | :white_check_mark: | — | Community |
-| **ExpertClean / HX962V** | Toothbrush | — | :white_check_mark: | Community |
-| **HX991M** | Toothbrush | :white_check_mark: | — | Community |
+| [**DiamondClean 9000 / HX992X**](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app) | Toothbrush | :white_check_mark: | :white_check_mark: | Maintainer |
+| [**DiamondClean 9000 / HX991M**](https://www.usa.philips.com/c-p/HX9911_91/9000-series-sonic-electric-toothbrush) | Toothbrush | :white_check_mark: | — | Community ([forum](http://community-smarthome.com/t/philips-sonicare-ble-zahnbuerste-in-home-assistant-mit-echtzeit-sensoren/10555/17?u=mtheli)) |
+| [**ExpertClean / HX962V**](https://www.usa.philips.com/c-m-pe/dental-professionals/products/tooth-brushes/expertclean) | Toothbrush | — | :white_check_mark: | Community ([#1](https://github.com/mtheli/philips_sonicare_ble/issues/1)) |
+| [**Prestige 9900 / HX999X**](https://www.usa.philips.com/c-p/HX9990_11/sonicare-9900-prestige-power-toothbrush-with-senseiq) | Toothbrush | :white_check_mark: | — | Community ([forum](https://community.home-assistant.io/t/philips-sonicare-ble-toothbrush-integration-with-30-sensors/999515/5?u=mtheli)) |
+| [**Sonicare For Kids / HX6350**](https://www.usa.philips.com/c-p/HX6351_41/sonicare-for-kids-sonic-electric-toothbrush) | Kids Toothbrush | :white_check_mark: | — | Maintainer |
 
 Any BLE-enabled Philips Sonicare toothbrush should work (DiamondClean Smart, ExpertClean, Sonicare 6500/7100, 9900 Prestige, and more). The integration auto-discovers compatible devices via BLE. If you have a different model — happy to hear your test results!
 
