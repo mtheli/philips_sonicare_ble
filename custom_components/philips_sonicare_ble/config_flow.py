@@ -250,37 +250,25 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         from .dbus_pairing import async_is_device_paired, is_dbus_available
 
-        # Fast path: if BlueZ already knows the device is unpaired,
-        # pair first instead of waiting 30s for a failed connect.
-        if is_dbus_available():
-            paired = await async_is_device_paired(address)
-            if paired is False:
-                _LOGGER.info("Device %s known to BlueZ but not paired — pairing first", address)
-                # Try auto-pairing up to 2 times (first attempt often fails
-                # due to timing — the brush needs a moment after waking up)
-                for attempt in range(2):
-                    if await self._try_auto_pair(address):
-                        result = await self._async_fetch_capabilities(address)
-                        result["pairing"] = "bonded"
-                        return result
-                    if attempt == 0:
-                        _LOGGER.info("Retrying auto-pair for %s ...", address)
-                        await asyncio.sleep(3)
-                raise NotPairedException
-
+        # Always try connecting without pairing first — many devices
+        # (including Sonicare For Kids) have open GATT even though
+        # BlueZ reports them as "not paired".
         try:
             result = await self._async_fetch_capabilities(address)
             result["pairing"] = "open_gatt"
             return result
         except NotPairedException:
-            if await self._try_auto_pair(address):
-                try:
-                    result = await self._async_fetch_capabilities(address)
-                    result["pairing"] = "bonded"
-                    return result
-                except NotPairedException:
-                    pass
-            raise
+            pass
+
+        # Connection failed due to auth — try auto-pairing
+        if await self._try_auto_pair(address):
+            try:
+                result = await self._async_fetch_capabilities(address)
+                result["pairing"] = "bonded"
+                return result
+            except NotPairedException:
+                pass
+        raise NotPairedException
 
     # ------------------------------------------------------------------
     # Capabilities fetch (ESP bridge)
