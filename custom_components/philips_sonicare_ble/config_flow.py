@@ -16,6 +16,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
@@ -367,7 +368,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     f"<tr><td>❔</td><td>{name}</td><td><code>{short}</code></td></tr>"
                 )
 
-        rows = found_rows + missing_rows + unknown_rows
+        rows = found_rows + unknown_rows
         if not rows:
             return "No services detected"
         return "<table>" + "".join(rows) + "</table>"
@@ -443,6 +444,47 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     # ------------------------------------------------------------------
     # Discovery flow
     # ------------------------------------------------------------------
+    async def async_step_zeroconf(
+        self, discovery_info: ZeroconfServiceInfo
+    ) -> FlowResult:
+        """Handle Zeroconf discovery of ESPHome devices.
+
+        Checks if the discovered ESPHome device has our Sonicare bridge
+        services registered. If not, aborts silently.
+        """
+        # Extract device name from zeroconf hostname (e.g. "atom-lite" from "atom-lite.local.")
+        host = discovery_info.hostname or ""
+        device_name = host.rstrip(".").removesuffix(".local").replace("-", "_")
+        if not device_name:
+            return self.async_abort(reason="not_supported")
+
+        # Wait for ESPHome to register services (may not be ready yet)
+        for _ in range(10):
+            device_ids = self._detect_esp_device_ids(device_name)
+            if device_ids:
+                break
+            await asyncio.sleep(3)
+        else:
+            return self.async_abort(reason="not_supported")
+
+        # Found a Sonicare bridge — check if already configured
+        self._esp_device_name = device_name
+        self._esp_device_ids = device_ids
+
+        # Use the ESP device name + first device_id as unique ID
+        unique_id = f"esp_{device_name}_{device_ids[0]}" if device_ids[0] else f"esp_{device_name}"
+        await self.async_set_unique_id(unique_id)
+        self._abort_if_unique_id_configured()
+
+        _LOGGER.info("Zeroconf: found Sonicare bridge on ESP device '%s'", device_name)
+        self._name = device_name.replace("_", "-")
+        self.context["title_placeholders"] = {"name": self._name}
+
+        if len(device_ids) > 1:
+            return await self.async_step_esp_select_device()
+        self._esp_device_id = device_ids[0]
+        return await self._esp_bridge_health_check()
+
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> FlowResult:

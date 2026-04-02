@@ -193,7 +193,9 @@
     "binary_sensor": {
       "is_brushing": { "name": "Brushing" },
       "is_charging": { "name": "Charging" },
-      "pressure_alert": { "name": "Pressure Alert" }
+      "pressure_alert": { "name": "Pressure Alert" },
+      "esp_bridge_alive": { "name": "ESP Bridge" },
+      "ble_connected": { "name": "BLE Connected" }
     },
     "select": {
       "brushing_mode_select": {

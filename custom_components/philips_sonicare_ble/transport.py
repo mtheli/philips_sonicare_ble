@@ -364,6 +364,9 @@ class EspBridgeTransport(SonicareTransport):
                 paired = event.data.get("paired")
                 if paired is not None:
                     self._ble_paired = paired
+                ble_connected = event.data.get("ble_connected")
+                if ble_connected is not None:
+                    self._device_connected = ble_connected == "true"
             elif status == "heartbeat":
                 ble_connected = event.data.get("ble_connected") == "true"
                 self._device_connected = ble_connected
