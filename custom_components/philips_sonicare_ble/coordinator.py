@@ -75,14 +75,12 @@ from .const import (
     LIVE_READ_CHARS,
     CONF_ADDRESS,
     CONF_POLL_INTERVAL,
-    CONF_ENABLE_LIVE_UPDATES,
     CONF_TRANSPORT_TYPE,
     CONF_SERVICES,
     TRANSPORT_ESP_BRIDGE,
     MIN_BRIDGE_VERSION,
     CONF_NOTIFY_THROTTLE,
     DEFAULT_POLL_INTERVAL,
-    DEFAULT_ENABLE_LIVE_UPDATES,
     DEFAULT_NOTIFY_THROTTLE,
 )
 
@@ -110,10 +108,6 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         options = entry.options
         poll_interval = options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL)
         self.poll_interval_seconds = poll_interval
-        self.enable_live_updates = options.get(
-            CONF_ENABLE_LIVE_UPDATES, DEFAULT_ENABLE_LIVE_UPDATES
-        )
-
         self._poll_chars = list(POLL_READ_CHARS)
         self._live_chars = list(LIVE_READ_CHARS)
         self._notify_chars = list(NOTIFICATION_CHARS)
@@ -154,9 +148,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._live_cb: Callable | None = None
 
         _LOGGER.debug(
-            "Initializing coordinator for %s (live updates: %s, transport: %s)",
+            "Initializing coordinator for %s (transport: %s)",
             self.address,
-            self.enable_live_updates,
             "ESP" if self._is_esp_bridge else "Direct BLE",
         )
         # Direct BLE: event-driven (no polling) — connect on advertisement
@@ -221,12 +214,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Start live monitoring. Call after setup is complete."""
         if not self._is_esp_bridge:
             self._start_advertisement_callback()
-        if self.enable_live_updates:
-            self._live_task = self.entry.async_create_background_task(
-                self.hass, self._start_live_monitoring(), "philips_sonicare_monitoring"
-            )
-        else:
-            _LOGGER.info("Live updates disabled - polling only")
+        self._live_task = self.entry.async_create_background_task(
+            self.hass, self._start_live_monitoring(), "philips_sonicare_monitoring"
+        )
 
     def _start_advertisement_callback(self) -> None:
         """Register BLE advertisement callback to trigger reconnection."""

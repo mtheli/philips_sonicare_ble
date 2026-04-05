@@ -30,7 +30,6 @@ from bleak_retry_connector import establish_connection as bleak_establish
 from .const import (
     DOMAIN,
     CONF_POLL_INTERVAL,
-    CONF_ENABLE_LIVE_UPDATES,
     CONF_SERVICES,
     CONF_TRANSPORT_TYPE,
     CONF_ESP_DEVICE_NAME,
@@ -42,7 +41,6 @@ from .const import (
     TRANSPORT_BLEAK,
     TRANSPORT_ESP_BRIDGE,
     DEFAULT_POLL_INTERVAL,
-    DEFAULT_ENABLE_LIVE_UPDATES,
     DEFAULT_NOTIFY_THROTTLE,
     DEFAULT_SENSOR_PRESSURE,
     DEFAULT_SENSOR_TEMPERATURE,
@@ -978,7 +976,6 @@ class PhilipsSonicareOptionsFlow(OptionsFlow):
         if user_input is not None:
             data = {
                 CONF_POLL_INTERVAL: user_input[CONF_POLL_INTERVAL],
-                CONF_ENABLE_LIVE_UPDATES: user_input[CONF_ENABLE_LIVE_UPDATES],
                 CONF_SENSOR_PRESSURE: user_input.get(CONF_SENSOR_PRESSURE, DEFAULT_SENSOR_PRESSURE),
                 CONF_SENSOR_TEMPERATURE: user_input.get(CONF_SENSOR_TEMPERATURE, DEFAULT_SENSOR_TEMPERATURE),
                 CONF_SENSOR_GYROSCOPE: user_input.get(CONF_SENSOR_GYROSCOPE, DEFAULT_SENSOR_GYROSCOPE),
@@ -993,10 +990,6 @@ class PhilipsSonicareOptionsFlow(OptionsFlow):
                 CONF_POLL_INTERVAL,
                 default=options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
             ): vol.All(vol.Coerce(int), vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL)),
-            vol.Required(
-                CONF_ENABLE_LIVE_UPDATES,
-                default=options.get(CONF_ENABLE_LIVE_UPDATES, DEFAULT_ENABLE_LIVE_UPDATES),
-            ): bool,
             vol.Required(
                 CONF_SENSOR_PRESSURE,
                 default=options.get(CONF_SENSOR_PRESSURE, DEFAULT_SENSOR_PRESSURE),

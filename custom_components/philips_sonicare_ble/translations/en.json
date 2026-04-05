@@ -76,7 +76,6 @@
         "title": "Philips Sonicare Options",
         "data": {
           "poll_interval": "Poll interval (seconds)",
-          "enable_live_updates": "Enable live updates (BLE notifications)",
           "sensor_pressure": "Enable pressure sensor",
           "sensor_temperature": "Enable temperature sensor",
           "sensor_gyroscope": "Enable gyroscope sensor",

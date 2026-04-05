@@ -321,11 +321,9 @@ CHAR_SERVICE_MAP: dict[str, str] = {
 
 # ── Config ───────────────────────────────────────────────────────────────────
 DEFAULT_POLL_INTERVAL = 60
-DEFAULT_ENABLE_LIVE_UPDATES = True
 
 CONF_ADDRESS = "address"
 CONF_POLL_INTERVAL = "poll_interval"
-CONF_ENABLE_LIVE_UPDATES = "enable_live_updates"
 CONF_SERVICES = "services"
 
 CONF_TRANSPORT_TYPE = "transport_type"
