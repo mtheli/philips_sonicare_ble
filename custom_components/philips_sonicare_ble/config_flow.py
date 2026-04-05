@@ -471,7 +471,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._esp_device_name = device_name
         self._esp_device_ids = device_ids
 
-        # Use the ESP device name + first device_id as unique ID
         unique_id = f"esp_{device_name}_{device_ids[0]}" if device_ids[0] else f"esp_{device_name}"
         await self.async_set_unique_id(unique_id)
         self._abort_if_unique_id_configured()

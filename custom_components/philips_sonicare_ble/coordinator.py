@@ -279,7 +279,11 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         async with self._connection_lock:
             try:
                 results = await self.transport.read_chars(self._poll_chars)
+                if not results:
+                    raise UpdateFailed("Device not reachable (likely sleeping)")
                 return self._process_results(results)
+            except UpdateFailed:
+                raise
             except Exception as err:
                 raise UpdateFailed(f"Error communicating with device: {err}") from err
 
@@ -458,6 +462,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Sensor Data Stream (0x4130) — pressure, temperature, gyroscope frames
         if raw := results.get(CHAR_SENSOR_DATA):
+            _LOGGER.debug("Sensor frame raw: %s (len=%d)", raw.hex(), len(raw))
             if len(raw) >= 4:
                 import struct
                 frame_type = struct.unpack("<H", raw[:2])[0]
@@ -467,7 +472,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     new_data["pressure_alarm"] = alarm_value
                     new_data["pressure_state"] = PRESSURE_ALARM_STATES.get(alarm_value)
                 elif frame_type == SENSOR_FRAME_TEMPERATURE and len(raw) >= 6:
-                    new_data["temperature"] = round(raw[4] / 256 + raw[5], 1)
+                    new_data["temperature"] = round(struct.unpack("<H", raw[4:6])[0] / 256, 1)
 
         # Change detection: only update last_seen when data actually changed
         # or every 30s as heartbeat for availability tracking

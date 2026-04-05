@@ -170,7 +170,7 @@
       "pressure_state": {
         "name": "Pressure State",
         "state": {
-          "no_contact": "No Contact",
+          "ok": "OK",
           "optimal": "Optimal",
           "too_high": "Too High"
         }

@@ -144,7 +144,7 @@ INTENSITIES = {
 }
 
 PRESSURE_ALARM_STATES = {
-    0: "no_contact",
+    0: "ok",
     1: "optimal",
     2: "too_high",
 }

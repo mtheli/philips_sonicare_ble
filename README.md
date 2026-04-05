@@ -43,7 +43,7 @@ See [Configuration](#configuration) for setup instructions.
 | **DiamondClean Smart** | [HX992X](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app) | :white_check_mark: | :white_check_mark: | Maintainer |
 | **DiamondClean 9000** | [HX991M](https://www.usa.philips.com/c-p/HX9911_91/9000-series-sonic-electric-toothbrush) | :white_check_mark: | — | Community ([forum](http://community-smarthome.com/t/philips-sonicare-ble-zahnbuerste-in-home-assistant-mit-echtzeit-sensoren/10555/17)) |
 | **ExpertClean** | [HX962V](https://www.usa.philips.com/c-m-pe/dental-professionals/products/tooth-brushes/expertclean) | — | :white_check_mark: | Community ([#1](https://github.com/mtheli/philips_sonicare_ble/issues/1)) |
-| **Prestige 9900** | [HX999X](https://www.usa.philips.com/c-p/HX9990_11/sonicare-9900-prestige-power-toothbrush-with-senseiq) | :white_check_mark: | — | Community ([forum](https://community.home-assistant.io/t/philips-sonicare-ble-toothbrush-integration-with-30-sensors/999515/5)) |
+| **Prestige 9900** | [HX999X](https://www.usa.philips.com/c-p/HX9990_11/sonicare-9900-prestige-power-toothbrush-with-senseiq) | :white_check_mark: | — | Maintainer, Community ([forum](https://community.home-assistant.io/t/philips-sonicare-ble-toothbrush-integration-with-30-sensors/999515/5)) |
 | **Sonicare For Kids** | [HX6340](https://www.usa.philips.com/c-p/HX6351_41/sonicare-for-kids-sonic-electric-toothbrush) | :white_check_mark: | :white_check_mark: | Maintainer |
 | | | | | |
 | **FlexCare Platinum Connected** | HX9120 | *not yet tested* | *not yet tested* | — |
@@ -53,7 +53,7 @@ See [Configuration](#configuration) for setup instructions.
 Any BLE-enabled Philips Sonicare toothbrush using the standard protocol should work (DiamondClean Smart, ExpertClean, 9900 Prestige, For Kids, and more). The Series 5300–7400 (HX74xx) use a newer BLE protocol that is not yet supported. The integration auto-discovers compatible devices via BLE. If you have a different model — happy to hear your test results!
 
 > [!NOTE]
-> Some models (ExpertClean, HX991M, Sonicare For Kids) require **BLE bonding**. The integration detects this automatically and pairs the device during setup. Models like DiamondClean Smart and Prestige 9900 use open GATT and connect without pairing.
+> Some models (ExpertClean, HX991M, Prestige 9900, Sonicare For Kids) require **BLE bonding**. The integration detects this automatically and pairs the device during setup. Models like DiamondClean Smart use open GATT and connect without pairing.
 
 ---
 

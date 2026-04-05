@@ -100,8 +100,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}
 
-    # Fetch initial data before registering platforms to avoid "Unknown" flicker
-    await coordinator.async_config_entry_first_refresh()
+    # Non-blocking first refresh — the toothbrush sleeps most of the time,
+    # so blocking startup for a device that may not be reachable is not worth it.
+    # Sensors will show "Unknown" briefly until the device wakes up.
+    coordinator.async_set_updated_data(coordinator.data or {})
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

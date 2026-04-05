@@ -167,7 +167,7 @@ class BleakTransport(SonicareTransport):
                 except Exception as e:
                     _LOGGER.debug("Read failed for %s: %s", uuid, e)
         except Exception as err:
-            _LOGGER.error("BLE poll error: %s", err)
+            _LOGGER.debug("BLE poll error (device likely sleeping): %s", err)
         finally:
             if client and client.is_connected:
                 try:
