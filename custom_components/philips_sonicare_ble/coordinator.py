@@ -154,16 +154,23 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._live_cb: Callable | None = None
 
         _LOGGER.debug(
-            "Initializing coordinator for %s with poll interval %s seconds (live updates: %s)",
+            "Initializing coordinator for %s (live updates: %s, transport: %s)",
             self.address,
-            self.poll_interval_seconds,
             self.enable_live_updates,
+            "ESP" if self._is_esp_bridge else "Direct BLE",
+        )
+        # Direct BLE: event-driven (no polling) — connect on advertisement
+        # ESP bridge: poll as fallback since ESP has its own wake mechanism
+        poll_interval = (
+            timedelta(seconds=self.poll_interval_seconds)
+            if self._is_esp_bridge
+            else None
         )
         super().__init__(
             hass,
             _LOGGER,
             name=f"Philips Sonicare {self.address}",
-            update_interval=timedelta(seconds=self.poll_interval_seconds),
+            update_interval=poll_interval,
         )
 
         # Initial empty dataset
@@ -213,7 +220,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_start(self) -> None:
         """Start live monitoring. Call after setup is complete."""
         if not self._is_esp_bridge:
-            self._start_advertisement_logging()
+            self._start_advertisement_callback()
         if self.enable_live_updates:
             self._live_task = self.entry.async_create_background_task(
                 self.hass, self._start_live_monitoring(), "philips_sonicare_monitoring"
@@ -221,59 +228,45 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             _LOGGER.info("Live updates disabled - polling only")
 
-    def _start_advertisement_logging(self) -> None:
-        """Log every BLE advertisement from the Sonicare."""
+    def _start_advertisement_callback(self) -> None:
+        """Register BLE advertisement callback to trigger reconnection."""
 
         @callback
         def _advertisement_callback(service_info, change):
-            adv = service_info.advertisement
-            svc_short = [u[-8:] for u in (adv.service_uuids or [])]
-            mfr = {k: v.hex() for k, v in adv.manufacturer_data.items()} if adv.manufacturer_data else None
-            _LOGGER.info(
-                "ADV %s | RSSI: %s dBm | Services: %s%s",
+            _LOGGER.debug(
+                "ADV %s | RSSI: %s dBm",
                 service_info.address,
                 service_info.rssi,
-                svc_short,
-                f" | MfrData: {mfr}" if mfr else "",
             )
-            # Wake up live monitoring thread to attempt reconnect immediately
+            # Wake up live monitoring thread to attempt connection
             self._wake_event.set()
 
         self._unsub_adv_debug = async_register_callback(
             self.hass,
             _advertisement_callback,
             BluetoothCallbackMatcher(address=self.address),
-            BluetoothScanningMode.PASSIVE,
+            BluetoothScanningMode.ACTIVE,
         )
 
     # ------------------------------------------------------------------
-    # Called automatically by the coordinator (polling)
+    # Called automatically by the coordinator (polling — ESP bridge only)
     # ------------------------------------------------------------------
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data via polling fallback."""
+        """Fetch data via polling (ESP bridge) or return cached data (Direct BLE)."""
 
-        # 1. Live connection active -> skip polling
+        # Direct BLE: no polling, event-driven via advertisements
+        if not self._is_esp_bridge:
+            return self.data or {}
+
+        # ESP bridge: poll as fallback
         if self.transport.is_connected:
             _LOGGER.debug("Live connection active - polling skipped")
             data = self.data or {}
             data["last_seen"] = datetime.now(timezone.utc)
             return data
 
-        # 2. Live updates enabled -> let live thread handle it, don't compete
-        if self.enable_live_updates and self._wake_event.is_set():
-            _LOGGER.debug("Device seen, live thread will handle reconnect - polling skipped")
-            return self.data or {}
-
         if self.data is None:
             self.data = {}
-
-        # 3. Recent data within poll interval -> skip
-        last_seen = self.data.get("last_seen")
-        if last_seen:
-            age = (datetime.now(timezone.utc) - last_seen).total_seconds()
-            if age < self.poll_interval_seconds:
-                _LOGGER.debug("Recent data (%.0fs old) - polling skipped", age)
-                return self.data or {}
 
         _LOGGER.info("Polling: connecting to read data...")
         async with self._connection_lock:
@@ -508,14 +501,30 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return new_data
 
     async def _start_live_monitoring(self) -> None:
-        """Persistent live connection with notifications."""
+        """Persistent live connection with notifications.
+
+        Direct BLE: advertisement-driven — waits passively for device to
+        advertise, then connects. No blind retries that block the scanner.
+
+        ESP bridge: backoff-driven — retries with exponential backoff since
+        the ESP has its own BLE scanner and wake mechanism.
+        """
+        MAX_QUICK_RETRIES = 2  # quick retries after unexpected disconnect
         backoff = 5
-        max_backoff = 30 if self._is_esp_bridge else 300
+        max_backoff = 30  # only used by ESP bridge
 
         while True:
-            _LOGGER.debug("Live loop: waiting for connection lock...")
+            # ---- Wait for device to be available ----
+            if not self._is_esp_bridge:
+                # Direct BLE: wait for advertisement (scanner stays free)
+                if not self.transport.is_connected:
+                    _LOGGER.debug("Waiting for advertisement from %s...", self.address)
+                    self._wake_event.clear()
+                    await self._wake_event.wait()
+                    _LOGGER.info("Advertisement received — connecting to %s", self.address)
+
+            # ---- Connect and set up live monitoring ----
             async with self._connection_lock:
-                _LOGGER.debug("Live loop: lock acquired")
                 try:
                     # Check if ESP bridge needs resubscription (after ESP restart)
                     if (
@@ -527,7 +536,6 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _LOGGER.info("ESP bridge requires resubscription")
                         self.transport.acknowledge_resubscribe()
                         self._live_setup_done = False
-                        # Fall through to re-setup
 
                     if self.transport.is_connected and self._live_setup_done:
                         await asyncio.sleep(5)
@@ -553,11 +561,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         )
                         await self.transport.set_notify_throttle(throttle_ms)
 
-                    # Read characteristics first, then subscribe
-                    # (subscribe-first can cause read timeouts on ESP bridge)
+                    # Read characteristics first, then subscribe.
                     # First connect: read ALL chars (incl. static data like
-                    # brush head, model, firmware) since polling is skipped
-                    # while live is active. Subsequent reconnects: dynamic only.
+                    # brush head, model, firmware). Subsequent: dynamic only.
                     read_chars = (
                         self._poll_chars
                         if not self._full_read_done
@@ -595,48 +601,61 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if self._is_esp_bridge:
                         self._update_bridge_device_version()
                         self._check_bridge_version()
-                        # Clear the resubscribe flag that was set by the
-                        # initial "ready" event — we just completed a fresh
-                        # setup, so there is nothing to re-subscribe.
                         if self.transport.needs_resubscribe:
                             self.transport.acknowledge_resubscribe()
 
-                    # Reset backoff after successful setup
+                    # Reset backoff (ESP) after successful setup
                     backoff = 5
-
-                except TransportError as err:
-                    _LOGGER.debug(
-                        "Transport error: %s - retrying in %ds", err, backoff
-                    )
-                    woken = await self._wait_before_retry(backoff)
-                    if woken:
-                        backoff = 5
-                    else:
-                        backoff = min(backoff * 2, max_backoff)
-                    continue
 
                 except Exception as err:
                     err_msg = str(err).lower()
-                    if "no longer reachable" in err_msg or "connection slot" in err_msg:
+                    is_unreachable = (
+                        "no longer reachable" in err_msg
+                        or "connection slot" in err_msg
+                        or "timeout" in err_msg
+                    )
+                    if is_unreachable:
                         _LOGGER.debug(
-                            "Device not reachable (likely sleeping) - retrying in %ds", backoff
+                            "Device not reachable: %s", err
                         )
                     else:
                         _LOGGER.warning(
-                            "Live monitoring error: %s - retrying in %ds", err, backoff
+                            "Live monitoring error: %s", err
                         )
                     try:
                         await self.transport.disconnect()
                     except Exception:
                         pass
-                    woken = await self._wait_before_retry(backoff)
-                    if woken:
-                        backoff = 5
+
+                    if self._is_esp_bridge:
+                        # ESP bridge: backoff retry (has own scanner)
+                        woken = await self._wait_before_retry(backoff)
+                        if woken:
+                            backoff = 5
+                        else:
+                            backoff = min(backoff * 2, max_backoff)
                     else:
-                        backoff = min(backoff * 2, max_backoff)
+                        # Direct BLE: quick retries, then wait for ADV
+                        for attempt in range(MAX_QUICK_RETRIES):
+                            await asyncio.sleep(5)
+                            if self._wake_event.is_set():
+                                break
+                            _LOGGER.debug(
+                                "Quick retry %d/%d for %s...",
+                                attempt + 1, MAX_QUICK_RETRIES, self.address,
+                            )
+                            try:
+                                await self.transport.connect()
+                                break  # success — fall through to setup on next loop
+                            except Exception:
+                                try:
+                                    await self.transport.disconnect()
+                                except Exception:
+                                    pass
+                        # If still not connected, loop back to ADV wait
                     continue
 
-            # Outside the lock: wait until disconnect (or ESP reboot)
+            # ---- Connected: wait until disconnect (or ESP reboot) ----
             try:
                 while self.transport.is_connected:
                     if (
@@ -654,7 +673,6 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         pass
 
             except asyncio.CancelledError:
-                _LOGGER.error("Live connection was cancelled")
                 raise
             except Exception as err:
                 _LOGGER.error("Unexpected error in live monitoring: %s", err)
@@ -662,8 +680,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._live_setup_done = False
                 self._sensor_subscribed = False
                 await self.transport.unsubscribe_all()
-                _LOGGER.info("Live connection ended – retrying in 5s")
-                await asyncio.sleep(5)
+                _LOGGER.info("Live connection ended")
 
     def _update_bridge_device_version(self) -> None:
         """Update sw_version on the ESP bridge sub-device."""
@@ -716,16 +733,17 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ir.async_delete_issue(self.hass, DOMAIN, "esp_bridge_outdated")
 
     async def _wait_before_retry(self, backoff: int) -> bool:
-        """Wait before retrying live connection.
+        """Wait before retrying (ESP bridge only).
 
-        Returns True if woken early (device seen / ESP status event).
-        Both transports use the same _wake_event — set by BLE advertisement
-        callback (Bleak) or ESP status event callback (ESP bridge).
+        Returns True if woken early by ESP status event.
         """
+        if self._wake_event.is_set():
+            self._wake_event.clear()
+            return True
         self._wake_event.clear()
         try:
             await asyncio.wait_for(self._wake_event.wait(), timeout=backoff)
-            _LOGGER.debug("Wake event during backoff - reconnecting immediately")
+            _LOGGER.debug("ESP wake event - reconnecting immediately")
             return True
         except asyncio.TimeoutError:
             return False

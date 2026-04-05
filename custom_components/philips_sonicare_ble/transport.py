@@ -348,6 +348,9 @@ class EspBridgeTransport(SonicareTransport):
             if mac and self._detected_mac and mac.upper() != self._detected_mac.upper():
                 return
 
+            if mac and not self._detected_mac:
+                self._detected_mac = mac
+
             status = event.data.get("status", "")
             version = event.data.get("version")
             if version:
