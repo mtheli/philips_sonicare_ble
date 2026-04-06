@@ -235,6 +235,7 @@ class EspBridgeTransport(SonicareTransport):
         self._pending_info: asyncio.Future[dict[str, str]] | None = None
         self._ble_paired: str | None = None
         self._needs_resubscribe = False
+        self._ready_event = asyncio.Event()
 
     def _svc_name(self, action: str) -> str:
         base = f"{self._device_name}_{action}"
@@ -388,6 +389,7 @@ class EspBridgeTransport(SonicareTransport):
                 # complete ("ready"), not on "connected" (GATT_OPEN_EVT)
                 # which fires before the characteristic table is populated.
                 self._device_connected = True
+                self._ready_event.set()
                 # Only flag resubscribe if HA has no active subscriptions.
                 # The bridge re-fires "ready" on every heartbeat when it
                 # has no subscriptions — ignore if HA already subscribed.
@@ -434,21 +436,33 @@ class EspBridgeTransport(SonicareTransport):
         """Wait until the ESP bridge reports alive and BLE device connected."""
         if self.is_connected:
             return
-        _LOGGER.debug("Waiting for ESP bridge status events...")
-        for _ in range(30):  # max 30s
+        self._ready_event.clear()
+        _LOGGER.debug("%s: Waiting for ESP bridge ready event...", self._address)
+        # Wait up to 10s for ESP to report alive (heartbeat)
+        for _ in range(10):
             await asyncio.sleep(1)
-            if self.is_connected:
-                _LOGGER.info(
-                    "ESP bridge ready (mac=%s, version=%s)",
-                    self._detected_mac,
-                    self._bridge_version,
-                )
-                return
+            if self._esp_alive:
+                break
         if not self._esp_alive:
-            raise TransportError("ESP bridge did not respond within 30s")
-        if not self._device_connected:
-            _LOGGER.warning("ESP bridge alive but BLE device not connected (yet)")
-            # Don't raise — device may connect later
+            raise TransportError("ESP bridge did not respond within 10s")
+        if self.is_connected:
+            _LOGGER.info(
+                "ESP bridge ready (mac=%s, version=%s)",
+                self._detected_mac,
+                self._bridge_version,
+            )
+            return
+        # ESP alive but device not connected — wait for "ready" event
+        _LOGGER.debug(
+            "%s: ESP bridge alive, waiting for BLE device to connect...",
+            self._address,
+        )
+        await self._ready_event.wait()
+        _LOGGER.info(
+            "ESP bridge ready (mac=%s, version=%s)",
+            self._detected_mac,
+            self._bridge_version,
+        )
 
     async def disconnect(self) -> None:
         if self._event_unsub:
@@ -463,6 +477,7 @@ class EspBridgeTransport(SonicareTransport):
         self._setup_done = False
         self._device_connected = False
         self._esp_alive = False
+        self._ready_event.clear()
         self._pending_reads.clear()
         self._notify_callbacks.clear()
 
