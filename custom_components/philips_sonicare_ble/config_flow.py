@@ -29,8 +29,6 @@ from bleak_retry_connector import establish_connection as bleak_establish
 
 from .const import (
     DOMAIN,
-    CONF_POLL_INTERVAL,
-    CONF_ENABLE_LIVE_UPDATES,
     CONF_SERVICES,
     CONF_TRANSPORT_TYPE,
     CONF_ESP_DEVICE_NAME,
@@ -41,14 +39,10 @@ from .const import (
     CONF_SENSOR_GYROSCOPE,
     TRANSPORT_BLEAK,
     TRANSPORT_ESP_BRIDGE,
-    DEFAULT_POLL_INTERVAL,
-    DEFAULT_ENABLE_LIVE_UPDATES,
     DEFAULT_NOTIFY_THROTTLE,
     DEFAULT_SENSOR_PRESSURE,
     DEFAULT_SENSOR_TEMPERATURE,
     DEFAULT_SENSOR_GYROSCOPE,
-    MIN_POLL_INTERVAL,
-    MAX_POLL_INTERVAL,
     MIN_NOTIFY_THROTTLE,
     MAX_NOTIFY_THROTTLE,
     CHAR_BATTERY_LEVEL,
@@ -471,7 +465,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._esp_device_name = device_name
         self._esp_device_ids = device_ids
 
-        # Use the ESP device name + first device_id as unique ID
         unique_id = f"esp_{device_name}_{device_ids[0]}" if device_ids[0] else f"esp_{device_name}"
         await self.async_set_unique_id(unique_id)
         self._abort_if_unique_id_configured()
@@ -725,22 +718,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         try:
             await transport.connect()
-            # Request info event (includes paired status)
-            try:
-                await self.hass.services.async_call(
-                    "esphome",
-                    f"{self._esp_device_name}_ble_get_info"
-                    + (f"_{self._esp_device_id}" if self._esp_device_id else ""),
-                    {},
-                    blocking=True,
-                )
-                await asyncio.sleep(1)  # wait for info event
-            except Exception:
-                pass
+            info = await transport.get_bridge_info()
             self._bridge_info = {
-                "version": transport.bridge_version or "?",
-                "ble_connected": str(transport.is_device_connected).lower(),
-                "mac": transport.detected_mac or "",
+                "version": (info or {}).get("version") or transport.bridge_version or "?",
+                "ble_connected": (info or {}).get("ble_connected", str(transport.is_device_connected).lower()),
+                "mac": (info or {}).get("mac") or transport.detected_mac or "",
                 "paired": transport.ble_paired or "",
             }
         except TransportError:
@@ -978,39 +960,29 @@ class PhilipsSonicareOptionsFlow(OptionsFlow):
 
         if user_input is not None:
             data = {
-                CONF_POLL_INTERVAL: user_input[CONF_POLL_INTERVAL],
-                CONF_ENABLE_LIVE_UPDATES: user_input[CONF_ENABLE_LIVE_UPDATES],
                 CONF_SENSOR_PRESSURE: user_input.get(CONF_SENSOR_PRESSURE, DEFAULT_SENSOR_PRESSURE),
                 CONF_SENSOR_TEMPERATURE: user_input.get(CONF_SENSOR_TEMPERATURE, DEFAULT_SENSOR_TEMPERATURE),
                 CONF_SENSOR_GYROSCOPE: user_input.get(CONF_SENSOR_GYROSCOPE, DEFAULT_SENSOR_GYROSCOPE),
             }
-            if is_esp and CONF_NOTIFY_THROTTLE in user_input:
-                data[CONF_NOTIFY_THROTTLE] = int(user_input[CONF_NOTIFY_THROTTLE])
+            if is_esp:
+                if CONF_NOTIFY_THROTTLE in user_input:
+                    data[CONF_NOTIFY_THROTTLE] = int(user_input[CONF_NOTIFY_THROTTLE])
             return self.async_create_entry(title="", data=data)
 
         options = self._config_entry.options
-        schema_fields: dict = {
-            vol.Required(
-                CONF_POLL_INTERVAL,
-                default=options.get(CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL),
-            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_POLL_INTERVAL, max=MAX_POLL_INTERVAL)),
-            vol.Required(
-                CONF_ENABLE_LIVE_UPDATES,
-                default=options.get(CONF_ENABLE_LIVE_UPDATES, DEFAULT_ENABLE_LIVE_UPDATES),
-            ): bool,
-            vol.Required(
+        schema_fields: dict = {}
+        schema_fields[vol.Required(
                 CONF_SENSOR_PRESSURE,
                 default=options.get(CONF_SENSOR_PRESSURE, DEFAULT_SENSOR_PRESSURE),
-            ): bool,
-            vol.Required(
+            )] = bool
+        schema_fields[vol.Required(
                 CONF_SENSOR_TEMPERATURE,
                 default=options.get(CONF_SENSOR_TEMPERATURE, DEFAULT_SENSOR_TEMPERATURE),
-            ): bool,
-            vol.Required(
+            )] = bool
+        schema_fields[vol.Required(
                 CONF_SENSOR_GYROSCOPE,
                 default=options.get(CONF_SENSOR_GYROSCOPE, DEFAULT_SENSOR_GYROSCOPE),
-            ): bool,
-        }
+            )] = bool
 
         if is_esp:
             schema_fields[vol.Required(

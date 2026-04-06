@@ -109,7 +109,7 @@ class BleakTransport(SonicareTransport):
             raise TransportError(f"Device {self._address} not in range")
 
         def _on_disconnect(_client):
-            _LOGGER.info("BleakTransport: connection lost")
+            _LOGGER.info("%s: connection lost", self._address)
             self._client = None
             if self._disconnect_cb:
                 self._disconnect_cb()
@@ -167,7 +167,7 @@ class BleakTransport(SonicareTransport):
                 except Exception as e:
                     _LOGGER.debug("Read failed for %s: %s", uuid, e)
         except Exception as err:
-            _LOGGER.error("BLE poll error: %s", err)
+            _LOGGER.debug("BLE poll error (device likely sleeping): %s", err)
         finally:
             if client and client.is_connected:
                 try:
@@ -230,8 +230,9 @@ class EspBridgeTransport(SonicareTransport):
         self._pending_reads: dict[str, asyncio.Future[bytes | None]] = {}
         self._last_read_errors: dict[str, str] = {}
         self._notify_callbacks: dict[str, Callable[[str, bytes], None]] = {}
-        self._detected_mac: str | None = None
+        self._detected_mac: str | None = address if ":" in address else None
         self._bridge_version: str | None = None
+        self._pending_info: asyncio.Future[dict[str, str]] | None = None
         self._ble_paired: str | None = None
         self._needs_resubscribe = False
 
@@ -361,12 +362,22 @@ class EspBridgeTransport(SonicareTransport):
                 self._esp_alive = True
 
             if status == "info":
+                # Filter by device_id if present (multi-device ESP)
+                event_device_id = event.data.get("device_id", "")
+                if event_device_id and self._esp_device_id and event_device_id != self._esp_device_id:
+                    return
+                # Only set _detected_mac from info events (device_id filtered)
+                # to avoid cross-contamination from other instances' heartbeats
+                if mac and not self._detected_mac:
+                    self._detected_mac = mac
                 paired = event.data.get("paired")
                 if paired is not None:
                     self._ble_paired = paired
                 ble_connected = event.data.get("ble_connected")
                 if ble_connected is not None:
                     self._device_connected = ble_connected == "true"
+                if self._pending_info and not self._pending_info.done():
+                    self._pending_info.set_result(dict(event.data))
             elif status == "heartbeat":
                 ble_connected = event.data.get("ble_connected") == "true"
                 self._device_connected = ble_connected
@@ -528,7 +539,7 @@ class EspBridgeTransport(SonicareTransport):
 
     async def unsubscribe(self, char_uuid: str) -> None:
         self._notify_callbacks.pop(char_uuid, None)
-        if not self._setup_done:
+        if not self._setup_done or not self._device_connected:
             return
         service_uuid = self._get_service_uuid(char_uuid)
         try:
@@ -542,8 +553,38 @@ class EspBridgeTransport(SonicareTransport):
             pass
 
     async def unsubscribe_all(self) -> None:
+        if not self._device_connected:
+            # Device already gone — just clear local callbacks
+            self._notify_callbacks.clear()
+            return
         for char_uuid in list(self._notify_callbacks.keys()):
             await self.unsubscribe(char_uuid)
+
+    async def get_bridge_info(self) -> dict[str, str] | None:
+        """Request diagnostic info from ESP bridge via ble_get_info service."""
+        if not self._setup_done:
+            return None
+
+        self._pending_info = self._hass.loop.create_future()
+
+        try:
+            await self._hass.services.async_call(
+                "esphome",
+                self._svc_name("ble_get_info"),
+                {},
+                blocking=True,
+            )
+        except HomeAssistantError as err:
+            _LOGGER.debug("ESP get_bridge_info failed: %s", err)
+            self._pending_info = None
+            return None
+
+        try:
+            return await asyncio.wait_for(self._pending_info, timeout=5.0)
+        except asyncio.TimeoutError:
+            _LOGGER.warning("ESP get_bridge_info timeout")
+            self._pending_info = None
+            return None
 
     async def set_notify_throttle(self, ms: int) -> None:
         if not self.is_connected:
