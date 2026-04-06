@@ -17,7 +17,7 @@ SONICARE_SERVICE_UUIDS = [
 SONICARE_MANUFACTURER_ID = 477
 
 # Minimum ESP bridge component version required for full functionality
-MIN_BRIDGE_VERSION = "1.2.0"
+MIN_BRIDGE_VERSION = "1.2.2"
 
 # ── Service UUIDs ────────────────────────────────────────────────────────────
 SVC_BATTERY = "0000180f-0000-1000-8000-00805f9b34fb"
@@ -144,7 +144,7 @@ INTENSITIES = {
 }
 
 PRESSURE_ALARM_STATES = {
-    0: "no_contact",
+    0: "ok",
     1: "optimal",
     2: "too_high",
 }
@@ -320,12 +320,7 @@ CHAR_SERVICE_MAP: dict[str, str] = {
 }
 
 # ── Config ───────────────────────────────────────────────────────────────────
-DEFAULT_POLL_INTERVAL = 60
-DEFAULT_ENABLE_LIVE_UPDATES = True
-
 CONF_ADDRESS = "address"
-CONF_POLL_INTERVAL = "poll_interval"
-CONF_ENABLE_LIVE_UPDATES = "enable_live_updates"
 CONF_SERVICES = "services"
 
 CONF_TRANSPORT_TYPE = "transport_type"
@@ -334,9 +329,6 @@ TRANSPORT_ESP_BRIDGE = "esp_bridge"
 
 CONF_ESP_DEVICE_NAME = "esp_device_name"
 CONF_ESP_DEVICE_ID = "esp_device_id"
-
-MIN_POLL_INTERVAL = 30
-MAX_POLL_INTERVAL = 300
 
 CONF_NOTIFY_THROTTLE = "notify_throttle_ms"
 DEFAULT_NOTIFY_THROTTLE = 500

@@ -2,7 +2,7 @@
   "issues": {
     "esp_bridge_outdated": {
       "title": "ESP bridge firmware update required",
-      "description": "Your ESP bridge is running **v{version}**, but **v{min_version}** or newer is required for full functionality.\n\nRebuild and flash your ESPHome device to get the latest firmware."
+      "description": "Your ESP bridge is running **v{version}**, but **v{min_version}** or newer is required for full functionality.\n\nRebuild and flash your ESPHome device to get the latest firmware. See the ESP Bridge Changelog in the repository for details."
     }
   },
   "config": {
@@ -75,8 +75,6 @@
       "init": {
         "title": "Philips Sonicare Options",
         "data": {
-          "poll_interval": "Poll interval (seconds)",
-          "enable_live_updates": "Enable live updates (BLE notifications)",
           "sensor_pressure": "Enable pressure sensor",
           "sensor_temperature": "Enable temperature sensor",
           "sensor_gyroscope": "Enable gyroscope sensor",
@@ -170,7 +168,7 @@
       "pressure_state": {
         "name": "Pressure State",
         "state": {
-          "no_contact": "No Contact",
+          "ok": "OK",
           "optimal": "Optimal",
           "too_high": "Too High"
         }

@@ -766,7 +766,10 @@ class SonicareActivitySensor(PhilipsSonicareEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         data = self.coordinator.data
-        if not data or data.get("handle_state") is None:
+        if not data:
+            return "off"
+
+        if data.get("_connecting"):
             return "initializing"
 
         handle = data.get("handle_state")
@@ -851,7 +854,7 @@ class SonicareTemperatureSensor(PhilipsSonicareEntity, SensorEntity):
 # Pressure State (from sensor data stream 0x4130)
 # ---------------------------------------------------------------------------
 class SonicarePressureStateSensor(PhilipsSonicareEntity, SensorEntity):
-    """Pressure state enum (no_contact, optimal, too_high)."""
+    """Pressure state enum (ok, optimal, too_high)."""
 
     _attr_translation_key = "pressure_state"
     _attr_device_class = SensorDeviceClass.ENUM
