@@ -257,3 +257,34 @@ If data still doesn't flow:
   `ble_write_char`, `ble_unsubscribe`, `ble_get_info`) with service and characteristic UUIDs
 - **Heartbeat**: the bridge sends a `heartbeat` status event every 15 seconds with
   BLE connection state, MAC address, and component version
+
+---
+
+## Multi-Device Setup
+
+A single ESP32 can bridge **multiple** Sonicare toothbrushes. Each device needs its own `ble_client` and `philips_sonicare` entry with a unique `bridge_id`:
+
+```yaml
+ble_client:
+  - mac_address: "AA:BB:CC:DD:EE:01"
+    id: sonicare_prestige
+    auto_connect: true
+
+  - mac_address: "AA:BB:CC:DD:EE:02"
+    id: sonicare_kids
+    auto_connect: true
+
+philips_sonicare:
+  - ble_client_id: sonicare_prestige
+    bridge_id: prestige
+
+  - ble_client_id: sonicare_kids
+    bridge_id: kids
+```
+
+The `bridge_id` is **required** when using multiple instances — the ESP will refuse to compile without it. It serves as a suffix for service names (e.g., `ble_read_char_prestige`) so HA can address each device separately.
+
+A full example is available in [`esphome/atom-lite-dual.yaml`](../esphome/atom-lite-dual.yaml).
+
+> [!NOTE]
+> Each toothbrush should only be connected via **one** path — either Direct BLE or ESP Bridge, not both simultaneously.

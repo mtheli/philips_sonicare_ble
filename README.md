@@ -136,7 +136,7 @@ These sensors are only available while actively brushing and stream live data fr
 
 * A compatible Philips Sonicare toothbrush (see [Tested Models](#tested-models) above).
 * **Either** a Home Assistant instance with the **Bluetooth integration** enabled and a working Bluetooth adapter, **or** an ESP32 running the [BLE Bridge component](docs/ESP32_BRIDGE.md).
-* **Pairing depends on the model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X) and some other models require BLE pairing. Simply close any Sonicare phone app to free the BLE connection.
+* **Pairing depends on the model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X), Prestige 9900 (HX999X), HX991M, and Sonicare For Kids require BLE pairing. The integration handles both cases automatically. Simply close any Sonicare phone app to free the BLE connection.
 
 > [!NOTE]
 > The toothbrush only advertises via BLE for a short time after being picked up from the charger or turned on/off. It enters deep sleep after approximately 20 seconds of inactivity. While on the charging stand, it is **not reachable** via BLE.
@@ -202,8 +202,6 @@ For the complete setup guide, see **[ESP32 Bridge Setup Guide](docs/ESP32_BRIDGE
 
 | Option | Default | Description |
 | :--- | :--- | :--- |
-| Poll Interval | 60s | How often to poll when live connection is unavailable (30-300s). |
-| Live Updates | Enabled | Use BLE notifications for real-time updates during brushing. |
 | Pressure Sensor | Enabled | Stream live pressure data during brushing. |
 | Temperature Sensor | Enabled | Stream live temperature data during brushing. |
 | Gyroscope Sensor | Disabled | Stream live 6-axis IMU data during brushing (experimental). |
@@ -219,7 +217,7 @@ The Sonicare toothbrush has unique BLE behavior compared to other Philips device
 
 * **Slow advertising** -- the toothbrush sends BLE advertisements only every 10-30 seconds (most BLE devices: every 100-500ms).
 * **Short wake window** -- after turning off, the toothbrush stays connectable for only ~20 seconds before entering deep sleep.
-* **Pairing varies by model** -- DiamondClean Smart (HX992X) and Prestige 9900 use open GATT without bonding. ExpertClean (HX962X) and HX991M require BLE pairing. The integration handles both cases automatically.
+* **Pairing varies by model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X), Prestige 9900 (HX999X), HX991M, and Sonicare For Kids require BLE pairing. The integration handles both cases automatically.
 
 The integration handles this with:
 
