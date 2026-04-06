@@ -438,7 +438,14 @@ class EspBridgeTransport(SonicareTransport):
             return
         self._ready_event.clear()
         _LOGGER.debug("%s: Waiting for ESP bridge ready event...", self._address)
-        # Wait up to 10s for ESP to report alive (heartbeat)
+        # Trigger immediate info event instead of waiting for next heartbeat
+        try:
+            await self._hass.services.async_call(
+                "esphome", self._svc_name("ble_get_info"), {}, blocking=True,
+            )
+        except Exception:
+            pass
+        # Wait up to 10s for ESP to report alive
         for _ in range(10):
             await asyncio.sleep(1)
             if self._esp_alive:
