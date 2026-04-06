@@ -8,11 +8,11 @@
   "codeowners": ["@mtheli"],
   "config_flow": true,
   "dependencies": ["bluetooth"],
-  "zeroconf": [{"type": "_esphomelib._tcp.local."}],
   "documentation": "https://github.com/mtheli/philips_sonicare_ble",
   "integration_type": "device",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/mtheli/philips_sonicare_ble/issues",
   "requirements": ["bleak>=0.21.0", "bleak-retry-connector>=3.5.0"],
-  "version": "0.6.1"
+  "version": "0.6.1",
+  "zeroconf": [{"type": "_esphomelib._tcp.local."}]
 }
