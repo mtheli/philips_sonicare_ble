@@ -249,6 +249,7 @@ Toothbrush wakes up
 * **Phone app conflict**: The toothbrush supports only one BLE connection. Close or uninstall the Sonicare phone app if you experience connection issues.
 * **Pairing issues**: If a model that requires bonding won't connect, remove the toothbrush from your phone's Bluetooth settings first (Settings → Bluetooth → Philips Sonicare → Forget/Unpair). The integration handles stale bonds automatically, but the phone's bond may block the connection.
 * **ESPHome Bluetooth Proxy**: The standard ESPHome `bluetooth_proxy` is not compatible with the Sonicare -- the ESP32 crashes during GATT service discovery. Use the dedicated [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) instead.
+* **Unsure if your model is compatible?** Run the [GATT scan script](scripts/sonicare_scan.py) to check which BLE protocol your toothbrush uses. It only needs Python 3 and `bleak` (`pip install bleak`).
 
 ### Known Issues
 
