@@ -213,12 +213,12 @@ class EspBridgeTransport(SonicareTransport):
         hass: HomeAssistant,
         address: str,
         esphome_device_name: str,
-        esp_device_id: str = "",
+        esp_bridge_id: str = "",
     ) -> None:
         self._hass = hass
         self._address = address
         self._device_name = esphome_device_name
-        self._esp_device_id = esp_device_id
+        self._esp_bridge_id = esp_bridge_id
         self._setup_done = False
         self._device_connected = False
         self._esp_alive = False
@@ -238,8 +238,8 @@ class EspBridgeTransport(SonicareTransport):
 
     def _svc_name(self, action: str) -> str:
         base = f"{self._device_name}_{action}"
-        if self._esp_device_id:
-            return f"{base}_{self._esp_device_id}"
+        if self._esp_bridge_id:
+            return f"{base}_{self._esp_bridge_id}"
         return base
 
     @staticmethod
@@ -362,11 +362,11 @@ class EspBridgeTransport(SonicareTransport):
                 self._esp_alive = True
 
             if status == "info":
-                # Filter by device_id if present (multi-device ESP)
-                event_device_id = event.data.get("device_id", "")
-                if event_device_id and self._esp_device_id and event_device_id != self._esp_device_id:
+                # Filter by bridge_id if present (multi-device ESP)
+                event_bridge_id = event.data.get("bridge_id", "")
+                if event_bridge_id and self._esp_bridge_id and event_bridge_id != self._esp_bridge_id:
                     return
-                # Only set _detected_mac from info events (device_id filtered)
+                # Only set _detected_mac from info events (bridge_id filtered)
                 # to avoid cross-contamination from other instances' heartbeats
                 if mac and not self._detected_mac:
                     self._detected_mac = mac

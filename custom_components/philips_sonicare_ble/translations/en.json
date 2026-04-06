@@ -41,7 +41,7 @@
         "title": "Select BLE Device",
         "description": "This ESP bridge has multiple Philips devices connected. Select the device you want to add.",
         "data": {
-          "esp_device_id": "BLE Device"
+          "esp_bridge_id": "BLE Device"
         }
       },
       "esp_bridge_status": {

@@ -10,8 +10,8 @@ esp32:
   framework:
     type: esp-idf
     sdkconfig_options:
-      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"    # default 40; Sonicare has ~45 attributes
-      CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"     # default 5; we subscribe to 11 chars
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "160"    # default 40; Sonicare has ~45 attributes
+      CONFIG_BT_GATTC_NOTIF_REG_MAX: "30"      # default 5; we subscribe to 11 chars per device
 
 logger:
   level: DEBUG
@@ -39,7 +39,7 @@ captive_portal:
 
 esp32_ble:
   io_capability: none
-  max_notifications: 20
+  max_notifications: 30
 
 esp32_ble_tracker:
   scan_parameters:
@@ -47,21 +47,15 @@ esp32_ble_tracker:
     interval: 211ms
     window: 120ms
 
-# --- BLE Client ---
-# Replace the MAC address with your Sonicare's Bluetooth address.
-# You can find the MAC in the Philips app or via a BLE scanner.
-#
-# BLE bonding is handled automatically by the component.  Models that
-# require bonding (ExpertClean, HX991M) are paired via SMP after service
-# discovery; models with open GATT (DiamondClean) work as before.
+# --- BLE Clients ---
 
 ble_client:
-  - mac_address: "XX:XX:XX:XX:XX:XX"          # <-- Replace with your Sonicare's MAC
-    id: philips_sonicare_ble
+  - mac_address: "AA:BB:CC:DD:EE:01"     # Replace with your Prestige 9900 MAC
+    id: sonicare_prestige
     auto_connect: true
     on_connect:
       then:
-        - logger.log: "Connected to Sonicare"
+        - logger.log: "Connected to Prestige 9900"
         - light.turn_on:
             id: status_led
             red: 0%
@@ -69,14 +63,24 @@ ble_client:
             blue: 0%
     on_disconnect:
       then:
-        - logger.log: "Disconnected from Sonicare"
+        - logger.log: "Disconnected from Prestige 9900"
         - light.turn_on:
             id: status_led
             red: 100%
             green: 0%
             blue: 0%
 
-# --- Philips Sonicare Component ---
+  - mac_address: "AA:BB:CC:DD:EE:02"     # Replace with your Kids MAC
+    id: sonicare_kids
+    auto_connect: true
+    on_connect:
+      then:
+        - logger.log: "Connected to Kids"
+    on_disconnect:
+      then:
+        - logger.log: "Disconnected from Kids"
+
+# --- Philips Sonicare Components ---
 
 external_components:
   - source:
@@ -88,11 +92,14 @@ external_components:
     refresh: 0s
 
 philips_sonicare:
-  ble_client_id: philips_sonicare_ble
+  - ble_client_id: sonicare_prestige
+    bridge_id: prestige
+
+  - ble_client_id: sonicare_kids
+    bridge_id: kids
 
 # --- Hardware: M5Stack Atom Lite ---
 
-# NeoPixel LED (GPIO27) — esp32_rmt_led_strip required for ESP-IDF
 light:
   - platform: esp32_rmt_led_strip
     chipset: ws2812
@@ -103,7 +110,6 @@ light:
     name: "Status LED"
     restore_mode: ALWAYS_OFF
 
-# Button (GPIO39)
 binary_sensor:
   - platform: gpio
     id: atom_button

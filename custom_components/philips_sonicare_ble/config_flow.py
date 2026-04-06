@@ -32,7 +32,7 @@ from .const import (
     CONF_SERVICES,
     CONF_TRANSPORT_TYPE,
     CONF_ESP_DEVICE_NAME,
-    CONF_ESP_DEVICE_ID,
+    CONF_ESP_BRIDGE_ID,
     CONF_NOTIFY_THROTTLE,
     CONF_SENSOR_PRESSURE,
     CONF_SENSOR_TEMPERATURE,
@@ -124,8 +124,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._fetched_data: dict[str, Any] | None = None
         self._transport_type: str = TRANSPORT_BLEAK
         self._esp_device_name: str | None = None
-        self._esp_device_id: str = ""
-        self._esp_device_ids: list[str] = []
+        self._esp_bridge_id: str = ""
+        self._esp_bridge_ids: list[str] = []
         self._bridge_info: dict[str, str] | None = None
 
     # ------------------------------------------------------------------
@@ -272,10 +272,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self,
         address: str,
         esp_device_name: str,
-        esp_device_id: str = "",
+        esp_bridge_id: str = "",
     ) -> dict[str, Any]:
         """Read capabilities and probe services via ESP32 bridge."""
-        transport = EspBridgeTransport(self.hass, address, esp_device_name, esp_device_id)
+        transport = EspBridgeTransport(self.hass, address, esp_device_name, esp_bridge_id)
         try:
             await transport.connect()
 
@@ -420,7 +420,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
         return options
 
-    def _detect_esp_device_ids(self, esp_device_name: str) -> list[str]:
+    def _detect_esp_bridge_ids(self, esp_device_name: str) -> list[str]:
         """Detect available device_id suffixes on an ESP bridge."""
         # Single device (no suffix)
         if self.hass.services.has_service("esphome", f"{esp_device_name}_ble_read_char"):
@@ -454,8 +454,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         # Wait for ESPHome to register services (may not be ready yet)
         for _ in range(10):
-            device_ids = self._detect_esp_device_ids(device_name)
-            if device_ids:
+            bridge_ids = self._detect_esp_bridge_ids(device_name)
+            if bridge_ids:
                 break
             await asyncio.sleep(3)
         else:
@@ -463,9 +463,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         # Found a Sonicare bridge — check if already configured
         self._esp_device_name = device_name
-        self._esp_device_ids = device_ids
+        self._esp_bridge_ids = bridge_ids
 
-        unique_id = f"esp_{device_name}_{device_ids[0]}" if device_ids[0] else f"esp_{device_name}"
+        unique_id = f"esp_{device_name}_{bridge_ids[0]}" if bridge_ids[0] else f"esp_{device_name}"
         await self.async_set_unique_id(unique_id)
         self._abort_if_unique_id_configured()
 
@@ -473,9 +473,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._name = device_name.replace("_", "-")
         self.context["title_placeholders"] = {"name": self._name}
 
-        if len(device_ids) > 1:
+        if len(bridge_ids) > 1:
             return await self.async_step_esp_select_device()
-        self._esp_device_id = device_ids[0]
+        self._esp_bridge_id = bridge_ids[0]
         return await self._esp_bridge_health_check()
 
     async def async_step_bluetooth(
@@ -497,7 +497,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         esphome_entries = self.hass.config_entries.async_entries("esphome")
         for entry in esphome_entries:
             device_name = entry.data.get("device_name")
-            if device_name and self._detect_esp_device_ids(device_name):
+            if device_name and self._detect_esp_bridge_ids(device_name):
                 return device_name
         return None
 
@@ -510,10 +510,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         esp_device = self._find_esp_bridge()
         if esp_device:
             self._esp_device_name = esp_device
-            self._esp_device_ids = self._detect_esp_device_ids(esp_device)
-            if len(self._esp_device_ids) > 1:
+            self._esp_bridge_ids = self._detect_esp_bridge_ids(esp_device)
+            if len(self._esp_bridge_ids) > 1:
                 return await self.async_step_esp_select_device()
-            self._esp_device_id = self._esp_device_ids[0]
+            self._esp_bridge_id = self._esp_bridge_ids[0]
             return await self._esp_bridge_health_check()
 
         if user_input is None:
@@ -640,18 +640,18 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             esp_device_name = user_input["esp_device_name"].strip().replace("-", "_")
 
-            device_ids = self._detect_esp_device_ids(esp_device_name)
-            if not device_ids:
+            bridge_ids = self._detect_esp_bridge_ids(esp_device_name)
+            if not bridge_ids:
                 _LOGGER.error("No philips_sonicare services found on %s", esp_device_name)
                 errors["base"] = "cannot_connect"
             else:
                 self._esp_device_name = esp_device_name
-                self._esp_device_ids = device_ids
+                self._esp_bridge_ids = bridge_ids
 
-                if len(device_ids) > 1:
+                if len(bridge_ids) > 1:
                     return await self.async_step_esp_select_device()
 
-                self._esp_device_id = device_ids[0]
+                self._esp_bridge_id = bridge_ids[0]
                 return await self._esp_bridge_health_check()
 
         esp_options = self._get_esphome_device_options()
@@ -683,25 +683,25 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Let user pick which device on a multi-device ESP bridge."""
         if user_input is not None:
-            self._esp_device_id = user_input["esp_device_id"]
+            self._esp_bridge_id = user_input["esp_bridge_id"]
             return await self._esp_bridge_health_check()
 
         options: list[SelectOptionDict] = []
-        for did in self._esp_device_ids:
+        for did in self._esp_bridge_ids:
             options.append(SelectOptionDict(value=did, label=did or "default"))
 
         if not options:
             return self.async_abort(reason="already_configured")
 
         if len(options) == 1:
-            self._esp_device_id = options[0]["value"]
+            self._esp_bridge_id = options[0]["value"]
             return await self._esp_bridge_health_check()
 
         return self.async_show_form(
             step_id="esp_select_device",
             data_schema=vol.Schema(
                 {
-                    vol.Required("esp_device_id"): SelectSelector(
+                    vol.Required("esp_bridge_id"): SelectSelector(
                         SelectSelectorConfig(options=options)
                     ),
                 }
@@ -714,7 +714,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             return await self.async_step_esp_bridge_status()
 
         transport = EspBridgeTransport(
-            self.hass, "", self._esp_device_name, self._esp_device_id
+            self.hass, "", self._esp_device_name, self._esp_bridge_id
         )
         try:
             await transport.connect()
@@ -753,7 +753,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 capabilities = await self._async_fetch_capabilities_esp(
-                    "", self._esp_device_name, self._esp_device_id,
+                    "", self._esp_device_name, self._esp_bridge_id,
                 )
 
                 sonicare_mac = capabilities.get("sonicare_mac")
@@ -852,8 +852,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             if self._transport_type == TRANSPORT_ESP_BRIDGE:
                 entry_data[CONF_TRANSPORT_TYPE] = TRANSPORT_ESP_BRIDGE
                 entry_data[CONF_ESP_DEVICE_NAME] = self._esp_device_name
-                if self._esp_device_id:
-                    entry_data[CONF_ESP_DEVICE_ID] = self._esp_device_id
+                if self._esp_bridge_id:
+                    entry_data[CONF_ESP_BRIDGE_ID] = self._esp_bridge_id
                 if self._address:
                     entry_data[CONF_ADDRESS] = self._address
             else:

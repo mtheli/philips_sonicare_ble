@@ -328,7 +328,7 @@ TRANSPORT_BLEAK = "bleak"
 TRANSPORT_ESP_BRIDGE = "esp_bridge"
 
 CONF_ESP_DEVICE_NAME = "esp_device_name"
-CONF_ESP_DEVICE_ID = "esp_device_id"
+CONF_ESP_BRIDGE_ID = "esp_bridge_id"
 
 CONF_NOTIFY_THROTTLE = "notify_throttle_ms"
 DEFAULT_NOTIFY_THROTTLE = 500

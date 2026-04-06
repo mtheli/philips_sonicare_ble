@@ -58,7 +58,7 @@ void PhilipsSonicare::setup() {
                           this->svc_name_("ble_set_throttle"), {"throttle_ms"});
   this->register_service(&PhilipsSonicare::on_get_info,
                           this->svc_name_("ble_get_info"), {});
-  ESP_LOGI(TAG, "Services registered (suffix: '%s')", this->device_id_.c_str());
+  ESP_LOGI(TAG, "Services registered (suffix: '%s')", this->bridge_id_.c_str());
 }
 
 void PhilipsSonicare::loop() {
@@ -83,10 +83,10 @@ void PhilipsSonicare::loop() {
             {"version", PHILIPS_SONICARE_VERSION},
         });
 
-    // If BLE is connected but no subscriptions yet, re-fire "ready"
-    // so HA can set up subscriptions. After OTA reboot, BLE connects
-    // before the HA API stream is up — the initial "ready" is lost.
-    if (this->connected_ && this->notify_map_.empty()) {
+    // If BLE is connected, services discovered, but no subscriptions yet,
+    // re-fire "ready" so HA can set up subscriptions. After OTA reboot,
+    // BLE connects before the HA API stream is up — the initial "ready" is lost.
+    if (this->connected_ && this->services_discovered_ && this->notify_map_.empty()) {
       ESP_LOGI(TAG, "BLE connected, no subscriptions — re-firing ready");
       this->fire_homeassistant_event(
           "esphome.philips_sonicare_ble_status",
@@ -108,15 +108,15 @@ std::string PhilipsSonicare::get_device_mac_() {
 }
 
 std::string PhilipsSonicare::svc_name_(const std::string &action) {
-  if (this->device_id_.empty())
+  if (this->bridge_id_.empty())
     return action;
-  return action + "_" + this->device_id_;
+  return action + "_" + this->bridge_id_;
 }
 
 void PhilipsSonicare::dump_config() {
   ESP_LOGCONFIG(TAG, "Philips Sonicare BLE Bridge v%s", PHILIPS_SONICARE_VERSION);
-  if (!this->device_id_.empty())
-    ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+  if (!this->bridge_id_.empty())
+    ESP_LOGCONFIG(TAG, "  Bridge ID: %s", this->bridge_id_.c_str());
 }
 
 void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
@@ -127,7 +127,10 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
       if (param->open.status == ESP_GATT_OK) {
         this->auth_completed_ = false;
         this->connect_time_ms_ = millis();
-        ESP_LOGI(TAG, "Connected to Sonicare (%s)", this->get_device_mac_().c_str());
+        ESP_LOGI(TAG, "Connected to Sonicare (%s%s%s)",
+                 this->get_device_mac_().c_str(),
+                 this->bridge_id_.empty() ? "" : ", bridge=",
+                 this->bridge_id_.empty() ? "" : this->bridge_id_.c_str());
         this->connected_ = true;
         if (this->connected_sensor_ != nullptr)
           this->connected_sensor_->publish_state(true);
@@ -165,6 +168,7 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
                param->disconnect.reason,
                this->desired_subscriptions_.size());
       this->connected_ = false;
+      this->services_discovered_ = false;
       if (this->connected_sensor_ != nullptr)
         this->connected_sensor_->publish_state(false);
       this->pending_handle_ = 0;
@@ -187,6 +191,7 @@ void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
 
     case ESP_GATTC_SEARCH_CMPL_EVT: {
       ESP_LOGI(TAG, "Service discovery complete");
+      this->services_discovered_ = true;
       this->encryption_requested_ = false;
       if (!this->desired_subscriptions_.empty()) {
         ESP_LOGI(TAG, "Restoring %d notification subscription(s)...",
@@ -488,6 +493,13 @@ void PhilipsSonicare::on_subscribe(std::string service_uuid,
     return;
   }
 
+  // Check if already subscribed (e.g., restored after reconnect)
+  if (this->notify_map_.count(chr->handle)) {
+    ESP_LOGD(TAG, "Already subscribed to %s (handle 0x%04X), skipping",
+             characteristic_uuid.c_str(), chr->handle);
+    return;
+  }
+
   uint16_t cccd_handle = this->find_cccd_handle_(chr->handle);
   this->cccd_map_[chr->handle] = cccd_handle;
   this->char_props_map_[chr->handle] = chr->properties;
@@ -539,7 +551,7 @@ void PhilipsSonicare::on_unsubscribe(std::string service_uuid,
     return;
   }
 
-  // Remove from desired subscriptions
+  // Remove from desired subscriptions (connected unsubscribe = intentional)
   for (auto it = this->desired_subscriptions_.begin();
        it != this->desired_subscriptions_.end(); ++it) {
     if (it->first == service_uuid && it->second == characteristic_uuid) {
@@ -645,6 +657,7 @@ void PhilipsSonicare::on_get_info() {
       {"version", PHILIPS_SONICARE_VERSION},
       {"ble_connected", this->connected_ ? "true" : "false"},
       {"paired", is_paired ? "true" : "false"},
+      {"bridge_id", this->bridge_id_},
       {"mac", this->get_device_mac_()},
       {"uptime_s", std::string(uptime_str)},
       {"free_heap", std::string(heap_str)},

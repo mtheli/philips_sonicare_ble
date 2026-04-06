@@ -154,10 +154,12 @@ class PhilipsBridgeEntity(PhilipsSonicareEntity):
         super().__init__(coordinator, entry)
         # Override device_info to register on the bridge sub-device
         # Linking to the ESPHome parent device is done in __init__.py
+        bridge_id = entry.data.get("esp_bridge_id", "")
+        bridge_name = f"ESP Bridge ({bridge_id})" if bridge_id else "ESP Bridge"
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, f"{self._device_id}_bridge")},
             manufacturer="Espressif",
-            name="ESP Bridge",
+            name=bridge_name,
         )
 
     @property

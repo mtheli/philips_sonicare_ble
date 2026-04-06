@@ -17,7 +17,7 @@ from .const import (
     CONF_TRANSPORT_TYPE,
     TRANSPORT_ESP_BRIDGE,
     CONF_ESP_DEVICE_NAME,
-    CONF_ESP_DEVICE_ID,
+    CONF_ESP_BRIDGE_ID,
     CHAR_SERVICE_MAP,
 )
 from .coordinator import PhilipsSonicareCoordinator
@@ -90,8 +90,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if transport_type == TRANSPORT_ESP_BRIDGE:
         esp_device_name = entry.data[CONF_ESP_DEVICE_NAME]
-        esp_device_id = entry.data.get(CONF_ESP_DEVICE_ID, "")
-        transport = EspBridgeTransport(hass, address, esp_device_name, esp_device_id)
+        esp_bridge_id = entry.data.get(CONF_ESP_BRIDGE_ID, "")
+        transport = EspBridgeTransport(hass, address, esp_device_name, esp_bridge_id)
     else:
         transport = BleakTransport(hass, address)
 

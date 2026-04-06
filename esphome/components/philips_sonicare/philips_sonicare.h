@@ -14,7 +14,7 @@
 namespace esphome {
 namespace philips_sonicare {
 
-static const char *const PHILIPS_SONICARE_VERSION = "1.2.0";
+static const char *const PHILIPS_SONICARE_VERSION = "1.2.2";
 
 class PhilipsSonicare : public ble_client::BLEClientNode,
                         public Component,
@@ -50,16 +50,17 @@ class PhilipsSonicare : public ble_client::BLEClientNode,
     this->connected_sensor_ = sensor;
   }
   void set_notify_throttle(uint32_t ms) { this->notify_throttle_ms_ = ms; }
-  void set_device_id(const std::string &id) { this->device_id_ = id; }
+  void set_bridge_id(const std::string &id) { this->bridge_id_ = id; }
 
  protected:
   std::string get_device_mac_();
   std::string svc_name_(const std::string &action);
 
-  std::string device_id_;
+  std::string bridge_id_;
 
   binary_sensor::BinarySensor *connected_sensor_{nullptr};
   bool connected_{false};
+  bool services_discovered_{false};
   uint16_t pending_handle_{0};
   std::string pending_char_uuid_;
   // Cached BLE device name (read from GAP 0x2A00 after service discovery)

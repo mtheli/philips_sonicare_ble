@@ -74,8 +74,6 @@ external_components:
 
 philips_sonicare:
   ble_client_id: philips_sonicare_ble
-  connected:
-    name: "Sonicare Connected"
 
 # --- Optional: Status LED ---
 # Uncomment and adjust GPIO for your board if you want a status indicator.
@@ -92,8 +90,10 @@ philips_sonicare:
 #     id: status_led_output
 #     pin: GPIO2
 
-# --- Optional: Bluetooth Proxy ---
-# The ESP32 can also act as a standard BLE proxy for other sensors
-# (e.g. Xiaomi temperature sensors) while maintaining the Sonicare connection.
+# --- Bluetooth Proxy ---
+# WARNING: Do NOT enable bluetooth_proxy on this device.
+# It conflicts with the Sonicare BLE client and causes connection
+# failures, crashes, and scanner interference.
+# Use a separate ESP32 for Bluetooth Proxy if needed.
 # bluetooth_proxy:
 #   active: true
