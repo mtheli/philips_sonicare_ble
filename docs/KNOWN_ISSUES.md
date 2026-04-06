@@ -80,8 +80,8 @@ functions including `bta_gattc_disc_cmpl`, `bta_gattc_conn`, `bta_gattc_close`,
 and `bta_gattc_sm_execute`.
 
 **This fix is merged to ESP-IDF `master` but is not yet included in any
-release tag** (not in 5.5.3, not in 5.5.4). ESPHome 2026.3.1 uses ESP-IDF
-5.5.x and does not have the fix.
+release tag** (not in 5.5.3, not in 5.5.4, not in 6.0). ESPHome 2026.3.2
+uses ESP-IDF 5.5.x and does not have the fix.
 
 Once a new ESP-IDF release includes this commit and ESPHome adopts it,
 `bluetooth_proxy` should be able to coexist with our component. Until then,

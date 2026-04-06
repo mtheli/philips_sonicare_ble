@@ -252,6 +252,7 @@ Toothbrush wakes up
 ### Known Issues
 
 * **Brushing Mode Select has no effect**: On BrushSync-enabled models (e.g. DiamondClean Smart HX992B), the toothbrush accepts BLE mode writes at the GATT level but ignores them on the firmware level. The brushing mode is determined by the attached brush head (BrushSync) or the physical button. The Select entity is disabled by default. If you have a non-BrushSync model where mode writes work, please open an issue.
+* **Direct BLE reconnect may be delayed**: Home Assistant's Bluetooth stack filters duplicate advertisements. Since the Sonicare sends identical advertisement data on every broadcast, wake-ups can be missed. The integration uses a D-Bus RSSI listener as a workaround, but reconnects may still take longer than expected. See [habluetooth#397](https://github.com/Bluetooth-Devices/habluetooth/discussions/397) for the upstream discussion.
 
 ---
 
