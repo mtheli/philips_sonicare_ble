@@ -14,7 +14,7 @@ from homeassistant.components.bluetooth import (
 )
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_ADDRESS
-from homeassistant.core import callback
+from homeassistant.core import Event, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from homeassistant.helpers.selector import (
@@ -461,13 +461,50 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         else:
             return self.async_abort(reason="not_supported")
 
-        # Found a Sonicare bridge — check if already configured
+        # Found bridges — check if ALL are already configured
         self._esp_device_name = device_name
         self._esp_bridge_ids = bridge_ids
 
-        unique_id = f"esp_{device_name}_{bridge_ids[0]}" if bridge_ids[0] else f"esp_{device_name}"
-        await self.async_set_unique_id(unique_id)
-        self._abort_if_unique_id_configured()
+        configured_macs = {
+            entry.unique_id.upper()
+            for entry in self._async_current_entries()
+            if entry.unique_id
+        }
+
+        # Probe bridges to check which are ours and which are already configured
+        unconfigured = False
+        for did in bridge_ids:
+            svc_name = f"{device_name}_ble_get_info"
+            if did:
+                svc_name += f"_{did}"
+            info_future: asyncio.Future[dict[str, str]] = self.hass.loop.create_future()
+
+            @callback
+            def _on_status(event: Event, _did=did) -> None:
+                if (event.data.get("status") == "info"
+                        and event.data.get("bridge_id", "") == _did
+                        and not info_future.done()):
+                    info_future.set_result(dict(event.data))
+
+            unsub = self.hass.bus.async_listen(
+                "esphome.philips_sonicare_ble_status", _on_status
+            )
+            try:
+                await self.hass.services.async_call(
+                    "esphome", svc_name, {}, blocking=True
+                )
+                info = await asyncio.wait_for(info_future, timeout=3.0)
+                mac = info.get("mac", "")
+                if not mac or mac.upper() not in configured_macs:
+                    unconfigured = True
+                    break
+            except (asyncio.TimeoutError, Exception):
+                pass  # Not our bridge type — skip
+            finally:
+                unsub()
+
+        if not unconfigured:
+            return self.async_abort(reason="already_configured")
 
         _LOGGER.info("Zeroconf: found Sonicare bridge on ESP device '%s'", device_name)
         self._name = device_name.replace("_", "-")
@@ -683,18 +720,82 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Let user pick which device on a multi-device ESP bridge."""
         if user_input is not None:
-            self._esp_bridge_id = user_input["esp_bridge_id"]
+            selected = user_input["esp_bridge_id"]
+            if selected.startswith("✅ "):
+                return self.async_abort(reason="already_configured")
+            self._esp_bridge_id = selected
             return await self._esp_bridge_health_check()
 
-        options: list[SelectOptionDict] = []
-        for did in self._esp_bridge_ids:
-            options.append(SelectOptionDict(value=did, label=did or "default"))
+        # Collect MACs already configured for this integration
+        configured_macs = {
+            entry.unique_id.upper()
+            for entry in self._async_current_entries()
+            if entry.unique_id
+        }
 
-        if not options:
+        # Probe all bridge_ids in parallel — filter by bridge_id in response
+        async def _probe(did: str) -> tuple[str, dict[str, str] | None]:
+            svc_name = f"{self._esp_device_name}_ble_get_info"
+            if did:
+                svc_name += f"_{did}"
+            info_future: asyncio.Future[dict[str, str]] = self.hass.loop.create_future()
+
+            @callback
+            def _on_status(event: Event) -> None:
+                if (event.data.get("status") == "info"
+                        and event.data.get("bridge_id", "") == did
+                        and not info_future.done()):
+                    info_future.set_result(dict(event.data))
+
+            unsub = self.hass.bus.async_listen(
+                "esphome.philips_sonicare_ble_status", _on_status
+            )
+            try:
+                await self.hass.services.async_call(
+                    "esphome", svc_name, {}, blocking=True
+                )
+                return did, await asyncio.wait_for(info_future, timeout=3.0)
+            except (asyncio.TimeoutError, Exception):
+                return did, None
+            finally:
+                unsub()
+
+        results = await asyncio.gather(*[_probe(did) for did in self._esp_bridge_ids])
+
+        options: list[SelectOptionDict] = []
+        has_available = False
+        found_any = False
+        for did, info in results:
+            # Skip bridges that don't respond (e.g. Shaver bridges
+            # fire a different event type that our transport never receives)
+            if info is None:
+                continue
+
+            found_any = True
+            mac = info.get("mac", "")
+            mac_suffix = f" — {mac}" if mac and mac != "00:00:00:00:00:00" else ""
+
+            if mac and mac.upper() in configured_macs:
+                options.append(SelectOptionDict(
+                    value=f"✅ {did}",
+                    label=f"✅ {did}{mac_suffix}",
+                ))
+            else:
+                has_available = True
+                options.append(SelectOptionDict(
+                    value=did,
+                    label=f"{did}{mac_suffix}" if did else mac or "default",
+                ))
+
+        if not found_any:
+            return self.async_abort(reason="no_devices_found")
+        if not has_available:
             return self.async_abort(reason="already_configured")
 
-        if len(options) == 1:
-            self._esp_bridge_id = options[0]["value"]
+        # Auto-select if only one unconfigured device and no configured ones shown
+        unconfigured = [o for o in options if not o["value"].startswith("✅ ")]
+        if len(unconfigured) == 1 and len(options) == 1:
+            self._esp_bridge_id = unconfigured[0]["value"]
             return await self._esp_bridge_health_check()
 
         return self.async_show_form(
