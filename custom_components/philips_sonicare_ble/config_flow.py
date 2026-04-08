@@ -15,7 +15,7 @@ from homeassistant.components.bluetooth import (
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import Event, callback
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from homeassistant.helpers.selector import (
     SelectSelector,
@@ -127,6 +127,28 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._esp_bridge_id: str = ""
         self._esp_bridge_ids: list[str] = []
         self._bridge_info: dict[str, str] | None = None
+
+    # ------------------------------------------------------------------
+    # Duplicate check
+    # ------------------------------------------------------------------
+    def _abort_if_already_configured(self) -> None:
+        """Abort with detailed message if this unique_id is already configured."""
+        for entry in self._async_current_entries():
+            if entry.unique_id and entry.unique_id == self.unique_id:
+                transport = entry.data.get(CONF_TRANSPORT_TYPE, TRANSPORT_BLEAK)
+                transport_label = (
+                    "ESP32 Bridge" if transport == TRANSPORT_ESP_BRIDGE
+                    else "Direct Bluetooth"
+                )
+                disabled = entry.disabled_by is not None
+                status = "disabled" if disabled else "active"
+                raise AbortFlow(
+                    "already_configured_detail",
+                    description_placeholders={
+                        "transport": transport_label,
+                        "status": status,
+                    },
+                )
 
     # ------------------------------------------------------------------
     # Capabilities fetch (direct BLE)
@@ -520,7 +542,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Handle Bluetooth discovery."""
         await self.async_set_unique_id(discovery_info.address)
-        self._abort_if_unique_id_configured()
+        self._abort_if_already_configured()
 
         self._discovery_info = discovery_info
         self._address = discovery_info.address
@@ -612,7 +634,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             address = user_input[CONF_ADDRESS].upper()
             await self.async_set_unique_id(address)
-            self._abort_if_unique_id_configured()
+            self._abort_if_already_configured()
 
             self._address = address
             self._name = address
@@ -864,7 +886,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
                 else:
                     await self.async_set_unique_id(f"esp_{self._esp_device_name}")
-                self._abort_if_unique_id_configured()
+                self._abort_if_already_configured()
 
                 # Add pairing status from bridge info
                 paired_str = (self._bridge_info or {}).get("paired", "")
@@ -881,6 +903,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
                 return await self.async_step_show_capabilities()
 
+            except AbortFlow:
+                raise
             except TransportError:
                 _LOGGER.error(
                     "ESP bridge: unable to read toothbrush capabilities via %s",

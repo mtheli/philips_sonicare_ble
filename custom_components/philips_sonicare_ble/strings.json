@@ -67,6 +67,7 @@
     },
     "abort": {
       "already_configured": "Device is already configured.",
+      "already_configured_detail": "This toothbrush is already configured via **{transport}** (status: {status}). Remove or re-enable the existing entry first.",
       "already_in_progress": "Configuration flow is already in progress.",
       "no_devices_found": "No supported Philips Sonicare devices were found on this ESP bridge."
     }

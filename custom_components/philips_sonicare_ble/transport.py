@@ -464,7 +464,14 @@ class EspBridgeTransport(SonicareTransport):
             "%s: ESP bridge alive, waiting for BLE device to connect...",
             self._address,
         )
-        await self._ready_event.wait()
+        try:
+            await asyncio.wait_for(self._ready_event.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            if self.is_connected:
+                _LOGGER.info("ESP bridge ready after timeout (mac=%s)", self._detected_mac)
+                return
+            _LOGGER.debug("ESP bridge alive but BLE device not connected (yet)")
+            return
         _LOGGER.info(
             "ESP bridge ready (mac=%s, version=%s)",
             self._detected_mac,
