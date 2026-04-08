@@ -75,6 +75,8 @@ from .const import (
     BRUSHING_MODES,
     BRUSHING_STATES,
     INTENSITIES,
+    CHAR_SETTINGS,
+    supports_mode_write,
     BRUSHHEAD_TYPES,
     CHAR_SERVICE_MAP,
     NOTIFICATION_CHARS,
@@ -126,8 +128,14 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if char in self._notify_chars:
                     self._notify_chars.remove(char)
 
-        # Kids devices (HX63xx) have fewer chars within available services
+        # Remove 0x4022 for models without mode write — they use 0x4080 for mode
         model = entry.data.get("model", "")
+        if not supports_mode_write(model):
+            for charlist in (self._poll_chars, self._live_chars, self._notify_chars):
+                if CHAR_AVAILABLE_ROUTINE_IDS in charlist:
+                    charlist.remove(CHAR_AVAILABLE_ROUTINE_IDS)
+
+        # Kids devices (HX63xx) have fewer chars within available services
         if model.upper().startswith("HX63"):
             for char in (CHAR_AVAILABLE_ROUTINE_IDS, CHAR_BRUSHING_STATE):
                 if char in self._poll_chars:
@@ -370,14 +378,15 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # === Sonicare-specific Characteristics ===
 
-        # Available Routine IDs (byte array of mode IDs)
+        # Selected Routine ID (uint8 — only polled on models with mode write)
+        _mode_from_4022 = False
         if raw := results.get(CHAR_AVAILABLE_ROUTINE_IDS):
-            mode_ids = list(raw)
-            new_data["available_mode_ids"] = mode_ids
-            # Also read the currently selected mode (first byte = selected)
-            # The first ID in the list is NOT the selected one — it's just
-            # the list of available modes. Selected mode comes from a
-            # separate read (see selected_mode handling below).
+            mode_value = raw[0]
+            mapped = BRUSHING_MODES.get(mode_value)
+            if mapped:
+                new_data["brushing_mode"] = mapped
+                new_data["brushing_mode_value"] = mode_value
+                _mode_from_4022 = True
 
         # Handle State (uint8)
         if raw := results.get(CHAR_HANDLE_STATE):
@@ -388,17 +397,19 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.warning("Unknown handle_state value: %d (raw: %s)", state_byte, raw.hex())
             new_data["handle_state"] = mapped
 
-        # Brushing Mode (uint8, some devices use uint16 LE)
+        # Brushing Mode from 0x4080 (read-only session status)
+        # Only use as fallback if 0x4022 hasn't provided a valid mode
         if raw := results.get(CHAR_BRUSHING_MODE):
             if len(raw) >= 2:
                 mode_value = int.from_bytes(raw[:2], "little")
             else:
                 mode_value = raw[0]
-            new_data["brushing_mode_value"] = mode_value
             mapped = BRUSHING_MODES.get(mode_value)
             if mapped is None:
                 _LOGGER.warning("Unknown brushing_mode value: %d (raw: %s)", mode_value, raw.hex())
-            new_data["brushing_mode"] = mapped
+            if not _mode_from_4022:
+                new_data["brushing_mode_value"] = mode_value
+                new_data["brushing_mode"] = mapped
 
         # Brushing State (uint8)
         if raw := results.get(CHAR_BRUSHING_STATE):
@@ -508,6 +519,12 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Error Volatile (uint32 LE)
         if raw := results.get(CHAR_ERROR_VOLATILE):
             new_data["error_volatile"] = int.from_bytes(raw[:4], "little")
+
+        # Settings bitmask (uint32 LE, characteristic 0x4420)
+        if raw := results.get(CHAR_SETTINGS):
+            new_data["settings_bitmask"] = int.from_bytes(
+                raw[:4].ljust(4, b"\x00"), "little"
+            )
 
         # Sensor Data Stream (0x4130) — pressure, temperature, gyroscope frames
         if raw := results.get(CHAR_SENSOR_DATA):
@@ -956,7 +973,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.transport.unsubscribe_all()
 
     async def async_set_brushing_mode(self, mode_key: str) -> None:
-        """Write the selected brushing mode to the toothbrush (0x4022)."""
+        """Write the selected brushing mode to the toothbrush (0x4080)."""
         # Reverse-lookup: mode string → mode ID
         mode_id = None
         for mid, mname in BRUSHING_MODES.items():
@@ -966,18 +983,51 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if mode_id is None:
             raise ValueError(f"Unknown brushing mode: {mode_key}")
 
-        available = self.data.get("available_mode_ids") or []
-        if available and mode_id not in available:
-            raise ValueError(
-                f"Mode {mode_key} (id={mode_id}) not available on this device"
-            )
-
         await self.transport.write_char(
             CHAR_AVAILABLE_ROUTINE_IDS, bytes([mode_id])
         )
         self.data["selected_mode"] = mode_key
+        self.data["brushing_mode"] = mode_key
         self.async_set_updated_data(self.data)
         _LOGGER.info("Brushing mode set to %s (id=%d)", mode_key, mode_id)
+
+    async def async_set_intensity(self, intensity_key: str) -> None:
+        """Write the selected intensity to the toothbrush (0x40B0)."""
+        intensity_id = None
+        for iid, iname in INTENSITIES.items():
+            if iname == intensity_key:
+                intensity_id = iid
+                break
+        if intensity_id is None:
+            raise ValueError(f"Unknown intensity: {intensity_key}")
+
+        await self.transport.write_char(
+            CHAR_INTENSITY, bytes([intensity_id])
+        )
+        self.data["intensity"] = intensity_key
+        self.async_set_updated_data(self.data)
+        _LOGGER.info("Intensity set to %s (id=%d)", intensity_key, intensity_id)
+
+    async def async_read_settings(self) -> int:
+        """Read the settings bitmask from characteristic 0x4420."""
+        raw = await self.transport.read_char(CHAR_SETTINGS)
+        if raw and len(raw) >= 2:
+            return int.from_bytes(raw[:4].ljust(4, b"\x00"), "little")
+        return 0
+
+    async def async_write_settings_bit(self, bit_mask: int, enabled: bool) -> None:
+        """Toggle a single bit in the settings bitmask (0x4420)."""
+        current = await self.async_read_settings()
+        if enabled:
+            new_value = current | bit_mask
+        else:
+            new_value = current & ~bit_mask
+        payload = new_value.to_bytes(4, "little")
+        await self.transport.write_char(CHAR_SETTINGS, payload)
+        _LOGGER.info(
+            "Settings updated: bit 0x%04x %s (0x%08x → 0x%08x)",
+            bit_mask, "ON" if enabled else "OFF", current, new_value,
+        )
 
     async def async_shutdown(self) -> None:
         """Called on unload - clean up everything."""

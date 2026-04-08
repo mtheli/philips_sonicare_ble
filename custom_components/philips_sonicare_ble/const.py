@@ -124,9 +124,9 @@ BRUSHING_MODES = {
     0: "clean",
     1: "white_plus",
     2: "gum_health",
-    3: "deep_clean_plus",
-    4: "sensitive",
-    5: "tongue_care",
+    3: "tongue_care",
+    4: "deep_clean_plus",
+    5: "sensitive",
 }
 
 BRUSHING_STATES = {
@@ -142,6 +142,25 @@ INTENSITIES = {
     1: "medium",
     2: "high",
 }
+
+# ── Model-based feature support ─────────────────────────────────────────────
+# Based on decompiled app: Device.java + TuscanyBLEConnector.java
+# XIAN = HX999X/HX9996 (Prestige), CAIRO = HX74XX (Kids Plus)
+MODE_WRITE_MODELS = ("HX999", "HX9996", "HX74")
+SETTINGS_WRITE_MODELS = ("HX999", "HX9996")
+
+
+def supports_mode_write(model: str) -> bool:
+    """Check if the model supports writing brushing mode."""
+    upper = (model or "").upper()
+    return any(upper.startswith(prefix) for prefix in MODE_WRITE_MODELS)
+
+
+def supports_settings_write(model: str) -> bool:
+    """Check if the model supports settings (0x4420) writes."""
+    upper = (model or "").upper()
+    return any(upper.startswith(prefix) for prefix in SETTINGS_WRITE_MODELS)
+
 
 PRESSURE_ALARM_STATES = {
     0: "ok",

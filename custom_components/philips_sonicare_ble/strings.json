@@ -208,7 +208,20 @@
           "sensitive": "Sensitive",
           "tongue_care": "Tongue Care"
         }
+      },
+      "intensity_select": {
+        "name": "Intensity",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
       }
+    },
+    "switch": {
+      "adaptive_intensity": { "name": "Adaptive Intensity" },
+      "scrubbing_feedback": { "name": "Scrubbing Feedback" },
+      "pressure_feedback": { "name": "Pressure Feedback" }
     }
   }
 }

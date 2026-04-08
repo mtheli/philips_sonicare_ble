@@ -25,7 +25,7 @@ from .transport import BleakTransport, EspBridgeTransport
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT]
+PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SELECT, Platform.SWITCH]
 
 SERVICE_READ_CHARACTERISTIC = "read_characteristic"
 SERVICE_WRITE_CHARACTERISTIC = "write_characteristic"
