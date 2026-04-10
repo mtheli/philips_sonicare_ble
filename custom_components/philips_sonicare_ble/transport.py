@@ -402,13 +402,12 @@ class EspBridgeTransport(SonicareTransport):
                 self._device_connected = False
                 self._cancel_pending_reads()
 
-            # Only fire callback when actual state changed
-            now_connected = self.is_connected
-            was_fully_connected = was_alive and was_connected
-            if now_connected != was_fully_connected and self._disconnect_cb:
+            # Fire callback when any component of state changed
+            if self._disconnect_cb and (
+                was_alive != self._esp_alive
+                or was_connected != self._device_connected
+            ):
                 self._disconnect_cb()
-            elif status == "disconnected" and self._disconnect_cb:
-                        self._disconnect_cb()
 
         self._status_unsub = self._hass.bus.async_listen(ESP_STATUS_EVENT_NAME, _handle_status_event)
 

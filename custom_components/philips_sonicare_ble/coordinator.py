@@ -585,10 +585,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         while True:
             # ---- Wait for device to be available ----
             # Direct BLE: wait for ADV/D-Bus signal
-            # ESP: skip — connect() below waits for "ready" event internally
+            # ESP bridge: skips — connect() sets up listeners, then we wait below
             if not self._is_esp_bridge and not self.transport.is_connected:
                     if self._wake_event.is_set():
-                        # ADV already received (e.g., during startup or quick retry)
                         self._wake_event.clear()
                         _LOGGER.info("Advertisement already pending — connecting to %s", self.address)
                     else:
@@ -639,6 +638,17 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                     _LOGGER.info("Establishing live connection to %s...", self.address)
                     await self.transport.connect()
+
+                    # ESP bridge: wait for BLE device to actually connect
+                    if self._is_esp_bridge and not self.transport.is_connected:
+                        _LOGGER.debug(
+                            "ESP bridge alive, waiting for BLE device connection for %s...",
+                            self.address,
+                        )
+                        self._wake_event.clear()
+                        await self._wake_event.wait()
+                        self._wake_event.clear()
+                        _LOGGER.info("BLE device connected via ESP bridge for %s", self.address)
 
                     # Set notification throttle for ESP bridge
                     if self._is_esp_bridge:
@@ -732,6 +742,14 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                 except Exception:
                                     pass
                         # If still not connected, loop back to ADV wait
+                    else:
+                        # ESP bridge: wait for next ready event before retrying
+                        self._wake_event.clear()
+                        _LOGGER.debug("Waiting for ESP bridge ready event for %s...", self.address)
+                        try:
+                            await asyncio.wait_for(self._wake_event.wait(), timeout=60)
+                        except asyncio.TimeoutError:
+                            pass
                     continue
 
             # ---- Connected: wait until disconnect (or ESP reboot) ----
