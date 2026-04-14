@@ -17,6 +17,7 @@ import struct
 import sys
 import warnings
 from bleak import BleakClient, BleakScanner
+from bleak.exc import BleakCharacteristicNotFoundError
 
 LEGACY_PREFIX = "477ea600"
 NEWER_PREFIX = "e50ba3c0"
@@ -54,6 +55,156 @@ STATUS_NAMES = {
     10: "NoSuchMethod", 11: "WrongParameters", 12: "InvalidParameter",
     13: "NotSubscribed", 14: "ProtocolViolation", 255: "Unknown",
 }
+
+
+# =====================================================================
+# Known characteristic registry (mirrors const.py from the integration)
+# =====================================================================
+
+_HANDLE_STATES = {
+    0: "off", 1: "standby", 2: "run", 3: "charge",
+    4: "shutdown", 6: "validate", 7: "background",
+}
+_BRUSHING_MODES = {
+    0: "clean", 1: "white_plus", 2: "gum_health",
+    3: "tongue_care", 4: "deep_clean_plus", 5: "sensitive",
+}
+_BRUSHING_STATES = {
+    0: "off", 1: "on", 2: "pause", 3: "session_complete", 4: "session_aborted",
+}
+_INTENSITIES = {0: "low", 1: "medium", 2: "high"}
+_BRUSHHEAD_TYPES = {
+    0: "adaptive_clean", 1: "adaptive_white", 2: "adaptive_gums",
+    3: "tongue_clean", 4: "premium_all_in_one", 5: "sensitive", 6: "non_rfid",
+}
+
+
+def _dec_enum(mapping):
+    return lambda d: mapping.get(d[0], f"unknown({d[0]})") if d else "?"
+
+
+def _dec_u16(d):
+    return f"{struct.unpack('<H', d[:2])[0]}s" if len(d) >= 2 else d.hex()
+
+
+def _dec_u32(d):
+    return str(struct.unpack("<I", d[:4])[0]) if len(d) >= 4 else d.hex()
+
+
+def _dec_str(d):
+    return d.decode("utf-8", errors="replace")
+
+
+def _dec_pct(d):
+    return f"{d[0]}%" if d else "?"
+
+
+def _dec_sensor_enable(d):
+    if not d:
+        return "?"
+    v = d[0]
+    parts = []
+    if v & 1: parts.append("pressure")
+    if v & 2: parts.append("temperature")
+    if v & 4: parts.append("gyroscope")
+    return f"0x{v:02X} → [{', '.join(parts) or 'none'}]"
+
+
+# UUID → (display_name, category, decode_fn_or_None)
+# category: "device_info" | "standard_ble" | "legacy" | "newer_proto"
+KNOWN_CHARS = {
+    # Standard BLE — Generic Access / Generic Attribute / common
+    "00002a00-0000-1000-8000-00805f9b34fb": ("Device Name",             "standard_ble", _dec_str),
+    "00002a01-0000-1000-8000-00805f9b34fb": ("Appearance",              "standard_ble", None),
+    "00002a04-0000-1000-8000-00805f9b34fb": ("Preferred Conn Params",   "standard_ble", None),
+    "00002a05-0000-1000-8000-00805f9b34fb": ("Service Changed",         "standard_ble", None),
+    "00002a23-0000-1000-8000-00805f9b34fb": ("System ID",               "standard_ble", None),
+    "00002a2a-0000-1000-8000-00805f9b34fb": ("IEEE Regulatory Cert",    "standard_ble", None),
+    "00002a50-0000-1000-8000-00805f9b34fb": ("PnP ID",                  "standard_ble", None),
+    "00002aa6-0000-1000-8000-00805f9b34fb": ("Central Addr Resolution", "standard_ble", None),
+    # Standard BLE — Device Information / Battery
+    "00002a19-0000-1000-8000-00805f9b34fb": ("Battery Level",           "device_info", _dec_pct),
+    "00002a24-0000-1000-8000-00805f9b34fb": ("Model Number",            "device_info", _dec_str),
+    "00002a25-0000-1000-8000-00805f9b34fb": ("Serial Number",           "device_info", _dec_str),
+    "00002a26-0000-1000-8000-00805f9b34fb": ("Firmware Revision",       "device_info", _dec_str),
+    "00002a27-0000-1000-8000-00805f9b34fb": ("Hardware Revision",       "device_info", _dec_str),
+    "00002a28-0000-1000-8000-00805f9b34fb": ("Software Revision",       "device_info", _dec_str),
+    "00002a29-0000-1000-8000-00805f9b34fb": ("Manufacturer Name",       "device_info", _dec_str),
+    # Sonicare Service (0x0001) — legacy protocol
+    "477ea600-a260-11e4-ae37-0002a5d54010": ("Handle State",            "legacy", _dec_enum(_HANDLE_STATES)),
+    "477ea600-a260-11e4-ae37-0002a5d54020": ("Available Routines",      "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54022": ("Available Routine IDs",   "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54030": ("Unknown 4030",            "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54040": ("Motor Runtime",           "legacy", _dec_u32),
+    "477ea600-a260-11e4-ae37-0002a5d54050": ("Handle Time",             "legacy", _dec_u32),
+    # Routine Service (0x0002) — legacy protocol
+    "477ea600-a260-11e4-ae37-0002a5d54070": ("Session ID",              "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54080": ("Brushing Mode",           "legacy", _dec_enum(_BRUSHING_MODES)),
+    "477ea600-a260-11e4-ae37-0002a5d54082": ("Brushing State",          "legacy", _dec_enum(_BRUSHING_STATES)),
+    "477ea600-a260-11e4-ae37-0002a5d54090": ("Brushing Time",           "legacy", _dec_u16),
+    "477ea600-a260-11e4-ae37-0002a5d54091": ("Routine Length",          "legacy", _dec_u16),
+    "477ea600-a260-11e4-ae37-0002a5d540a0": ("Unknown 40A0",            "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d540b0": ("Intensity",               "legacy", _dec_enum(_INTENSITIES)),
+    "477ea600-a260-11e4-ae37-0002a5d540c0": ("Unknown 40C0",            "legacy", None),
+    # Storage Service (0x0004) — legacy protocol
+    "477ea600-a260-11e4-ae37-0002a5d540d0": ("Latest Session ID",       "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d540d2": ("Session Count",           "legacy", _dec_u16),
+    "477ea600-a260-11e4-ae37-0002a5d540d5": ("Session Type",            "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d540e0": ("Active Session ID",       "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54100": ("Session Data",            "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54110": ("Session Action",          "legacy", None),
+    # Sensor Service (0x0005) — legacy protocol
+    "477ea600-a260-11e4-ae37-0002a5d54120": ("Sensor Enable",           "legacy", _dec_sensor_enable),
+    "477ea600-a260-11e4-ae37-0002a5d54130": ("Sensor Data",             "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54140": ("Sensor Unknown 4140",     "legacy", None),
+    # Brush Head Service (0x0006) — legacy protocol
+    "477ea600-a260-11e4-ae37-0002a5d54210": ("Brushhead NFC Version",   "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54220": ("Brushhead Type",          "legacy", _dec_enum(_BRUSHHEAD_TYPES)),
+    "477ea600-a260-11e4-ae37-0002a5d54230": ("Brushhead Serial",        "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54240": ("Brushhead Date",          "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54250": ("Brushhead Unknown 4250",  "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54254": ("Brushhead Unknown 4254",  "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54260": ("Brushhead Unknown 4260",  "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54270": ("Brushhead Unknown 4270",  "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54280": ("Brushhead Lifetime Limit","legacy", _dec_u32),
+    "477ea600-a260-11e4-ae37-0002a5d54290": ("Brushhead Lifetime Usage","legacy", _dec_u32),
+    "477ea600-a260-11e4-ae37-0002a5d542a0": ("Brushhead Unknown 42A0",  "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d542a2": ("Brushhead Unknown 42A2",  "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d542a4": ("Brushhead Unknown 42A4",  "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d542a6": ("Brushhead Unknown 42A6",  "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d542b0": ("Brushhead Payload",       "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d542c0": ("Brushhead Ring ID",       "legacy", None),
+    # Diagnostic Service (0x0007) — legacy protocol
+    "477ea600-a260-11e4-ae37-0002a5d54310": ("Error Persistent",        "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54320": ("Error Volatile",          "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54330": ("Diag Unknown 4330",       "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54360": ("Diag Unknown 4360",       "legacy", None),
+    # Extended Service (0x0008) — legacy protocol
+    "477ea600-a260-11e4-ae37-0002a5d54410": ("Extended Unknown 4410",   "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54420": ("Settings",                "legacy", None),
+    # Newer protocol transport
+    "e50b0001-af04-4564-92ad-fef019489de6": ("Proto RX",                "newer_proto", None),
+    "e50b0002-af04-4564-92ad-fef019489de6": ("Proto RX ACK",            "newer_proto", None),
+    "e50b0003-af04-4564-92ad-fef019489de6": ("Proto TX",                "newer_proto", None),
+    "e50b0004-af04-4564-92ad-fef019489de6": ("Proto TX ACK",            "newer_proto", None),
+    "e50b0005-af04-4564-92ad-fef019489de6": ("Proto Config",            "newer_proto", None),
+    "e50b0006-af04-4564-92ad-fef019489de6": ("Proto Server Config",     "newer_proto", None),
+    "e50b0007-af04-4564-92ad-fef019489de6": ("Proto Client Config",     "newer_proto", None),
+}
+
+# Model-based feature support (mirrors const.py)
+_MODE_WRITE_MODELS = ("HX999", "HX9996", "HX74")
+_SETTINGS_WRITE_MODELS = ("HX999", "HX9996")
+
+
+def _supports_mode_write(model: str) -> bool:
+    upper = (model or "").upper()
+    return any(upper.startswith(p) for p in _MODE_WRITE_MODELS)
+
+
+def _supports_settings_write(model: str) -> bool:
+    upper = (model or "").upper()
+    return any(upper.startswith(p) for p in _SETTINGS_WRITE_MODELS)
 
 
 # =====================================================================
@@ -187,25 +338,43 @@ class NewerProtocolProbe:
         """Run the full newer-protocol probe."""
         print("\n--- Newer Protocol Probe ---\n")
 
-        # Read protocol config
-        cfg = await self.client.read_gatt_char(CHAR_PROTO_CFG)
-        print(f"  Protocol Config: {cfg.hex()}")
-        if len(cfg) >= 3:
-            print(f"    Version={cfg[0]}, InBuf={cfg[1]}, OutBuf={cfg[2]}")
+        # Read protocol config (optional — not present on all firmware versions)
+        try:
+            cfg = await self.client.read_gatt_char(CHAR_PROTO_CFG)
+            print(f"  Protocol Config: {cfg.hex()}")
+            if len(cfg) >= 3:
+                print(f"    Version={cfg[0]}, InBuf={cfg[1]}, OutBuf={cfg[2]}")
+        except BleakCharacteristicNotFoundError:
+            print("  Protocol Config: characteristic absent — skipping (continuing with defaults)")
 
         # Subscribe to notifications
-        await self.client.start_notify(CHAR_TX, self._on_tx)
-        await self.client.start_notify(CHAR_RX_ACK, self._on_rx_ack)
-        await self.client.start_notify(CHAR_SERVER_CFG, self._on_server_cfg)
+        for uuid, cb, label in [
+            (CHAR_TX, self._on_tx, "TX"),
+            (CHAR_RX_ACK, self._on_rx_ack, "RX ACK"),
+            (CHAR_SERVER_CFG, self._on_server_cfg, "Server Config"),
+        ]:
+            try:
+                await asyncio.wait_for(self.client.start_notify(uuid, cb), timeout=5.0)
+            except asyncio.TimeoutError:
+                print(f"  !!! Timeout subscribing to {label} ({uuid}) — skipping")
+            except Exception as e:
+                print(f"  !!! Error subscribing to {label} ({uuid}): {e} — skipping")
+            if not self.client.is_connected:
+                print(f"  !!! Device {self.client.address} disconnected during subscribe to {label} ({uuid})")
+                return
 
         # Protocol negotiation
         print("\n  [1/5] Protocol negotiation...")
         self.server_cfg_event.clear()
-        await self.client.write_gatt_char(CHAR_CLIENT_CFG, bytes([0x03, 0x04]), response=False)
         try:
-            await asyncio.wait_for(self.server_cfg_event.wait(), 5.0)
-        except asyncio.TimeoutError:
-            print("      !!! No server config response — continuing anyway")
+            await self.client.write_gatt_char(CHAR_CLIENT_CFG, bytes([0x03, 0x04]), response=False)
+            try:
+                await asyncio.wait_for(self.server_cfg_event.wait(), 5.0)
+            except asyncio.TimeoutError:
+                print("      !!! No server config response — continuing anyway")
+        except Exception as e:
+            print(f"      !!! Write to CLIENT_CFG failed: {e}")
+            return
         await asyncio.sleep(0.3)
 
         # Initialize
@@ -244,8 +413,24 @@ class NewerProtocolProbe:
 # GATT scan (works for both protocols)
 # =====================================================================
 
+
+def _adv_summary(adv) -> str:
+    """Return a short inline string of notable advertisement data."""
+    parts = []
+    if adv and adv.manufacturer_data:
+        for company_id, data in adv.manufacturer_data.items():
+            vendor = "Philips" if company_id == 477 else f"0x{company_id:04X}"
+            try:
+                text = data.decode("utf-8")
+                payload = f'"{text}"' if text.isprintable() and text.strip() else data.hex()
+            except (UnicodeDecodeError, ValueError):
+                payload = data.hex()
+            parts.append(f"{vendor}:{payload}")
+    return f"  [{', '.join(parts)}]" if parts else ""
+
+
 async def find_sonicare():
-    """Scan for any Sonicare toothbrush nearby."""
+    """Scan for any Sonicare toothbrush nearby. Returns (address, adv)."""
     print("Scanning for Sonicare devices (20s)...")
     print("Tip: Wake up the brush by pressing the power button or placing it on the charger.\n")
 
@@ -260,27 +445,27 @@ async def find_sonicare():
         print("Make sure:")
         print("  - Bluetooth is enabled on this machine")
         print("  - The brush is awake (press button or place on charger)")
-        print("  - You are close enough to the brush")
-        return None
+        print("  - You are not close enough to the brush")
+        return None, None
 
     if len(found) == 1:
         device, adv = found[0]
-        print(f"Found: {device.name} ({device.address}), RSSI={adv.rssi}")
-        return device.address
+        print(f"Found: {device.name} ({device.address}), RSSI={adv.rssi}{_adv_summary(adv)}")
+        return device.address, adv
 
     print(f"Found {len(found)} Sonicare devices:")
     for i, (device, adv) in enumerate(found):
-        print(f"  [{i+1}] {device.name} ({device.address}), RSSI={adv.rssi}")
+        print(f"  [{i+1}] {device.name} ({device.address}), RSSI={adv.rssi}{_adv_summary(adv)}")
     print()
     choice = input(f"Select device [1-{len(found)}]: ").strip()
     try:
         idx = int(choice) - 1
         if 0 <= idx < len(found):
-            return found[idx][0].address
+            return found[idx][0].address, found[idx][1]
     except ValueError:
         pass
     print("Invalid selection.")
-    return None
+    return None, None
 
 
 async def scan_device(address: str):
@@ -307,7 +492,9 @@ async def scan_device(address: str):
                 print(f"  Description: {service.description}")
             for char in service.characteristics:
                 props = ", ".join(char.properties)
-                print(f"  Char: {char.uuid}  [{props}]  handle=0x{char.handle:04X}")
+                char_info = KNOWN_CHARS.get(char.uuid.lower())
+                char_label = f"  [{char_info[0]}]" if char_info else ""
+                print(f"  Char: {char.uuid}  [{props}]  handle=0x{char.handle:04X}{char_label}")
                 if "read" in char.properties:
                     try:
                         value = await client.read_gatt_char(char)
@@ -320,6 +507,17 @@ async def scan_device(address: str):
                                 print(f"    Value: {hex_str}")
                         except (UnicodeDecodeError, ValueError):
                             print(f"    Value: {hex_str}")
+
+                        # Print feature flags when model number is read
+                        if char.uuid.lower() == "00002a24-0000-1000-8000-00805f9b34fb":
+                            try:
+                                model_number = value.decode("utf-8", errors="replace").strip()
+                                mode = "YES" if _supports_mode_write(model_number) else "NO"
+                                settings = "YES" if _supports_settings_write(model_number) else "NO"
+                                print(f"    HA: mode write={mode}, settings write={settings}")
+                            except Exception:
+                                pass
+
                     except Exception as e:
                         print(f"    Read error: {e}")
                 for desc in char.descriptors:
@@ -348,9 +546,14 @@ async def scan_device(address: str):
 async def main():
     if len(sys.argv) > 1:
         address = sys.argv[1]
-        print(f"Using provided address: {address}")
+        print(f"Scanning for {address} (10s)...")
+        device = await BleakScanner.find_device_by_address(address, timeout=10)
+        if not device:
+            print(f"Device {address} not found. If it is connected to another process (e.g. bluetoothctl),")
+            sys.exit(1)
+        print(f"Found: {device.name} ({device.address})")
     else:
-        address = await find_sonicare()
+        address, _adv = await find_sonicare()
         if not address:
             sys.exit(1)
 
