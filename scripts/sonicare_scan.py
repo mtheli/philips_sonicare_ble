@@ -14,6 +14,7 @@ Requirements:
 
 import asyncio
 import struct
+import argparse
 import sys
 import warnings
 from bleak import BleakClient, BleakScanner
@@ -338,44 +339,71 @@ class NewerProtocolProbe:
         """Run the full newer-protocol probe."""
         print("\n--- Newer Protocol Probe ---\n")
 
-        # Read protocol config (optional — not present on all firmware versions)
+        # Read protocol config (optional — not present on all firmware versions).
+        # When absent, the app falls back to the CLIENT_CFG / SERVER_CFG negotiation path below.
         try:
             cfg = await self.client.read_gatt_char(CHAR_PROTO_CFG)
             print(f"  Protocol Config: {cfg.hex()}")
             if len(cfg) >= 3:
                 print(f"    Version={cfg[0]}, InBuf={cfg[1]}, OutBuf={cfg[2]}")
         except BleakCharacteristicNotFoundError:
-            print("  Protocol Config: characteristic absent — skipping (continuing with defaults)")
+            print("  Protocol Config: characteristic absent — using negotiation fallback")
 
-        # Subscribe to notifications
+        # Subscription order mirrors the Sonicare app: SERVER_CFG first, then
+        # CLIENT_CFG write, await the server response, then TX + RX ACK.
+        # Subscribing to TX before negotiation has been observed to make the
+        # brush drop the connection on some firmwares (e.g. HX742X 1.8.20.0).
+
+        print("\n  [1/5] Protocol negotiation...")
+        self.server_cfg_event.clear()
+        try:
+            await asyncio.wait_for(
+                self.client.start_notify(CHAR_SERVER_CFG, self._on_server_cfg),
+                timeout=5.0,
+            )
+        except asyncio.TimeoutError:
+            print("      !!! Timeout subscribing to Server Config — aborting probe")
+            return
+        except Exception as e:
+            print(f"      !!! Error subscribing to Server Config: {e} — aborting probe")
+            return
+        if not self.client.is_connected:
+            print("      !!! Disconnected during Server Config subscribe — aborting probe")
+            return
+
+        try:
+            await self.client.write_gatt_char(
+                CHAR_CLIENT_CFG, bytes([0x03, 0x04]), response=False
+            )
+        except Exception as e:
+            print(f"      !!! Write to CLIENT_CFG failed: {e} — aborting probe")
+            return
+
+        try:
+            await asyncio.wait_for(self.server_cfg_event.wait(), 5.0)
+        except asyncio.TimeoutError:
+            print("      !!! No server config response — continuing anyway")
+        if not self.client.is_connected:
+            print("      !!! Disconnected waiting for Server Config response — aborting probe")
+            return
+        await asyncio.sleep(0.3)
+
+        # Now that the transport is negotiated, subscribe to data channels.
         for uuid, cb, label in [
             (CHAR_TX, self._on_tx, "TX"),
             (CHAR_RX_ACK, self._on_rx_ack, "RX ACK"),
-            (CHAR_SERVER_CFG, self._on_server_cfg, "Server Config"),
         ]:
             try:
                 await asyncio.wait_for(self.client.start_notify(uuid, cb), timeout=5.0)
             except asyncio.TimeoutError:
-                print(f"  !!! Timeout subscribing to {label} ({uuid}) — skipping")
-            except Exception as e:
-                print(f"  !!! Error subscribing to {label} ({uuid}): {e} — skipping")
-            if not self.client.is_connected:
-                print(f"  !!! Device {self.client.address} disconnected during subscribe to {label} ({uuid})")
+                print(f"  !!! Timeout subscribing to {label} ({uuid}) — aborting probe")
                 return
-
-        # Protocol negotiation
-        print("\n  [1/5] Protocol negotiation...")
-        self.server_cfg_event.clear()
-        try:
-            await self.client.write_gatt_char(CHAR_CLIENT_CFG, bytes([0x03, 0x04]), response=False)
-            try:
-                await asyncio.wait_for(self.server_cfg_event.wait(), 5.0)
-            except asyncio.TimeoutError:
-                print("      !!! No server config response — continuing anyway")
-        except Exception as e:
-            print(f"      !!! Write to CLIENT_CFG failed: {e}")
-            return
-        await asyncio.sleep(0.3)
+            except Exception as e:
+                print(f"  !!! Error subscribing to {label} ({uuid}): {e} — aborting probe")
+                return
+            if not self.client.is_connected:
+                print(f"  !!! Device disconnected during subscribe to {label} — aborting probe")
+                return
 
         # Initialize
         print("\n  [2/5] Initialize...")
@@ -468,15 +496,37 @@ async def find_sonicare():
     return None, None
 
 
-async def scan_device(address: str):
+async def _negotiate_mtu(client: BleakClient, requested: int | None) -> None:
+    """Trigger an ATT MTU exchange — BlueZ does not do this automatically."""
+    if requested is not None:
+        # Explicit override: assume the caller knows what the link supports.
+        # Used when the auto-exchange is unavailable or for debugging.
+        try:
+            client._mtu_size = requested
+            print(f"MTU forced to {requested} (no exchange)")
+            return
+        except Exception as e:
+            print(f"MTU force failed: {e} — falling back to auto-exchange")
+
+    acquire = getattr(client, "_acquire_mtu", None)
+    if acquire is None:
+        return
+    try:
+        await acquire()
+    except Exception as e:
+        print(f"MTU auto-exchange failed: {e}")
+
+
+async def scan_device(address: str, mtu: int | None = None):
     """Connect to a Sonicare and dump all GATT services."""
     print(f"\nConnecting to {address} ...")
     async with BleakClient(address, timeout=30) as client:
         print(f"Connected: {client.is_connected}")
+        await _negotiate_mtu(client, mtu)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            mtu = client.mtu_size
-        print(f"MTU: {mtu}\n")
+            mtu_actual = client.mtu_size
+        print(f"MTU: {mtu_actual}\n")
 
         has_legacy = False
         has_newer = False
@@ -544,20 +594,30 @@ async def scan_device(address: str):
 
 
 async def main():
-    if len(sys.argv) > 1:
-        address = sys.argv[1]
-        print(f"Scanning for {address} (10s)...")
-        device = await BleakScanner.find_device_by_address(address, timeout=10)
+    parser = argparse.ArgumentParser(description="Sonicare GATT scanner and newer-protocol probe")
+    parser.add_argument("mac", nargs="?", help="BLE MAC address (optional — scans if omitted)")
+    parser.add_argument(
+        "--mtu",
+        type=int,
+        default=None,
+        help="Force a specific ATT MTU (e.g. 247). Default: auto-negotiate.",
+    )
+    args = parser.parse_args()
+
+    if args.mac:
+        print(f"Scanning for {args.mac} (10s)...")
+        device = await BleakScanner.find_device_by_address(args.mac, timeout=10)
         if not device:
-            print(f"Device {address} not found. If it is connected to another process (e.g. bluetoothctl),")
+            print(f"Device {args.mac} not found. If it is connected to another process (e.g. bluetoothctl),")
             sys.exit(1)
         print(f"Found: {device.name} ({device.address})")
+        address = args.mac
     else:
         address, _adv = await find_sonicare()
         if not address:
             sys.exit(1)
 
-    await scan_device(address)
+    await scan_device(address, mtu=args.mtu)
 
 
 asyncio.run(main())
