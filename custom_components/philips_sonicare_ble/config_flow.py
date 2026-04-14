@@ -259,20 +259,21 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     async def _fetch_with_pair_retry(self, address: str) -> dict[str, Any]:
         """Fetch capabilities, auto-pairing on auth errors.
 
-        Uses a D-Bus pre-check to skip the slow connect attempt when the
-        device is known to be unpaired.  Falls back to probe-read error
-        detection if the pre-check is inconclusive.
+        Probe first without pairing; only pair on auth failure. After a
+        successful probe, query BlueZ for the bond state to label the
+        device — this distinguishes true open GATT from a device that
+        is already bonded (e.g. a stale bond that survived a previous
+        config entry removal and lets reads succeed without a new
+        handshake).
 
         Raises NotPairedException if pairing fails or is not possible.
         """
-        from .dbus_pairing import async_is_device_paired, is_dbus_available
+        from .dbus_pairing import async_is_device_paired
 
-        # Always try connecting without pairing first — many devices
-        # (including Sonicare For Kids) have open GATT even though
-        # BlueZ reports them as "not paired".
         try:
             result = await self._async_fetch_capabilities(address)
-            result["pairing"] = "open_gatt"
+            paired = await async_is_device_paired(address)
+            result["pairing"] = "bonded" if paired else "open_gatt"
             return result
         except NotPairedException:
             pass
@@ -390,13 +391,15 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         return "<table>" + "".join(rows) + "</table>"
 
     @staticmethod
-    def _get_device_info_text(data: dict[str, Any]) -> str:
+    def _get_device_info_text(data: dict[str, Any], address: str | None = None) -> str:
         """Format device info as HTML table."""
         rows: list[str] = []
         if model := data.get("model"):
             rows.append(f"<tr><td><b>Model</b></td><td>{model}</td></tr>")
         if serial := data.get("serial"):
             rows.append(f"<tr><td><b>Serial</b></td><td><code>{serial}</code></td></tr>")
+        if address:
+            rows.append(f"<tr><td><b>MAC</b></td><td><code>{address.upper()}</code></td></tr>")
         if firmware := data.get("firmware"):
             rows.append(f"<tr><td><b>Firmware</b></td><td>{firmware}</td></tr>")
         if (battery := data.get("battery")) is not None:
@@ -990,7 +993,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 data=entry_data,
             )
 
-        device_info_text = self._get_device_info_text(self._fetched_data)
+        device_info_text = self._get_device_info_text(self._fetched_data, self._address)
         services_text = self._get_service_status_text(
             self._fetched_data.get("services", [])
         )
