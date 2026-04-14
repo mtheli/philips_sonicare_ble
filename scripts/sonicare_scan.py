@@ -445,7 +445,7 @@ async def find_sonicare():
         print("Make sure:")
         print("  - Bluetooth is enabled on this machine")
         print("  - The brush is awake (press button or place on charger)")
-        print("  - You are not close enough to the brush")
+        print("  - You are close enough to the brush")
         return None, None
 
     if len(found) == 1:
