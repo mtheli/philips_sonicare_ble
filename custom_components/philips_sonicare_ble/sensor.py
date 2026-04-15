@@ -33,6 +33,9 @@ from .const import (
     SVC_BRUSHHEAD,
     SVC_STORAGE,
     SVC_SENSOR,
+    SECTORS_PREMIUM,
+    number_of_sectors_for_model,
+    current_sector,
 )
 from .entity import PhilipsSonicareEntity, PhilipsBrushHeadEntity, PhilipsBridgeEntity
 
@@ -59,6 +62,8 @@ async def async_setup_entry(
         SonicareBrushingTimeSensor(coordinator, entry),
         SonicareRoutineLengthSensor(coordinator, entry),
         SonicareRoutineCountdownSensor(coordinator, entry),
+        SonicareNumberOfSectorsSensor(coordinator, entry),
+        SonicareSectorSensor(coordinator, entry),
         SonicareMotorRuntimeSensor(coordinator, entry),
         SonicareModelNumberSensor(coordinator, entry),
         SonicareFirmwareSensor(coordinator, entry),
@@ -347,6 +352,70 @@ class SonicareRoutineCountdownSensor(PhilipsSonicareEntity, SensorEntity):
         if routine is None or elapsed is None:
             return None
         return max(0, routine - elapsed)
+
+
+# ---------------------------------------------------------------------------
+# Number of Sectors (static per model)
+# ---------------------------------------------------------------------------
+class SonicareNumberOfSectorsSensor(PhilipsSonicareEntity, SensorEntity):
+    """Number of brushing sectors (zones) for this model."""
+
+    _attr_translation_key = "number_of_sectors"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:grid"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_number_of_sectors"
+        self._sectors = number_of_sectors_for_model(entry.data.get("model", ""))
+
+    @property
+    def native_value(self) -> int:
+        return self._sectors
+
+
+# ---------------------------------------------------------------------------
+# Sector (current, derived from brushing time)
+# ---------------------------------------------------------------------------
+class SonicareSectorSensor(PhilipsSonicareEntity, SensorEntity):
+    """Current brushing sector, derived from elapsed time and the
+    mode-specific visit sequence (so White+/Gum Health revisits are
+    reported as the original anatomical sector, not a 7th/8th step)."""
+
+    _attr_translation_key = "sector"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = [
+        f"sector_{i}" for i in range(1, SECTORS_PREMIUM + 1)
+    ] + ["success", "no_sector"]
+    _attr_icon = "mdi:map-marker"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_sector"
+        self._model = entry.data.get("model", "")
+
+    @property
+    def native_value(self) -> str | None:
+        if not self.coordinator.data:
+            return None
+        brushing = (
+            self.coordinator.data.get("brushing_state") == "on"
+            or self.coordinator.data.get("handle_state_value") == 2
+        )
+        elapsed = self.coordinator.data.get("brushing_time")
+        routine = self.coordinator.data.get("routine_length")
+        mode = self.coordinator.data.get("brushing_mode")
+        if not brushing or elapsed is None or elapsed <= 0:
+            return "no_sector"
+        if routine is None or routine <= 0:
+            return "no_sector"
+        if elapsed >= routine:
+            return "success"
+        sector = current_sector(self._model, mode, elapsed, routine)
+        if sector is None:
+            return "no_sector"
+        return f"sector_{sector}"
 
 
 # ---------------------------------------------------------------------------
