@@ -162,6 +162,69 @@ def supports_settings_write(model: str) -> bool:
     return any(upper.startswith(prefix) for prefix in SETTINGS_WRITE_MODELS)
 
 
+# ── Sector / zone count per model family ────────────────────────────────────
+# The brush does not report live sector data — sectors are derived from the
+# elapsed brushing time and the routine length. The Philips app visualises
+# 6 zones for premium Tuscany handles (HX99X, HX96X, HX995X) and 4 zones on
+# the Kids line (HX63xx). Default to 4 for unknown handles.
+SECTORS_PREMIUM = 6
+SECTORS_KIDS = 4
+SECTORS_DEFAULT = SECTORS_PREMIUM
+
+
+def number_of_sectors_for_model(model: str) -> int:
+    """Return the number of brushing sectors (zones) for a model.
+
+    Only the Kids line (HX63xx) uses 4 sectors; every other handle defaults
+    to 6.
+    """
+    upper = (model or "").upper()
+    if upper.startswith("HX63"):
+        return SECTORS_KIDS
+    return SECTORS_PREMIUM
+
+
+# Mode-specific sector visit sequences for Tuscany Premium handles.
+# Values are 1-indexed anatomical sector IDs. White+ and Gum Health revisit
+# the front-teeth sectors (2, 5) after the initial sweep.
+MODE_SECTOR_SEQUENCES: dict[str, list[int]] = {
+    "clean":           [1, 2, 3, 4, 5, 6],
+    "white_plus":      [1, 2, 3, 4, 5, 6, 2, 5],
+    "gum_health":      [1, 2, 3, 4, 5, 6, 1, 3, 4, 6],
+    "deep_clean_plus": [1, 2, 3, 4, 5, 6],
+    "sensitive":       [1, 2, 3, 4, 5, 6],
+    "tongue_care":     [],
+}
+
+
+def current_sector(
+    model: str,
+    mode: str | None,
+    elapsed: float | None,
+    routine_length: float | None,
+) -> int | None:
+    """Return the 1-indexed anatomical sector at `elapsed` seconds.
+
+    - Tongue Care and unknown-time inputs return None.
+    - Kids (HX63xx) always uses a uniform 4-sector distribution.
+    - Unknown modes fall back to uniform distribution over the model's
+      number of sectors.
+    """
+    if elapsed is None or routine_length is None or routine_length <= 0:
+        return None
+    sectors_total = number_of_sectors_for_model(model)
+    is_kids = (model or "").upper().startswith("HX63")
+    seq = None if is_kids else MODE_SECTOR_SEQUENCES.get(mode or "")
+    if seq is not None and not seq:
+        return None
+    if seq is None:
+        per_sector = routine_length / sectors_total
+        return min(sectors_total, int(elapsed // per_sector) + 1)
+    per_step = routine_length / len(seq)
+    step_idx = min(len(seq) - 1, int(elapsed // per_step))
+    return seq[step_idx]
+
+
 PRESSURE_ALARM_STATES = {
     0: "ok",
     1: "optimal",

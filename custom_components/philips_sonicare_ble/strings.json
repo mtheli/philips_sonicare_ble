@@ -138,6 +138,20 @@
       "brushing_time": { "name": "Brushing Time" },
       "routine_length": { "name": "Routine Length" },
       "routine_countdown": { "name": "Routine Countdown" },
+      "number_of_sectors": { "name": "Number of Sectors" },
+      "sector": {
+        "name": "Sector",
+        "state": {
+          "sector_1": "Sector 1",
+          "sector_2": "Sector 2",
+          "sector_3": "Sector 3",
+          "sector_4": "Sector 4",
+          "sector_5": "Sector 5",
+          "sector_6": "Sector 6",
+          "success": "Success",
+          "no_sector": "No Sector"
+        }
+      },
       "session_id": { "name": "Session ID" },
       "latest_session_id": { "name": "Latest Session ID" },
       "session_count": { "name": "Session Count" },
