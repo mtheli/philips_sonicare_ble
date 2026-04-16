@@ -517,11 +517,20 @@ async def _negotiate_mtu(client: BleakClient, requested: int | None) -> None:
         print(f"MTU auto-exchange failed: {e}")
 
 
-async def scan_device(address: str, mtu: int | None = None):
+async def scan_device(address: str, mtu: int | None = None, pair: bool = False):
     """Connect to a Sonicare and dump all GATT services."""
     print(f"\nConnecting to {address} ...")
     async with BleakClient(address, timeout=30) as client:
         print(f"Connected: {client.is_connected}")
+
+        if pair:
+            print("Pairing (Just Works)...")
+            try:
+                result = await client.pair()
+                print(f"Paired: {result}")
+            except Exception as e:
+                print(f"Pairing failed: {e} — continuing without encryption")
+
         await _negotiate_mtu(client, mtu)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
@@ -602,6 +611,11 @@ async def main():
         default=None,
         help="Force a specific ATT MTU (e.g. 247). Default: auto-negotiate.",
     )
+    parser.add_argument(
+        "--pair",
+        action="store_true",
+        help="Pair with the brush before scanning (enables BLE encryption for CCCD writes).",
+    )
     args = parser.parse_args()
 
     if args.mac:
@@ -617,7 +631,7 @@ async def main():
         if not address:
             sys.exit(1)
 
-    await scan_device(address, mtu=args.mtu)
+    await scan_device(address, mtu=args.mtu, pair=args.pair)
 
 
 asyncio.run(main())
