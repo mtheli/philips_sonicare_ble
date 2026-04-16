@@ -173,9 +173,11 @@ The integration supports two connection methods:
 | **[Option B](#option-b-esp32-ble-bridge)** | **ESP32 BLE Bridge** | Toothbrush is out of range -- a small ESP32 device placed near the toothbrush relays data over WiFi |
 
 > [!IMPORTANT]
-> The standard ESPHome `bluetooth_proxy` is **not compatible** with the Sonicare --
-> the ESP32 crashes during GATT service discovery. Use the dedicated
-> [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) instead.
+> The standard ESPHome `bluetooth_proxy` crashes the ESP32 during GATT service
+> discovery due to an [ESP-IDF bug](https://github.com/esphome/esphome/issues/15783).
+> A [workaround](docs/KNOWN_ISSUES.md#workaround) is available that patches the
+> bug at build time, or use the dedicated
+> [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) without `bluetooth_proxy`.
 
 ### Option A: Direct Bluetooth
 
@@ -247,7 +249,7 @@ Toothbrush wakes up
 * **Connection drops quickly**: This is normal when the toothbrush is idle. It sleeps after ~20 seconds. The integration will reconnect automatically on the next wake.
 * **Phone app conflict**: The toothbrush supports only one BLE connection. Close or uninstall the Sonicare phone app if you experience connection issues.
 * **Pairing issues**: If a model that requires bonding won't connect, remove the toothbrush from your phone's Bluetooth settings first (Settings → Bluetooth → Philips Sonicare → Forget/Unpair). The integration handles stale bonds automatically, but the phone's bond may block the connection.
-* **ESPHome Bluetooth Proxy**: The standard ESPHome `bluetooth_proxy` is not compatible with the Sonicare -- the ESP32 crashes during GATT service discovery. Use the dedicated [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) instead.
+* **ESPHome Bluetooth Proxy**: The standard ESPHome `bluetooth_proxy` crashes the ESP32 during GATT service discovery due to an [ESP-IDF bug](https://github.com/esphome/esphome/issues/15783). A [workaround](docs/KNOWN_ISSUES.md#workaround) is available that patches the bug at build time. Alternatively, use the dedicated [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) without `bluetooth_proxy`.
 * **Unsure if your model is compatible?** Run the [GATT scan script](scripts/sonicare_scan.py) to check which BLE protocol your toothbrush uses. It only needs Python 3 and `bleak` (`pip install bleak`).
 
 ### Known Issues

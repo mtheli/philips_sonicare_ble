@@ -1,6 +1,11 @@
 esphome:
   name: esp32-ble-bridge
   friendly_name: "ESP32 BLE Bridge"
+  # Uncomment to enable bluetooth_proxy (requires bluedroid_null_fix.py
+  # in your ESPHome config directory — see bottom of this file):
+  # platformio_options:
+  #   extra_scripts:
+  #     - pre:/config/esphome/bluedroid_null_fix.py
 
 # ESP-IDF is required (not Arduino) because Bluedroid's notification limit
 # is only configurable via sdkconfig.  Arduino uses precompiled libbt.a with
@@ -90,10 +95,15 @@ philips_sonicare:
 #     id: status_led_output
 #     pin: GPIO2
 
-# --- Bluetooth Proxy ---
-# WARNING: Do NOT enable bluetooth_proxy on this device.
-# It conflicts with the Sonicare BLE client and causes connection
-# failures, crashes, and scanner interference.
-# Use a separate ESP32 for Bluetooth Proxy if needed.
+# --- Bluetooth Proxy (optional) ---
+# bluetooth_proxy requires a workaround for ESP-IDF bug
+# https://github.com/esphome/esphome/issues/15783
+#
+# To enable, uncomment bluetooth_proxy below AND add the pre-build
+# patch to esphome: platformio_options (see top of this file).
+# The patch fixes a NULL pointer crash in the Bluedroid BLE stack
+# that occurs during GATT service discovery when bluetooth_proxy
+# registers multiple GATT client interfaces.
+#
 # bluetooth_proxy:
 #   active: true
