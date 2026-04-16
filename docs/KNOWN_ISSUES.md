@@ -84,15 +84,42 @@ release tag** (not in 5.5.3, not in 5.5.4, not in 6.0). ESPHome 2026.3.2
 uses ESP-IDF 5.5.x and does not have the fix.
 
 Once a new ESP-IDF release includes this commit and ESPHome adopts it,
-`bluetooth_proxy` should be able to coexist with our component. Until then,
-they cannot run on the same ESP32.
+`bluetooth_proxy` should be able to coexist with our component without
+the workaround below.
 
-Related ESP-IDF issues:
+Related issues:
+- [esphome/esphome#15783](https://github.com/esphome/esphome/issues/15783) —
+  ESPHome issue requesting cherry-pick of the fix (filed 2026-04-16)
 - [espressif/esp-idf#4971](https://github.com/espressif/esp-idf/issues/4971) —
   `LoadProhibited` in `bta_gattc_co_cache_find_src_addr` (open since 2020,
   fixed in same commit)
 
-### Solution
+### Workaround
+
+A pre-build patch script
+([`bluedroid_null_fix.py`](../esphome/bluedroid_null_fix.py)) is included in
+this repository. It applies the critical NULL pointer checks from ESP-IDF
+commit `d4f3517` during the PlatformIO build. To use it:
+
+1. Copy `bluedroid_null_fix.py` to your ESPHome config directory
+   (typically `/config/esphome/`)
+2. Add the following to your YAML under `esphome:`:
+   ```yaml
+   esphome:
+     platformio_options:
+       extra_scripts:
+         - pre:/config/esphome/bluedroid_null_fix.py
+   ```
+3. Add `bluetooth_proxy:` to your YAML:
+   ```yaml
+   bluetooth_proxy:
+     active: true
+   ```
+4. Perform a **clean build** ("Clean Build Files" in ESPHome) before flashing
+
+The example YAMLs in this repository show the configuration (commented out).
+
+### Without the workaround
 
 Do **not** run `bluetooth_proxy` on the same ESP32 as the Sonicare component.
 Use the [ESP32 BLE Bridge](ESP32_BRIDGE.md) component alone. If you need a
