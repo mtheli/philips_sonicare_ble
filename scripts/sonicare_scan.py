@@ -15,6 +15,7 @@ Requirements:
 import asyncio
 import struct
 import argparse
+import subprocess
 import sys
 import warnings
 from bleak import BleakClient, BleakScanner
@@ -194,7 +195,7 @@ KNOWN_CHARS = {
 }
 
 # Model-based feature support (mirrors const.py)
-_MODE_WRITE_MODELS = ("HX999", "HX9996", "HX74")
+_MODE_WRITE_MODELS = ("HX999", "HX9996")
 _SETTINGS_WRITE_MODELS = ("HX999", "HX9996")
 
 
@@ -517,19 +518,64 @@ async def _negotiate_mtu(client: BleakClient, requested: int | None) -> None:
         print(f"MTU auto-exchange failed: {e}")
 
 
-async def scan_device(address: str, mtu: int | None = None, pair: bool = False):
+def _remove_sonicare_bonds() -> list[str]:
+    """Remove paired Sonicare / Philips OHC devices from BlueZ (Linux only).
+
+    Stale bonds are a common cause of subscribe timeouts: BlueZ reports the
+    device as paired, but the brush has forgotten the link key, so any
+    encrypted operation fails silently. Starting from a clean slate avoids
+    that failure mode.
+    """
+    if sys.platform != "linux":
+        return []
+    try:
+        listing = subprocess.run(
+            ["bluetoothctl", "devices", "Paired"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+
+    removed: list[str] = []
+    for line in listing.stdout.splitlines():
+        parts = line.split(maxsplit=2)
+        if len(parts) < 3 or parts[0] != "Device":
+            continue
+        mac, name = parts[1], parts[2]
+        low = name.lower()
+        if not any(tag in low for tag in ("sonicare", "philips ohc", "philips sonic")):
+            continue
+        try:
+            subprocess.run(
+                ["bluetoothctl", "remove", mac],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            removed.append(f"{mac} ({name})")
+        except Exception:
+            pass
+    return removed
+
+
+async def scan_device(address: str, mtu: int | None = None):
     """Connect to a Sonicare and dump all GATT services."""
-    print(f"\nConnecting to {address} ...")
+    removed = _remove_sonicare_bonds()
+    if removed:
+        print("Removed stale bonds before connecting:")
+        for entry in removed:
+            print(f"  - {entry}")
+        print()
+
+    print(f"Connecting to {address} ...")
     async with BleakClient(address, timeout=30) as client:
         print(f"Connected: {client.is_connected}")
 
-        if pair:
-            print("Pairing (Just Works)...")
-            try:
-                result = await client.pair()
-                print(f"Paired: {result}")
-            except Exception as e:
-                print(f"Pairing failed: {e} — continuing without encryption")
+        # Some models require BLE pairing before CCCD writes are accepted.
+        # Try pairing unconditionally; failures are non-fatal for read-only probes.
+        try:
+            result = await client.pair()
+            print(f"Paired: {result}")
+        except Exception as e:
+            print(f"Pairing skipped: {e}")
 
         await _negotiate_mtu(client, mtu)
         with warnings.catch_warnings():
@@ -611,11 +657,6 @@ async def main():
         default=None,
         help="Force a specific ATT MTU (e.g. 247). Default: auto-negotiate.",
     )
-    parser.add_argument(
-        "--pair",
-        action="store_true",
-        help="Pair with the brush before scanning (enables BLE encryption for CCCD writes).",
-    )
     args = parser.parse_args()
 
     if args.mac:
@@ -631,7 +672,7 @@ async def main():
         if not address:
             sys.exit(1)
 
-    await scan_device(address, mtu=args.mtu, pair=args.pair)
+    await scan_device(address, mtu=args.mtu)
 
 
 asyncio.run(main())
