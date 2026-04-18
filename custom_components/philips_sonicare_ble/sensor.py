@@ -37,7 +37,7 @@ from .const import (
     number_of_sectors_for_model,
     current_sector,
 )
-from .entity import PhilipsSonicareEntity, PhilipsBrushHeadEntity, PhilipsBridgeEntity
+from .entity import PhilipsSonicareEntity, PhilipsBrushHeadEntity, PhilipsConnectionEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,6 +70,7 @@ async def async_setup_entry(
         SonicareLastSeenSensor(coordinator, entry),
         SonicareHandleTimeSensor(coordinator, entry),
         SonicareActivitySensor(coordinator, entry),
+        SonicareAdapterSensor(coordinator, entry),
     ]
 
     # Not available on Kids devices (HX63xx)
@@ -770,7 +771,7 @@ class SonicareFirmwareSensor(PhilipsSonicareEntity, SensorEntity):
 # ---------------------------------------------------------------------------
 # Last Seen
 # ---------------------------------------------------------------------------
-class SonicareLastSeenSensor(PhilipsSonicareEntity, SensorEntity):
+class SonicareLastSeenSensor(PhilipsConnectionEntity, SensorEntity):
     """Last time the device was seen."""
 
     _attr_translation_key = "last_seen"
@@ -979,7 +980,7 @@ class SonicareHandleTimeSensor(PhilipsSonicareEntity, SensorEntity):
 # ---------------------------------------------------------------------------
 # RSSI (BLE signal strength, direct BLE only)
 # ---------------------------------------------------------------------------
-class SonicareRssiSensor(PhilipsSonicareEntity, SensorEntity):
+class SonicareRssiSensor(PhilipsConnectionEntity, SensorEntity):
     """BLE RSSI signal strength."""
 
     _attr_translation_key = "rssi"
@@ -1001,9 +1002,28 @@ class SonicareRssiSensor(PhilipsSonicareEntity, SensorEntity):
 
 
 # ---------------------------------------------------------------------------
+# Adapter (host hciN / ESPHome proxy name / ESP bridge name)
+# ---------------------------------------------------------------------------
+class SonicareAdapterSensor(PhilipsConnectionEntity, SensorEntity):
+    """Adapter currently carrying the BLE connection."""
+
+    _attr_translation_key = "adapter"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:bluetooth-connect"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_adapter"
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.transport.connection_path
+
+
+# ---------------------------------------------------------------------------
 # ESP Bridge Version (on bridge sub-device)
 # ---------------------------------------------------------------------------
-class SonicareBridgeVersionSensor(PhilipsBridgeEntity, SensorEntity):
+class SonicareBridgeVersionSensor(PhilipsConnectionEntity, SensorEntity):
     """ESP bridge firmware component version."""
 
     _attr_translation_key = "bridge_version"

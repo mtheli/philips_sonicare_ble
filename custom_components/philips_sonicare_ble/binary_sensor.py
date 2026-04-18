@@ -13,7 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
 
 from .coordinator import PhilipsSonicareCoordinator
-from .entity import PhilipsSonicareEntity, PhilipsBridgeEntity
+from .entity import PhilipsSonicareEntity, PhilipsConnectionEntity
 from .const import DOMAIN, CONF_SERVICES, CONF_TRANSPORT_TYPE, SVC_SENSOR, TRANSPORT_ESP_BRIDGE
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,10 +36,10 @@ async def async_setup_entry(
     if SVC_SENSOR.lower() in services:
         entities.append(SonicarePressureAlertBinarySensor(coordinator, entry))
 
-    # ESP bridge sub-device sensors
+    # Connection sub-device sensors
+    entities.append(SonicareBleConnectedSensor(coordinator, entry))
     if entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE:
         entities.append(SonicareBridgeAliveSensor(coordinator, entry))
-        entities.append(SonicareBleConnectedSensor(coordinator, entry))
 
     async_add_entities(entities)
 
@@ -125,7 +125,7 @@ class SonicarePressureAlertBinarySensor(PhilipsSonicareEntity, BinarySensorEntit
         return alarm == 2
 
 
-class SonicareBridgeAliveSensor(PhilipsBridgeEntity, BinarySensorEntity):
+class SonicareBridgeAliveSensor(PhilipsConnectionEntity, BinarySensorEntity):
     """Binary sensor showing whether the ESP32 bridge is reachable."""
 
     _attr_translation_key = "esp_bridge_alive"
@@ -143,7 +143,7 @@ class SonicareBridgeAliveSensor(PhilipsBridgeEntity, BinarySensorEntity):
         return self.coordinator.transport.is_bridge_alive
 
 
-class SonicareBleConnectedSensor(PhilipsBridgeEntity, BinarySensorEntity):
+class SonicareBleConnectedSensor(PhilipsConnectionEntity, BinarySensorEntity):
     """BLE connection status on the ESP Bridge sub-device."""
 
     _attr_translation_key = "ble_connected"

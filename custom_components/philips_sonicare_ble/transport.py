@@ -16,7 +16,11 @@ from typing import Callable
 from bleak import BleakClient
 from bleak_retry_connector import establish_connection as bleak_establish
 
-from homeassistant.components.bluetooth import async_last_service_info
+from homeassistant.components.bluetooth import (
+    async_last_service_info,
+    async_scanner_by_source,
+    async_scanner_devices_by_address,
+)
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_track_time_interval
@@ -28,6 +32,96 @@ _LOGGER = logging.getLogger(__name__)
 TRACE = 5
 
 ESP_EVENT_NAME = "esphome.philips_sonicare_ble_data"
+
+
+def _scanner_name_by_source(hass: HomeAssistant, source: str) -> str | None:
+    """Look up a scanner by source MAC — works for ESPHome proxies."""
+    try:
+        scanner = async_scanner_by_source(hass, source)
+        if scanner is not None:
+            return getattr(scanner, "name", None)
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _host_scanner_name_by_adapter(
+    hass: HomeAssistant, address: str, adapter_id: str
+) -> str | None:
+    """Find the HA Host scanner bound to a BlueZ adapter (e.g. "hci0").
+
+    The HA scanner registry keys Host scanners by their BT-MAC, not by the
+    adapter name, so we look the scanner up indirectly via the devices it can
+    see and match on the `adapter` attribute.
+    """
+    try:
+        for sd in async_scanner_devices_by_address(hass, address, connectable=True):
+            if getattr(sd.scanner, "adapter", None) == adapter_id:
+                return getattr(sd.scanner, "name", None)
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def describe_connection_path(
+    hass: HomeAssistant, client: BleakClient, device
+) -> str:
+    """Return the adapter label used for a BleakClient connection.
+
+    Matches the name shown in Settings -> Devices -> Bluetooth. Uses private
+    Bleak attributes to identify the backend; any upstream rename falls back
+    to a best-effort label instead of breaking the connect flow.
+    """
+    try:
+        backend = getattr(client, "_backend", None)
+        if backend is None:
+            return "unknown"
+        mod = type(backend).__module__ or ""
+        address = getattr(device, "address", None) or "?"
+
+        if "bluezdbus" in mod:
+            adapter_id = "?"
+            # Primary: live _device_info from the BlueZ backend
+            try:
+                info = getattr(backend, "_device_info", None)
+                if info and "Adapter" in info:
+                    adapter_id = info["Adapter"].rsplit("/", 1)[-1]
+            except Exception:  # noqa: BLE001
+                pass
+            # Fallback 1: BLEDevice.details["path"] -> /org/bluez/hciN/dev_...
+            if adapter_id == "?":
+                try:
+                    details = getattr(device, "details", None)
+                    path = details.get("path") if isinstance(details, dict) else None
+                    if isinstance(path, str) and path.startswith("/org/bluez/"):
+                        adapter_id = path.split("/")[3]
+                except Exception:  # noqa: BLE001
+                    pass
+            # Fallback 2: _adapter attr set in BleakClient constructor
+            if adapter_id == "?":
+                try:
+                    adapter_attr = getattr(backend, "_adapter", None)
+                    if isinstance(adapter_attr, str) and adapter_attr:
+                        adapter_id = adapter_attr
+                except Exception:  # noqa: BLE001
+                    pass
+            name = _host_scanner_name_by_adapter(hass, address, adapter_id)
+            return name or adapter_id
+
+        if "esphome" in mod:
+            source = "?"
+            try:
+                details = getattr(device, "details", None)
+                if isinstance(details, dict):
+                    source = details.get("source") or "?"
+            except Exception:  # noqa: BLE001
+                pass
+            name = _scanner_name_by_source(hass, source) if source != "?" else None
+            return name or source
+
+        return type(backend).__name__
+    except Exception as err:  # noqa: BLE001
+        return f"unknown ({err})"
 ESP_STATUS_EVENT_NAME = "esphome.philips_sonicare_ble_status"
 ESP_READ_TIMEOUT = 5.0
 ESP_HEARTBEAT_TIMEOUT = 45.0
@@ -56,6 +150,11 @@ class SonicareTransport(abc.ABC):
     @property
     def is_device_connected(self) -> bool:
         return self.is_connected
+
+    @property
+    def connection_path(self) -> str | None:
+        """Label of the adapter/bridge currently carrying the connection."""
+        return None
 
     @abc.abstractmethod
     async def read_char(self, char_uuid: str) -> bytes | None:
@@ -98,10 +197,15 @@ class BleakTransport(SonicareTransport):
         self._client: BleakClient | None = None
         self._disconnect_cb: Callable[[], None] | None = None
         self._last_read_errors: dict[str, str] = {}
+        self._connection_path: str | None = None
 
     @property
     def is_connected(self) -> bool:
         return self._client is not None and self._client.is_connected
+
+    @property
+    def connection_path(self) -> str | None:
+        return self._connection_path if self.is_connected else None
 
     async def connect(self) -> None:
         service_info = async_last_service_info(self._hass, self._address)
@@ -111,6 +215,7 @@ class BleakTransport(SonicareTransport):
         def _on_disconnect(_client):
             _LOGGER.info("%s: connection lost", self._address)
             self._client = None
+            self._connection_path = None
             if self._disconnect_cb:
                 self._disconnect_cb()
 
@@ -121,6 +226,10 @@ class BleakTransport(SonicareTransport):
             disconnected_callback=_on_disconnect,
             timeout=30.0,
         )
+        self._connection_path = describe_connection_path(
+            self._hass, self._client, service_info.device
+        )
+        _LOGGER.info("%s: connected via %s", self._address, self._connection_path)
 
     async def disconnect(self) -> None:
         if self._client and self._client.is_connected:
@@ -236,6 +345,10 @@ class EspBridgeTransport(SonicareTransport):
         self._ble_paired: str | None = None
         self._needs_resubscribe = False
         self._ready_event = asyncio.Event()
+
+    @property
+    def connection_path(self) -> str | None:
+        return self._device_name if self._esp_alive else None
 
     def _svc_name(self, action: str) -> str:
         base = f"{self._device_name}_{action}"

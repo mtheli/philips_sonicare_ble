@@ -143,8 +143,15 @@ class PhilipsBrushHeadEntity(PhilipsSonicareEntity):
         )
 
 
-class PhilipsBridgeEntity(PhilipsSonicareEntity):
-    """Base class for entities on the ESP Bridge sub-device."""
+class PhilipsConnectionEntity(PhilipsSonicareEntity):
+    """Base class for entities on the Connection sub-device.
+
+    Groups transport-level diagnostics (adapter, RSSI, link status) on a
+    dedicated device so the main device only shows toothbrush state.
+
+    Identifier is kept as `{device_id}_bridge` (historical) so existing ESP
+    Bridge installations keep their registry entries without a migration.
+    """
 
     def __init__(
         self,
@@ -152,14 +159,14 @@ class PhilipsBridgeEntity(PhilipsSonicareEntity):
         entry: ConfigEntry,
     ) -> None:
         super().__init__(coordinator, entry)
-        # Override device_info to register on the bridge sub-device
-        # Linking to the ESPHome parent device is done in __init__.py
         bridge_id = entry.data.get("esp_bridge_id", "")
-        bridge_name = f"ESP Bridge ({bridge_id})" if bridge_id else "ESP Bridge"
+        suffix = f" ({bridge_id})" if bridge_id else ""
+        device_name = f"Connection{suffix}"
+        manufacturer = "Espressif" if self._is_esp_bridge else "Home Assistant"
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, f"{self._device_id}_bridge")},
-            manufacturer="Espressif",
-            name=bridge_name,
+            manufacturer=manufacturer,
+            name=device_name,
         )
 
     @property
@@ -169,3 +176,7 @@ class PhilipsBridgeEntity(PhilipsSonicareEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         self.async_write_ha_state()
+
+
+# Backwards-compat alias for any out-of-tree imports
+PhilipsBridgeEntity = PhilipsConnectionEntity

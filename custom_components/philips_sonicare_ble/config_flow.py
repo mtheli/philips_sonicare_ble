@@ -60,7 +60,7 @@ from .const import (
     SVC_EXTENDED,
     SVC_BYTESTREAM,
 )
-from .transport import EspBridgeTransport
+from .transport import EspBridgeTransport, describe_connection_path
 from .exceptions import NotPairedException, TransportError
 
 _LOGGER = logging.getLogger(__name__)
@@ -153,6 +153,46 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     # ------------------------------------------------------------------
     # Capabilities fetch (direct BLE)
     # ------------------------------------------------------------------
+    @staticmethod
+    async def _read_with_auth_retry(
+        client: BleakClient,
+        char_uuid: str,
+        timeout: float = 5.0,
+    ) -> bytes | None:
+        """Read a GATT characteristic, retrying once on auth errors.
+
+        ESPHome bluetooth_proxy negotiates SMP in the background on the
+        first read of a protected characteristic. That read returns
+        status=0x05; auth completes ~500-1500 ms later. A single retry
+        after a 2s grace period turns the transient failure into a
+        success without false-positive "not paired" errors.
+        """
+        try:
+            return await asyncio.wait_for(
+                client.read_gatt_char(char_uuid), timeout=timeout
+            )
+        except (BleakError, TimeoutError) as err:
+            err_msg = str(err).lower()
+            auth_error = any(
+                hint in err_msg
+                for hint in (
+                    "0x05", "0x0e", "0x0f",
+                    "unlikely error",
+                    "insufficient auth", "insufficient enc",
+                    "not permitted", "authentication", "security",
+                )
+            )
+            if not auth_error or not client.is_connected:
+                raise
+            _LOGGER.info(
+                "Read on %s returned auth error — waiting for SMP to complete",
+                char_uuid,
+            )
+            await asyncio.sleep(2.0)
+            return await asyncio.wait_for(
+                client.read_gatt_char(char_uuid), timeout=timeout
+            )
+
     async def _async_fetch_capabilities(self, address: str) -> dict[str, Any]:
         """Connect to the device and read capabilities via direct BLE."""
         # Pre-fill services from advertisement data (available before connect)
@@ -183,6 +223,14 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             if not client or not client.is_connected:
                 return result
 
+            connection_path = describe_connection_path(self.hass, client, device)
+            result["connection_path"] = connection_path
+            _LOGGER.info(
+                "%s: capabilities probe connected via %s",
+                address,
+                connection_path,
+            )
+
             # GATT services are more complete than advertisement — use them
             gatt_services = [str(s.uuid).lower() for s in client.services]
             if gatt_services:
@@ -195,8 +243,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 (CHAR_FIRMWARE_REVISION, "firmware"),
             ):
                 try:
-                    raw = await asyncio.wait_for(
-                        client.read_gatt_char(char_uuid), timeout=5.0
+                    raw = await self._read_with_auth_retry(
+                        client, char_uuid, timeout=5.0
                     )
                     if raw:
                         if key == "battery":
@@ -341,6 +389,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "serial": serial,
                 "firmware": firmware,
                 "battery": battery,
+                "connection_path": esp_device_name,
             }
 
         except TransportError:
@@ -398,12 +447,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             rows.append(f"<tr><td><b>Model</b></td><td>{model}</td></tr>")
         if serial := data.get("serial"):
             rows.append(f"<tr><td><b>Serial</b></td><td><code>{serial}</code></td></tr>")
-        if address:
-            rows.append(f"<tr><td><b>MAC</b></td><td><code>{address.upper()}</code></td></tr>")
         if firmware := data.get("firmware"):
             rows.append(f"<tr><td><b>Firmware</b></td><td>{firmware}</td></tr>")
         if (battery := data.get("battery")) is not None:
             rows.append(f"<tr><td><b>Battery</b></td><td>{battery}%</td></tr>")
+        if address:
+            rows.append(f"<tr><td><b>MAC</b></td><td><code>{address.upper()}</code></td></tr>")
         pairing = data.get("pairing")
         if pairing == "bonded":
             rows.append("<tr><td><b>BLE Security</b></td><td>Paired (bonded)</td></tr>")
@@ -998,11 +1047,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             self._fetched_data.get("services", [])
         )
 
-        bridge_info = ""
-        if self._transport_type == TRANSPORT_ESP_BRIDGE:
-            bridge_info = f" via **ESP32 Bridge** ({self._esp_device_name})"
-        else:
-            bridge_info = " via **Direct Bluetooth**"
+        path = self._fetched_data.get("connection_path")
+        bridge_info = f" via **{path}**" if path else ""
 
         connection_status = self._get_connection_status_text(
             str(self._name), bridge_info, self._fetched_data
