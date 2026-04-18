@@ -202,7 +202,8 @@
           "charging": "Charging"
         }
       },
-      "rssi": { "name": "RSSI" }
+      "rssi": { "name": "RSSI" },
+      "adapter": { "name": "Adapter" }
     },
     "binary_sensor": {
       "is_brushing": { "name": "Brushing" },

@@ -693,8 +693,13 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if sub_count == 0:
                         raise TransportError("No notifications could be subscribed")
                     self._live_setup_done = True
-                    if self.data:
-                        self.data.pop("_connecting", None)
+                    if self.data is None:
+                        self.data = {}
+                    self.data.pop("_connecting", None)
+                    path = self.transport.connection_path
+                    if path and self.data.get("connection_path") != path:
+                        self.data["connection_path"] = path
+                        self.async_set_updated_data(self.data)
                     _LOGGER.info("%s: live monitoring active (%d subscriptions)", self.address, sub_count)
 
                     if self._is_esp_bridge:
