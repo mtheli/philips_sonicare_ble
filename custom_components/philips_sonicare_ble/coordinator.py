@@ -92,6 +92,8 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_RAW_LOGGER = logging.getLogger(__name__ + ".raw")
+_RAW_LOGGER.setLevel(logging.WARNING)  # silent unless explicitly enabled
 
 
 class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -859,6 +861,21 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if new_data == self.data:
                 return  # nothing changed
+
+            if _RAW_LOGGER.isEnabledFor(logging.DEBUG):
+                old = self.data or {}
+                delta = {
+                    k: (old.get(k), v)
+                    for k, v in new_data.items()
+                    if old.get(k) != v
+                }
+                if delta:
+                    _RAW_LOGGER.debug(
+                        "%s: notify %s delta %s",
+                        self.address,
+                        char_uuid,
+                        ", ".join(f"{k}: {ov!r}→{nv!r}" for k, (ov, nv) in delta.items()),
+                    )
 
             self.async_set_updated_data(new_data)
 

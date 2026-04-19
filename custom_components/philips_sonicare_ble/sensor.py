@@ -995,8 +995,17 @@ class SonicareRssiSensor(PhilipsConnectionEntity, SensorEntity):
 
     @property
     def native_value(self) -> int | None:
+        # When actively connected, prefer the RSSI from the scanner carrying
+        # the link — the global advert cache may show a stronger signal on a
+        # different scanner that isn't serving the connection.
+        live_rssi = self.coordinator.transport.connection_rssi
+        if live_rssi is not None:
+            return live_rssi
         service_info = async_last_service_info(self.hass, self._device_id)
-        if service_info is None:
+        if service_info is None or service_info.rssi is None:
+            return None
+        # -127 is habluetooth/BlueZ sentinel for "no fresh advertisement"
+        if service_info.rssi <= -127:
             return None
         return service_info.rssi
 
