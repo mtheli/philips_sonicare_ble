@@ -18,9 +18,9 @@ multi-device setups) see [`docs/ESP32_BRIDGE.md`](../docs/ESP32_BRIDGE.md).
 | File | Description |
 |------|-------------|
 | [`components/philips_sonicare/`](components/philips_sonicare/) | The C++ ESPHome external component. This is the actual bridge implementation — BLE client, GATT read/write/subscribe, bonding, and the HA event/service interface. |
-| [`atom-lite.yaml`](atom-lite.yaml) | Ready-to-flash config for the M5Stack Atom Lite, one toothbrush. Also serves as a `bluetooth_proxy` for other BLE devices in parallel (requires the Bluedroid fix below). |
-| [`atom-lite-dual.yaml`](atom-lite-dual.yaml) | Same board, but configured for **two** Sonicares via one bridge. Raises `BTA_GATTC_NOTIF_REG_MAX` and `BTA_GATTC_MAX_CACHE_CHAR` accordingly. |
-| [`esp32-generic.yaml`](esp32-generic.yaml) | Generic ESP32 dev-board config (`esp32dev`). Use as a starting point for other boards. |
+| [`atom-lite.yaml`](atom-lite.yaml) | Ready-to-flash config for the M5Stack Atom Lite, one toothbrush. `bluetooth_proxy` is disabled by default but prepared — uncomment the `bluetooth_proxy:` block and the `extra_scripts:` entry (both clearly marked in the file) to run the bridge and a proxy for other BLE devices in parallel. |
+| [`atom-lite-dual.yaml`](atom-lite-dual.yaml) | Same board, but configured for **two** Sonicares via one bridge. Raises `BTA_GATTC_NOTIF_REG_MAX` and `BTA_GATTC_MAX_CACHE_CHAR` accordingly. `bluetooth_proxy` also off by default, same uncomment recipe as above. |
+| [`esp32-generic.yaml`](esp32-generic.yaml) | Generic ESP32 dev-board config (`esp32dev`). Use as a starting point for other boards. Same proxy opt-in pattern. |
 | [`bluedroid_null_fix.py`](bluedroid_null_fix.py) | Compile-time patch — see next section. |
 | [`CHANGELOG.md`](CHANGELOG.md) | Version history for the external component. |
 
