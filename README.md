@@ -10,10 +10,11 @@ The integration connects to your toothbrush via **Bluetooth Low Energy (BLE)** t
 
 ![Device overview in Home Assistant](screenshots/ToothBrush1.png)
 
-Two connection methods are supported:
+Three connection methods are supported:
 
 1.  **Direct Bluetooth** -- connects from the HA host's Bluetooth adapter (built-in or USB). Uses a persistent live connection with a poll fallback.
-2.  **ESP32 BLE Bridge** -- an ESP32 running a custom ESPHome component acts as a wireless BLE relay. Ideal when the toothbrush is out of Bluetooth range of the HA host.
+2.  **ESP32 BLE Bridge** ★ -- an ESP32 running a custom ESPHome component acts as a wireless BLE relay. Recommended for out-of-range setups; supports multiple devices and notification throttling.
+3.  **Bluetooth Proxy** -- uses an existing ESPHome `bluetooth_proxy`. Works for a single Sonicare per proxy; not recommended due to stability issues.
 
 See [Configuration](#configuration) for setup instructions.
 
@@ -29,6 +30,7 @@ See [Configuration](#configuration) for setup instructions.
 - [Configuration](#configuration)
   - [Option A: Direct Bluetooth](#option-a-direct-bluetooth)
   - [Option B: ESP32 BLE Bridge](#option-b-esp32-ble-bridge)
+  - [Option C: Bluetooth Proxy](#option-c-bluetooth-proxy)
 - [How It Works](#how-it-works)
 - [Troubleshooting & Caveats](#troubleshooting--caveats)
 - [BLE Protocol](#ble-protocol)
@@ -89,7 +91,7 @@ This integration creates a new device for your toothbrush and provides the follo
 ### Controls
 | Entity | Type | Description |
 | :--- | :--- | :--- |
-| **Brushing Mode** | Select | Set the brushing mode for the next session. Shows only modes available on your device. **Disabled by default** -- see [Known Issues](#known-issues). |
+| **Brushing Mode** | Select | Set the brushing mode for the next session. Only created on models that support BLE mode writes (DiamondClean Prestige HX999X, HX9996, and HX74xx series). BrushSync-enabled models like DiamondClean Smart HX992X use brush-head-based mode selection and do not get this entity. |
 
 ### Sensor Data (live during brushing)
 
@@ -168,19 +170,16 @@ These sensors are only available while actively brushing and stream live data fr
 
 ## Configuration
 
-The integration supports two connection methods:
+The integration supports three connection methods:
 
 | | Method | Best for |
 | :--- | :--- | :--- |
-| **[Option A](#option-a-direct-bluetooth)** | **Direct Bluetooth** | HA host is within Bluetooth range of the toothbrush (typically 5-10 m / 15-30 ft, less through walls) |
-| **[Option B](#option-b-esp32-ble-bridge)** | **ESP32 BLE Bridge** | Toothbrush is out of range -- a small ESP32 device placed near the toothbrush relays data over WiFi |
+| **[Option A](#option-a-direct-bluetooth)** | **Direct Bluetooth** | HA host within Bluetooth range of the toothbrush (typically 5–10 m / 15–30 ft) |
+| **[Option B](#option-b-esp32-ble-bridge)** | **ESP32 BLE Bridge** ★ | **Recommended for out-of-range setups.** Multiple devices, live data streaming, full notification throttling |
+| **[Option C](#option-c-bluetooth-proxy)** | **Bluetooth Proxy** | Single Sonicare, existing `bluetooth_proxy` — **not recommended, see warning below** |
 
 > [!IMPORTANT]
-> The standard ESPHome `bluetooth_proxy` crashes the ESP32 during GATT service
-> discovery due to an [ESP-IDF bug](https://github.com/esphome/esphome/issues/15783).
-> A [workaround](docs/KNOWN_ISSUES.md#workaround) is available that patches the
-> bug at build time, or use the dedicated
-> [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) without `bluetooth_proxy`.
+> Both proxy/bridge paths on ESP32 are affected by an [ESP-IDF bug](https://github.com/esphome/esphome/issues/15783) that crashes GATT service discovery. A [compile-time workaround](docs/KNOWN_ISSUES.md#workaround) is available and required until ESP-IDF v5.5.5 ships (expected mid-May 2026).
 
 ### Option A: Direct Bluetooth
 
@@ -203,6 +202,23 @@ This is **not** a standard ESPHome Bluetooth Proxy -- it is a dedicated componen
 > This option requires basic [ESPHome](https://esphome.io/) knowledge (flashing firmware, editing YAML configs). If you're new to ESPHome, check out [Getting Started with ESPHome](https://esphome.io/guides/getting_started_hassio) first.
 
 For the complete setup guide, see **[ESP32 Bridge Setup Guide](docs/ESP32_BRIDGE.md)**.
+
+### Option C: Bluetooth Proxy
+
+> [!WARNING]
+> **Due to stability issues, it is strongly recommended to use [Option B: ESP32 BLE Bridge](#option-b-esp32-ble-bridge) instead of a Bluetooth Proxy.** Proxy setups have shown silent-connection issues — after a brushing session a device can stop delivering notifications while the proxy itself stays reachable, requiring a Home Assistant integration reload to recover. The proxy also has no notification throttling, which overloads the WiFi socket queue when more than one Sonicare is connected to the same proxy.
+>
+> This option is documented for users who already operate a proxy for other devices and only have a single Sonicare.
+
+If you already operate an [ESPHome Bluetooth Proxy](https://esphome.io/components/bluetooth_proxy.html), the integration can use it as a relay — no dedicated bridge firmware needed. Confirmed working on ESPHome 2026.2+ with `io_capability: none`.
+
+**Known caveats:**
+- **Proxy firmware needs the [Bluedroid workaround](docs/KNOWN_ISSUES.md#workaround)** until ESP-IDF v5.5.5 is released.
+- **First connect after reboot takes ~5 s longer** than Direct BLE. Bond keys live on the proxy's NVS, so service discovery and re-encryption race briefly; the integration retries reads automatically during this window.
+- **Notify Throttle option has no effect on Proxy** — throttling is only implemented in the ESP32 BLE Bridge firmware.
+- **RSSI shown in the Connection device reflects the scanner actually carrying the link** (since v0.9.x), not the strongest advertisement.
+
+Setup is the same as Option A — Home Assistant's Bluetooth stack picks the proxy automatically when it has a better or equal connection score to the host adapter.
 
 ### Options
 
@@ -252,12 +268,11 @@ Toothbrush wakes up
 * **Connection drops quickly**: This is normal when the toothbrush is idle. It sleeps after ~20 seconds. The integration will reconnect automatically on the next wake.
 * **Phone app conflict**: The toothbrush supports only one BLE connection. Close or uninstall the Sonicare phone app if you experience connection issues.
 * **Pairing issues**: If a model that requires bonding won't connect, remove the toothbrush from your phone's Bluetooth settings first (Settings → Bluetooth → Philips Sonicare → Forget/Unpair). The integration handles stale bonds automatically, but the phone's bond may block the connection.
-* **ESPHome Bluetooth Proxy**: The standard ESPHome `bluetooth_proxy` crashes the ESP32 during GATT service discovery due to an [ESP-IDF bug](https://github.com/esphome/esphome/issues/15783). A [workaround](docs/KNOWN_ISSUES.md#workaround) is available that patches the bug at build time. Alternatively, use the dedicated [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) without `bluetooth_proxy`.
+* **ESPHome Bluetooth Proxy**: Works with the [Bluedroid NULL-check patch](docs/KNOWN_ISSUES.md#workaround) until ESP-IDF v5.5.5 ships. See [Option C](#option-c-bluetooth-proxy) for scope and the dedicated [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) as the recommended alternative for multi-device setups.
 * **Unsure if your model is compatible?** Run the [GATT scan script](scripts/sonicare_scan.py) to check which BLE protocol your toothbrush uses. It only needs Python 3 and `bleak` (`pip install bleak`).
 
 ### Known Issues
 
-* **Brushing Mode Select has no effect**: On BrushSync-enabled models (e.g. DiamondClean Smart HX992B), the toothbrush accepts BLE mode writes at the GATT level but ignores them on the firmware level. The brushing mode is determined by the attached brush head (BrushSync) or the physical button. The Select entity is disabled by default. If you have a non-BrushSync model where mode writes work, please open an issue.
 * **Direct BLE reconnect may be delayed**: Home Assistant's Bluetooth stack filters duplicate advertisements. Since the Sonicare sends identical advertisement data on every broadcast, wake-ups can be missed. The integration uses a D-Bus RSSI listener as a workaround, but reconnects may still take longer than expected. See [habluetooth#397](https://github.com/Bluetooth-Devices/habluetooth/discussions/397) for the upstream discussion.
 
 ---

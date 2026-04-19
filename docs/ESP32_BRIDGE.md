@@ -8,9 +8,11 @@ for direct Bluetooth access from the HA host.
 > [!IMPORTANT]
 > This is a **dedicated ESPHome component**, not a standard
 > [ESPHome Bluetooth Proxy](https://esphome.io/components/bluetooth_proxy.html).
-> The standard Bluetooth Proxy is not compatible with the Sonicare — the ESP32
-> crashes during GATT service discovery. If you already have an ESP32 running a
-> Bluetooth Proxy, you still need to add this custom component.
+> The bridge provides stable bonding, notification throttling, and multi-device
+> support; `bluetooth_proxy` is available as a less stable fallback — see
+> [Option C: Bluetooth Proxy](../README.md#option-c-bluetooth-proxy) in the
+> main README. Both can run on the same ESP32; if you enable both, apply the
+> [Bluedroid NULL-check patch](../esphome/README.md#bluedroid-null-check-patch-bluedroid_null_fixpy).
 
 ## Tested Hardware
 
@@ -186,28 +188,37 @@ with active subscriptions, the connection keeps the toothbrush awake indefinitel
 6. The integration reads the toothbrush capabilities and GATT services via the bridge
 7. Review the detected capabilities and click **Submit** to finish
 
-## Why not the standard bluetooth_proxy?
+## Bridge vs. bluetooth_proxy
 
-The standard ESPHome `bluetooth_proxy` transparently forwards BLE connections from
-Home Assistant through the ESP32. However, the Sonicare's GATT attribute table
-causes the ESP32's Bluedroid stack to crash during service discovery:
+The standard ESPHome `bluetooth_proxy` transparently relays BLE connections
+from Home Assistant through the ESP32. With the [Bluedroid NULL-check
+patch](../esphome/README.md#bluedroid-null-check-patch-bluedroid_null_fixpy)
+and ESPHome 2026.2+, it works for a single Sonicare — but it has real
+drawbacks:
 
-```
-Reason: Fault - LoadProhibited
-bta_gattc_cache_save at bta_gattc_cache.c:2118
-```
+- **No notification throttling** — the full BLE stream goes over WiFi.
+  With multiple Sonicares on one proxy, this overloads the WiFi socket
+  queue.
+- **Silent-connection failures** in multi-device setups — a brush can
+  stop delivering notifications while the proxy stays reachable,
+  requiring a Home Assistant integration reload to recover.
+- **Bond keys live on the proxy's NVS** — first connect after reboot
+  races service discovery against re-encryption (~5 s extra delay).
 
-The ESP32 reboots in a loop on every connection attempt. The dedicated BLE Bridge
-component avoids this by using a `ble_client` that manages the GATT connection
-directly on the ESP32.
+This dedicated Bridge component manages the GATT connection directly on
+the ESP32 with its own pairing stack, notification throttle, and
+per-device subscription state — avoiding all three issues.
 
 ## Troubleshooting
 
 ### ESP32 crashes/reboots when connecting
 
-The standard `bluetooth_proxy` is not compatible with the Sonicare. The ESP32 crashes
-in the Bluedroid GATT cache during service discovery. Use this BLE Bridge component
-instead. You may also see `auth fail reason=97` in the logs before the crash.
+If `bluetooth_proxy:` is enabled in your ESPHome config, the ESP32 crashes
+in the Bluedroid GATT cache during service discovery with
+`Fault - LoadProhibited / bta_gattc_cache_save`. Apply the
+[Bluedroid NULL-check patch](../esphome/README.md#bluedroid-null-check-patch-bluedroid_null_fixpy)
+to fix this. If you don't need `bluetooth_proxy`, disabling it also
+resolves the crash.
 
 ### "No philips_sonicare services found"
 

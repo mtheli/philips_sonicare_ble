@@ -1,14 +1,18 @@
 # Known Issues
 
-## bluetooth_proxy is not compatible with the Sonicare
+## bluetooth_proxy requires the Bluedroid NULL-check patch
 
-**Status:** Confirmed — ESP-IDF Bluedroid bug, fix exists but not yet released
+**Status:** Worked around — ESP-IDF Bluedroid bug, fix backported but not yet in a tagged release
 
-The standard ESPHome `bluetooth_proxy` cannot be used with Philips Sonicare
-toothbrushes. The ESP32 crashes during GATT service discovery on every
-connection attempt, regardless of framework. The same crash also occurs when
-`bluetooth_proxy` runs alongside our `ble_client` component on the same ESP32 —
-even if the proxy itself does not connect to the toothbrush.
+Without the workaround below, enabling `bluetooth_proxy` on the ESP32 — either
+alone or alongside our `ble_client` component — crashes the ESP32 during GATT
+service discovery. The crash occurs on every connection attempt, regardless
+of framework, even if the proxy itself does not connect to the toothbrush.
+
+With the compile-time patch described under [Workaround](#workaround), the
+proxy path works. See [Option C: Bluetooth Proxy](../README.md#option-c-bluetooth-proxy)
+in the main README for scope and limitations of the proxy path compared to
+the dedicated [ESP32 BLE Bridge](ESP32_BRIDGE.md).
 
 ### Symptoms
 
@@ -79,13 +83,14 @@ This was fixed in ESP-IDF commit [`d4f3517`](https://github.com/espressif/esp-id
 functions including `bta_gattc_disc_cmpl`, `bta_gattc_conn`, `bta_gattc_close`,
 and `bta_gattc_sm_execute`.
 
-**This fix is merged to ESP-IDF `master` but is not yet included in any
-release tag** (not in 5.5.3, not in 5.5.4, not in 6.0). ESPHome 2026.3.2
-uses ESP-IDF 5.5.x and does not have the fix.
+**This fix has been backported to `release/v5.5`, `release/v5.3`, and
+`release/v5.2` but is not yet in a tagged release** (v5.5.4 was cut one
+day before the backport landed). The next tag — expected around
+**v5.5.5 in mid-May 2026** — will carry the fix. ESPHome will pick it
+up a few weeks later.
 
-Once a new ESP-IDF release includes this commit and ESPHome adopts it,
-`bluetooth_proxy` should be able to coexist with our component without
-the workaround below.
+Once ESPHome ships with ESP-IDF v5.5.5+, `bluetooth_proxy` can coexist
+with our component without the workaround below.
 
 Related issues:
 - [esphome/esphome#15783](https://github.com/esphome/esphome/issues/15783) —
@@ -176,17 +181,21 @@ these settings.
 
 ---
 
-## Brushing Mode Select has no effect on BrushSync models
+## Brushing Mode Select not available on BrushSync models
 
-**Status:** Confirmed, firmware limitation
+**Status:** Confirmed, firmware limitation — entity model-gated
 
-On BrushSync-enabled models (e.g. DiamondClean Smart HX992B), the toothbrush
+On BrushSync-enabled models (DiamondClean Smart HX992X, Sonicare For Kids
+HX63xx, ExpertClean HX962X, DiamondClean 9000 HX991X), the toothbrush
 accepts BLE mode writes at the GATT level but ignores them on the firmware
-level. The brushing mode is determined by the attached brush head (BrushSync)
-or the physical button.
+level — the mode is determined by the attached brush head (BrushSync) or
+the physical button.
 
-The Select entity is disabled by default. If you have a non-BrushSync model
-where mode writes work, please open an issue.
+The integration therefore only creates the **Brushing Mode** and
+**Intensity** Select entities for models that support BLE mode writes:
+DiamondClean Prestige (HX999X), HX9996, and HX74xx. If you have a
+non-BrushSync model where mode writes work, please open an issue — we
+can add it to `MODE_WRITE_MODELS` in `const.py`.
 
 ---
 
