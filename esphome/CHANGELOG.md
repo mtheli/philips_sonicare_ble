@@ -1,19 +1,19 @@
 # ESP Bridge Changelog
 
-## v1.2.2
+## v1.2.2 — 2026-04-06
 
 - Skip duplicate subscribe when subscriptions are already restored after
   reconnect. Avoids redundant CCCD writes and speeds up reconnection.
 - Keep desired_subscriptions across BLE disconnects so they can be
   restored immediately on reconnect.
 
-## v1.2.1
+## v1.2.1 — 2026-04-06
 
 - Fix: Don't fire "ready" event before GATT service discovery completes.
   HA was reading characteristics before the service table was populated,
   causing "not found" warnings and missed initial data reads.
 
-## v1.2.0
+## v1.2.0 — 2026-04-01
 
 - CCCD fix: Use `esp_ble_gattc_get_descr_by_char_handle()` instead of
   ESPHome's internal cache (which had a bug causing subscribe loops).
@@ -21,7 +21,12 @@
 - Notification throttle support (configurable via HA).
 - Bridge version reporting and HA repair issue for outdated firmware.
 
-## v1.1.0
+## v1.1.0 — 2026-03-19
+
+- Auto-detect indicate vs notify characteristics, log CCCD value.
+- Log write characteristic response status.
+
+## v1.0.0 — 2026-03-18
 
 - Initial ESP32 Bridge release.
 - BLE client for Philips Sonicare toothbrushes.
