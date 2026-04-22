@@ -177,6 +177,7 @@
       },
       "brushhead_payload": { "name": "NFC Payload" },
       "bridge_version": { "name": "Version" },
+      "bridge_boot_time": { "name": "Bridge Last Boot" },
       "model_number": { "name": "Model Number" },
       "firmware": { "name": "Firmware" },
       "last_seen": { "name": "Last Seen" },

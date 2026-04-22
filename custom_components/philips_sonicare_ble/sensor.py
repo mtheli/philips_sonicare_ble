@@ -114,6 +114,7 @@ async def async_setup_entry(
     # ESP bridge sub-device sensor (only for ESP transport)
     if entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE:
         entities.append(SonicareBridgeVersionSensor(coordinator, entry))
+        entities.append(SonicareBridgeBootTimeSensor(coordinator, entry))
 
     async_add_entities(entities)
 
@@ -1047,3 +1048,24 @@ class SonicareBridgeVersionSensor(PhilipsConnectionEntity, SensorEntity):
     def native_value(self) -> str | None:
         transport = self.coordinator.transport
         return getattr(transport, "bridge_version", None)
+
+
+# ---------------------------------------------------------------------------
+# ESP Bridge Last Boot (on bridge sub-device)
+# ---------------------------------------------------------------------------
+class SonicareBridgeBootTimeSensor(PhilipsConnectionEntity, SensorEntity):
+    """ESP bridge boot timestamp (refreshed only on detected restart)."""
+
+    _attr_translation_key = "bridge_boot_time"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:restart"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_bridge_boot_time"
+
+    @property
+    def native_value(self) -> datetime | None:
+        transport = self.coordinator.transport
+        return getattr(transport, "bridge_boot_time", None)

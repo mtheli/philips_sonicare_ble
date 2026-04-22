@@ -1,5 +1,13 @@
 # ESP Bridge Changelog
 
+## v1.2.3 — 2026-04-22
+
+- Include `uptime_s` in `heartbeat` and `ready` events (previously only
+  in `info`). Enables HA to detect bridge restarts via uptime
+  regression and clear stale subscription state, so auto-resubscribe
+  triggers when the API reconnects after an ESP reboot — even without
+  HA actively requesting `ble_get_info`.
+
 ## v1.2.2 — 2026-04-06
 
 - Skip duplicate subscribe when subscriptions are already restored after

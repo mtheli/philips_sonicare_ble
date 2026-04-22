@@ -10,7 +10,7 @@ import abc
 import asyncio
 import logging
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from bleak import BleakClient
@@ -400,6 +400,8 @@ class EspBridgeTransport(SonicareTransport):
         self._ble_paired: str | None = None
         self._needs_resubscribe = False
         self._ready_event = asyncio.Event()
+        self._last_uptime: int | None = None
+        self._boot_time: datetime | None = None
 
     @property
     def connection_path(self) -> str | None:
@@ -433,6 +435,15 @@ class EspBridgeTransport(SonicareTransport):
     @property
     def bridge_version(self) -> str | None:
         return self._bridge_version
+
+    @property
+    def bridge_boot_time(self) -> datetime | None:
+        """Return the ESP bridge boot timestamp.
+
+        Computed from uptime on first sighting and refreshed only on
+        detected restart (uptime regression) — stable during runtime.
+        """
+        return self._boot_time
 
     @property
     def ble_paired(self) -> str | None:
@@ -536,6 +547,37 @@ class EspBridgeTransport(SonicareTransport):
 
             if not self._esp_alive:
                 self._esp_alive = True
+
+            # Detect ESP restart via uptime regression.  After reboot the
+            # bridge loses all BLE subscriptions, but HA's notify_callbacks
+            # still hold stale entries.  Clear them so the "ready" handler
+            # below flags a resubscribe.  Fires on info/heartbeat/ready
+            # events (all include uptime_s since ESP v1.2.3).
+            uptime_str = event.data.get("uptime_s")
+            if uptime_str is not None:
+                try:
+                    new_uptime = int(uptime_str)
+                    is_restart = (
+                        self._last_uptime is not None
+                        and new_uptime < self._last_uptime
+                    )
+                    if is_restart:
+                        _LOGGER.info(
+                            "ESP bridge restarted (uptime %ds → %ds) — "
+                            "clearing stale subscriptions",
+                            self._last_uptime, new_uptime,
+                        )
+                        self._notify_callbacks.clear()
+                        self._needs_resubscribe = True
+                    # Set boot_time on first sighting and on every restart —
+                    # keeps the timestamp stable during normal runtime.
+                    if is_restart or self._boot_time is None:
+                        self._boot_time = datetime.now(timezone.utc) - timedelta(
+                            seconds=new_uptime
+                        )
+                    self._last_uptime = new_uptime
+                except ValueError:
+                    pass
 
             if status == "info":
                 # Filter by bridge_id if present (multi-device ESP)

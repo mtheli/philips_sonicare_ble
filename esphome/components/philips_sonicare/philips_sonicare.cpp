@@ -74,6 +74,8 @@ void PhilipsSonicare::loop() {
 
   if ((now - this->last_heartbeat_ms_) >= HEARTBEAT_INTERVAL_MS) {
     this->last_heartbeat_ms_ = now;
+    char uptime_str[16];
+    snprintf(uptime_str, sizeof(uptime_str), "%u", now / 1000);
     this->fire_homeassistant_event(
         "esphome.philips_sonicare_ble_status",
         {
@@ -81,6 +83,7 @@ void PhilipsSonicare::loop() {
             {"ble_connected", this->connected_ ? "true" : "false"},
             {"mac", this->get_device_mac_()},
             {"version", PHILIPS_SONICARE_VERSION},
+            {"uptime_s", std::string(uptime_str)},
         });
 
     // If BLE is connected, services discovered, but no subscriptions yet,
@@ -94,6 +97,7 @@ void PhilipsSonicare::loop() {
               {"status", "ready"},
               {"mac", this->get_device_mac_()},
               {"version", PHILIPS_SONICARE_VERSION},
+              {"uptime_s", std::string(uptime_str)},
           });
     }
   }
