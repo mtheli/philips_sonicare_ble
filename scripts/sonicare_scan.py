@@ -276,10 +276,11 @@ class NewerProtocolProbe:
         except Exception as e:
             print(f"      !!! TX_ACK write failed: {e}")
 
-    # --- Frame layer (FFFE marker + msg type + length + payload) --------
+    # --- Frame layer (FEFF marker + msg type + length + payload) --------
+    # Start bytes and length are big-endian — Java ByteBuffer default.
 
     async def _send_msg(self, msg_type: int, payload: bytes = b""):
-        frame = b"\xFF\xFE" + bytes([msg_type]) + struct.pack("<H", len(payload)) + payload
+        frame = b"\xFE\xFF" + bytes([msg_type]) + struct.pack(">H", len(payload)) + payload
         name = MSG_NAMES.get(msg_type, f"Type{msg_type}")
         print(f"  >>> {name} ({len(frame)}B): {frame.hex()}")
 
@@ -326,9 +327,9 @@ class NewerProtocolProbe:
         # they share a buffer until 5 + payload_len bytes are seen.
         self.rx_buffer.extend(payload)
         buf = bytes(self.rx_buffer)
-        if len(buf) >= 5 and buf[0] == 0xFF and buf[1] == 0xFE:
+        if len(buf) >= 5 and buf[0] == 0xFE and buf[1] == 0xFF:
             msg_type = buf[2]
-            payload_len = struct.unpack("<H", buf[3:5])[0]
+            payload_len = struct.unpack(">H", buf[3:5])[0]
             if len(buf) >= 5 + payload_len:
                 self._handle_message(msg_type, buf[5:5 + payload_len])
                 self.rx_buffer = bytearray()
