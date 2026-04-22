@@ -216,47 +216,85 @@ def _supports_settings_write(model: str) -> bool:
 class NewerProtocolProbe:
     """Probe a Sonicare device using the newer (e50b) BLE protocol."""
 
+    # Channel identifier in the 1-byte transport header.
+    CH_DATA = 0       # primary framed data channel
+    CH_BINARY = 1     # auxiliary binary channel (unused here)
+
+    # Transport bits packed into the 1-byte header before each chunk.
+    BIT_CHANNEL = 0x80   # 0 = data, 1 = binary
+    BIT_START = 0x40     # only set on the channel-open handshake packet
+    MASK_SEQ = 0x3F      # 0..63, wraps
+
+    # Phase-1 negotiation: announce supported transport versions.
+    NEG_VERSIONS = bytes([0x03, 0x04])
+    # Phase-2 channel-config request: ask the device for buffer/packet sizes.
+    CFG_REQUEST = bytes([0xFF, 0xFF, 0xFF, 0xFF])
+    # Default packet size before the channel-config response is parsed.
+    DEFAULT_PACKET_SIZE = 20
+
     def __init__(self, client: BleakClient):
         self.client = client
-        self.seq_num = 0
+        # Outgoing data packets are sequenced 1..63, 0, 1, ...; seq 0 with
+        # BIT_START is reserved for the channel-open handshake.
+        self.next_data_seq = 1
+        # Last incoming sequence we have observed on the data channel; used
+        # to ack received notifications back to the device.
+        self.last_incoming_seq = -1
         self.rx_buffer = bytearray()
         self.response_event = asyncio.Event()
         self.response_data = b""
         self.server_cfg_event = asyncio.Event()
+        self.server_cfg_data = b""
+        self.handshake_ack_event = asyncio.Event()
+        # Filled in from the phase-2 server-config response.
+        self.max_packet_size = self.DEFAULT_PACKET_SIZE
 
-    # --- ByteStreaming layer ---
+    # --- Transport (1-byte header + payload) ----------------------------
 
-    def _next_header(self, channel: int = 0, start: bool = True) -> int:
-        hdr = self.seq_num & 0x3F
-        if start:
-            hdr |= 0x40
-        if channel:
-            hdr |= 0x80
-        self.seq_num = (self.seq_num + 1) % 64
-        return hdr
+    def _data_header(self) -> int:
+        """Header byte for a data-channel packet (no start bit)."""
+        seq = self.next_data_seq & self.MASK_SEQ
+        self.next_data_seq = (self.next_data_seq + 1) % 64
+        # Skip seq 0 to avoid colliding with the handshake encoding.
+        if self.next_data_seq == 0:
+            self.next_data_seq = 1
+        return seq  # channel=0, start=0
 
-    async def _send_raw(self, data: bytes):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            mtu = self.client.mtu_size
-        chunk_size = max(mtu - 3, 17)
+    async def _send_handshake(self):
+        """Open the data channel: 1-byte packet, BIT_START set, seq=0."""
+        self.handshake_ack_event.clear()
+        await self.client.write_gatt_char(
+            CHAR_RX, bytes([self.BIT_START]), response=False
+        )
 
-        offset = 0
-        first = True
-        while offset < len(data):
-            chunk = data[offset:offset + chunk_size]
-            hdr = self._next_header(start=first)
-            await self.client.write_gatt_char(CHAR_RX, bytes([hdr]) + chunk, response=False)
-            offset += len(chunk)
-            first = False
+    async def _send_ack(self, seq: int):
+        """Acknowledge an incoming data-channel packet on TX_ACK."""
+        try:
+            await self.client.write_gatt_char(
+                CHAR_TX_ACK, bytes([seq & self.MASK_SEQ]), response=False
+            )
+        except Exception as e:
+            print(f"      !!! TX_ACK write failed: {e}")
 
-    # --- Condor frame layer ---
+    # --- Frame layer (FFFE marker + msg type + length + payload) --------
 
     async def _send_msg(self, msg_type: int, payload: bytes = b""):
         frame = b"\xFF\xFE" + bytes([msg_type]) + struct.pack("<H", len(payload)) + payload
         name = MSG_NAMES.get(msg_type, f"Type{msg_type}")
         print(f"  >>> {name} ({len(frame)}B): {frame.hex()}")
-        await self._send_raw(frame)
+
+        # Each transport packet is 1 header byte + up to (max_packet_size - 1)
+        # payload bytes. Fragments share the same header layout (channel=0,
+        # start=0, seq incrementing).
+        chunk_payload = max(self.max_packet_size - 1, 1)
+        offset = 0
+        while offset < len(frame):
+            chunk = frame[offset:offset + chunk_payload]
+            hdr = self._data_header()
+            await self.client.write_gatt_char(
+                CHAR_RX, bytes([hdr]) + chunk, response=False
+            )
+            offset += len(chunk)
 
     async def _send_and_wait(self, msg_type: int, payload: bytes = b"", timeout: float = 5.0) -> bytes:
         self.response_event.clear()
@@ -269,20 +307,24 @@ class NewerProtocolProbe:
             return b""
         return self.response_data
 
-    # --- Notification handlers ---
+    # --- Notification handlers ------------------------------------------
 
     def _on_tx(self, _sender, data: bytearray):
         if len(data) < 1:
             return
         hdr = data[0]
-        start = (hdr >> 6) & 1
+        seq = hdr & self.MASK_SEQ
         payload = bytes(data[1:])
 
-        if start:
-            self.rx_buffer = bytearray(payload)
-        else:
-            self.rx_buffer.extend(payload)
+        # Track the most recent incoming sequence and ack it back. Without
+        # this the device's send window fills up and it stops emitting
+        # further notifications.
+        self.last_incoming_seq = seq
+        asyncio.get_event_loop().create_task(self._send_ack(seq))
 
+        # The transport may fragment a frame across several notifications;
+        # they share a buffer until 5 + payload_len bytes are seen.
+        self.rx_buffer.extend(payload)
         buf = bytes(self.rx_buffer)
         if len(buf) >= 5 and buf[0] == 0xFF and buf[1] == 0xFE:
             msg_type = buf[2]
@@ -292,10 +334,16 @@ class NewerProtocolProbe:
                 self.rx_buffer = bytearray()
 
     def _on_rx_ack(self, _sender, data: bytearray):
-        pass  # silently consume
+        # First notification on RX_ACK after the handshake completes the
+        # channel-open round-trip; subsequent ones acknowledge our outgoing
+        # data packets and can be ignored.
+        if not self.handshake_ack_event.is_set():
+            print(f"  <<< Channel ACK: {bytes(data).hex()}")
+            self.handshake_ack_event.set()
 
     def _on_server_cfg(self, _sender, data: bytearray):
-        print(f"  <<< Server Config: {bytes(data).hex()}")
+        self.server_cfg_data = bytes(data)
+        print(f"  <<< Server Config: {self.server_cfg_data.hex()}")
         self.server_cfg_event.set()
 
     def _handle_message(self, msg_type: int, payload: bytes):
@@ -334,14 +382,31 @@ class NewerProtocolProbe:
         self.response_data = payload
         self.response_event.set()
 
-    # --- High-level probe sequence ---
+    # --- High-level probe sequence --------------------------------------
+
+    async def _await_server_cfg(self, expected_len: int, timeout: float = 5.0) -> bytes | None:
+        """Wait for the next SERVER_CFG notification and return its payload."""
+        self.server_cfg_event.clear()
+        self.server_cfg_data = b""
+        try:
+            await asyncio.wait_for(self.server_cfg_event.wait(), timeout)
+        except asyncio.TimeoutError:
+            print(f"      !!! No Server Config response (expected {expected_len}B)")
+            return None
+        if len(self.server_cfg_data) != expected_len:
+            print(
+                f"      !!! Server Config length mismatch: got {len(self.server_cfg_data)}B, "
+                f"expected {expected_len}B"
+            )
+            return None
+        return self.server_cfg_data
 
     async def run(self):
         """Run the full newer-protocol probe."""
         print("\n--- Newer Protocol Probe ---\n")
 
         # Read protocol config (optional — not present on all firmware versions).
-        # When absent, the app falls back to the CLIENT_CFG / SERVER_CFG negotiation path below.
+        # When absent, fall back to the CLIENT_CFG / SERVER_CFG negotiation path below.
         try:
             cfg = await self.client.read_gatt_char(CHAR_PROTO_CFG)
             print(f"  Protocol Config: {cfg.hex()}")
@@ -350,13 +415,12 @@ class NewerProtocolProbe:
         except BleakCharacteristicNotFoundError:
             print("  Protocol Config: characteristic absent — using negotiation fallback")
 
-        # Subscription order mirrors the Sonicare app: SERVER_CFG first, then
-        # CLIENT_CFG write, await the server response, then TX + RX ACK.
-        # Subscribing to TX before negotiation has been observed to make the
-        # brush drop the connection on some firmwares (e.g. HX742X 1.8.20.0).
+        # SERVER_CFG must be subscribed before any CLIENT_CFG write so we
+        # don't miss the response. Subscribing to TX/RX_ACK is deferred
+        # until after phase-1 negotiation: some firmwares (HX742X 1.8.20.0)
+        # drop the connection if TX is enabled too early.
 
-        print("\n  [1/5] Protocol negotiation...")
-        self.server_cfg_event.clear()
+        print("\n  [1/6] Subscribe to Server Config...")
         try:
             await asyncio.wait_for(
                 self.client.start_notify(CHAR_SERVER_CFG, self._on_server_cfg),
@@ -372,24 +436,32 @@ class NewerProtocolProbe:
             print("      !!! Disconnected during Server Config subscribe — aborting probe")
             return
 
+        # Phase 1 — version negotiation. Device replies with a single byte
+        # equal to the chosen transport version.
+        print("\n  [2/6] Version negotiation...")
+        self.server_cfg_event.clear()
         try:
             await self.client.write_gatt_char(
-                CHAR_CLIENT_CFG, bytes([0x03, 0x04]), response=False
+                CHAR_CLIENT_CFG, self.NEG_VERSIONS, response=False
             )
         except Exception as e:
             print(f"      !!! Write to CLIENT_CFG failed: {e} — aborting probe")
             return
-
-        try:
-            await asyncio.wait_for(self.server_cfg_event.wait(), 5.0)
-        except asyncio.TimeoutError:
-            print("      !!! No server config response — continuing anyway")
-        if not self.client.is_connected:
-            print("      !!! Disconnected waiting for Server Config response — aborting probe")
+        version_data = await self._await_server_cfg(expected_len=1)
+        if version_data is None:
+            print("      !!! Aborting — no usable version response")
             return
-        await asyncio.sleep(0.3)
+        chosen_version = version_data[0]
+        print(f"      Chosen version: {chosen_version}")
+        if chosen_version != 4:
+            print(f"      !!! Only transport v4 is implemented here. Aborting.")
+            return
+        if not self.client.is_connected:
+            print("      !!! Disconnected after version negotiation — aborting probe")
+            return
 
-        # Now that the transport is negotiated, subscribe to data channels.
+        # Subscribe to data + ack channels before sending anything else.
+        print("\n  [3/6] Subscribe to TX and RX ACK...")
         for uuid, cb, label in [
             (CHAR_TX, self._on_tx, "TX"),
             (CHAR_RX_ACK, self._on_rx_ack, "RX ACK"),
@@ -397,34 +469,80 @@ class NewerProtocolProbe:
             try:
                 await asyncio.wait_for(self.client.start_notify(uuid, cb), timeout=5.0)
             except asyncio.TimeoutError:
-                print(f"  !!! Timeout subscribing to {label} ({uuid}) — aborting probe")
+                print(f"      !!! Timeout subscribing to {label} ({uuid}) — aborting probe")
                 return
             except Exception as e:
-                print(f"  !!! Error subscribing to {label} ({uuid}): {e} — aborting probe")
+                print(f"      !!! Error subscribing to {label} ({uuid}): {e} — aborting probe")
                 return
             if not self.client.is_connected:
-                print(f"  !!! Device disconnected during subscribe to {label} — aborting probe")
+                print(f"      !!! Disconnected during subscribe to {label} — aborting probe")
                 return
 
-        # Initialize
-        print("\n  [2/5] Initialize...")
+        # Phase 2 — channel configuration. Device replies with 6 bytes:
+        # 3× little-endian uint16 = (max_packet_size, ch0_buf, ch1_buf).
+        print("\n  [4/6] Channel configuration...")
+        self.server_cfg_event.clear()
+        try:
+            await self.client.write_gatt_char(
+                CHAR_CLIENT_CFG, self.CFG_REQUEST, response=False
+            )
+        except Exception as e:
+            print(f"      !!! Channel-config request failed: {e} — aborting probe")
+            return
+        cfg_data = await self._await_server_cfg(expected_len=6)
+        if cfg_data is None:
+            print("      !!! Aborting — no usable channel-config response")
+            return
+        max_pkt, ch0_buf, ch1_buf = struct.unpack("<HHH", cfg_data)
+        print(f"      max_packet_size={max_pkt}, ch0_buf={ch0_buf}, ch1_buf={ch1_buf}")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            link_mtu = self.client.mtu_size
+        # The actual on-air packet is bounded by both sides' buffers and
+        # the link MTU (BLE adds 3 bytes of ATT overhead).
+        self.max_packet_size = max(min(max_pkt, link_mtu - 3), 4)
+        print(f"      effective max_packet_size={self.max_packet_size} (link MTU={link_mtu})")
+        if not self.client.is_connected:
+            print("      !!! Disconnected after channel config — aborting probe")
+            return
+
+        # Phase 3 — open the data channel with an empty start packet. The
+        # device acks it on RX_ACK; until that ack arrives, any framed data
+        # we send would be discarded.
+        print("\n  [5/6] Open data channel...")
+        try:
+            await self._send_handshake()
+        except Exception as e:
+            print(f"      !!! Channel-open write failed: {e} — aborting probe")
+            return
+        try:
+            await asyncio.wait_for(self.handshake_ack_event.wait(), 5.0)
+        except asyncio.TimeoutError:
+            print("      !!! No channel-open ACK on RX_ACK — aborting probe")
+            return
+        if not self.client.is_connected:
+            print("      !!! Disconnected after channel open — aborting probe")
+            return
+        print("      Data channel open.")
+
+        # Phase 4 — drive the framed protocol now that the transport is up.
+        print("\n  [6/6] Framed exchange...")
+
+        print("\n  -- Initialize --")
         await self._send_and_wait(MSG_INITIALIZE_REQ)
         await asyncio.sleep(0.3)
 
-        # Get products
-        print("\n  [3/5] Get products...")
+        print("\n  -- Get products --")
         await self._send_and_wait(MSG_GET_PRODS)
         await asyncio.sleep(0.3)
 
-        # Get ports
-        print("\n  [4/5] Get ports...")
+        print("\n  -- Get ports --")
         for prod_id in ["0", "1"]:
             payload = prod_id.encode() + b"\x00"
             await self._send_and_wait(MSG_GET_PORTS, payload)
             await asyncio.sleep(0.3)
 
-        # Get properties for known ports
-        print("\n  [5/5] Get properties...")
+        print("\n  -- Get properties --")
         known_ports = [
             "sonicare", "battery_service", "sensor_data", "brush_head",
             "routine_status", "storage", "extended", "device_diagnostics",
