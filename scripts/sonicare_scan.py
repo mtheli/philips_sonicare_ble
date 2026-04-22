@@ -13,6 +13,7 @@ Requirements:
 """
 
 import asyncio
+import json
 import struct
 import argparse
 import subprocess
@@ -212,6 +213,29 @@ def _supports_settings_write(model: str) -> bool:
 # =====================================================================
 # Newer protocol probe
 # =====================================================================
+
+def _parse_generic_resp_json(resp: bytes):
+    """GenericResp payload is [status, body..., 0]. Return parsed JSON or None."""
+    if not resp or len(resp) < 2 or resp[0] != 0:
+        return None
+    body = resp[1:].rstrip(b"\x00")
+    try:
+        return json.loads(body.decode("utf-8", errors="replace"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def _parse_json_ids(resp: bytes) -> list[str]:
+    """GetProds returns {"0":{...},"1":{...}} — keys are product IDs."""
+    data = _parse_generic_resp_json(resp)
+    return list(data.keys()) if isinstance(data, dict) else []
+
+
+def _parse_json_list(resp: bytes) -> list[str]:
+    """GetPorts returns a JSON array of port names."""
+    data = _parse_generic_resp_json(resp)
+    return [p for p in data if isinstance(p, str)] if isinstance(data, list) else []
+
 
 class NewerProtocolProbe:
     """Probe a Sonicare device using the newer (e50b) BLE protocol."""
@@ -534,25 +558,26 @@ class NewerProtocolProbe:
         await asyncio.sleep(0.3)
 
         print("\n  -- Get products --")
-        await self._send_and_wait(MSG_GET_PRODS)
+        prods_resp = await self._send_and_wait(MSG_GET_PRODS)
+        prod_ids = _parse_json_ids(prods_resp)
         await asyncio.sleep(0.3)
 
-        print("\n  -- Get ports --")
-        for prod_id in ["0", "1"]:
-            payload = prod_id.encode() + b"\x00"
-            await self._send_and_wait(MSG_GET_PORTS, payload)
-            await asyncio.sleep(0.3)
+        product_ports: dict[str, list[str]] = {}
+        if prod_ids:
+            print("\n  -- Get ports --")
+            for prod_id in prod_ids:
+                payload = prod_id.encode() + b"\x00"
+                ports_resp = await self._send_and_wait(MSG_GET_PORTS, payload)
+                product_ports[prod_id] = _parse_json_list(ports_resp)
+                await asyncio.sleep(0.3)
 
-        print("\n  -- Get properties --")
-        known_ports = [
-            "sonicare", "battery_service", "sensor_data", "brush_head",
-            "routine_status", "storage", "extended", "device_diagnostics",
-        ]
-        for port in known_ports:
-            for prod_id in ["0", "1"]:
-                payload = prod_id.encode() + b"\x00" + port.encode() + b"\x00"
-                await self._send_and_wait(MSG_GET_PROPS, payload, timeout=3.0)
-                await asyncio.sleep(0.2)
+        if product_ports:
+            print("\n  -- Get properties --")
+            for prod_id, ports in product_ports.items():
+                for port in ports:
+                    payload = prod_id.encode() + b"\x00" + port.encode() + b"\x00"
+                    await self._send_and_wait(MSG_GET_PROPS, payload, timeout=3.0)
+                    await asyncio.sleep(0.2)
 
         print("\n--- Probe complete ---")
 
