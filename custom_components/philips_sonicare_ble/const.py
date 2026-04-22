@@ -17,7 +17,7 @@ SONICARE_SERVICE_UUIDS = [
 SONICARE_MANUFACTURER_ID = 477
 
 # Minimum ESP bridge component version required for full functionality
-MIN_BRIDGE_VERSION = "1.2.3"
+MIN_BRIDGE_VERSION = "1.2.2"
 
 # ── Service UUIDs ────────────────────────────────────────────────────────────
 SVC_BATTERY = "0000180f-0000-1000-8000-00805f9b34fb"
