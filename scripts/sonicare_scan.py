@@ -18,6 +18,7 @@ import struct
 import argparse
 import subprocess
 import sys
+import time
 import warnings
 from bleak import BleakClient, BleakScanner
 from bleak.exc import BleakCharacteristicNotFoundError
@@ -39,10 +40,30 @@ CHAR_CLIENT_CFG = "e50b0007-af04-4564-92ad-fef019489de6"
 MSG_INITIALIZE_REQ = 1
 MSG_INITIALIZE_RESP = 2
 MSG_GET_PROPS = 4
+MSG_SUBSCRIBE = 5
+MSG_UNSUBSCRIBE = 6
 MSG_GENERIC_RESP = 7
+MSG_CHANGE_IND = 8
 MSG_CHANGE_IND_RESP = 9
 MSG_GET_PRODS = 10
 MSG_GET_PORTS = 11
+
+# Subscribe payload sends this timeout in seconds (= 1 year) — matches app behavior.
+SUBSCRIBE_TIMEOUT_SECS = 31_536_000
+
+# Default set of ports to subscribe to when --listen is active. JSON ports only;
+# binary streaming ports (.b) are gated behind --subscribe-binary.
+DEFAULT_SUBSCRIBE_PORTS = (
+    ("1", "Sonicare"),
+    ("1", "RoutineStatus"),
+    ("1", "Battery"),
+    ("1", "BrushHead"),
+    ("1", "SessionStorage"),
+)
+BINARY_SUBSCRIBE_PORTS = (
+    ("1", "SensorData.b"),
+    ("1", "SessionStorage.b"),
+)
 
 MSG_NAMES = {
     1: "InitializeReq", 2: "InitializeResp", 3: "PutProps", 4: "GetProps",
@@ -256,8 +277,15 @@ class NewerProtocolProbe:
     # Default packet size before the channel-config response is parsed.
     DEFAULT_PACKET_SIZE = 20
 
-    def __init__(self, client: BleakClient):
+    def __init__(
+        self,
+        client: BleakClient,
+        listen_seconds: int = 0,
+        subscribe_binary: bool = False,
+    ):
         self.client = client
+        self.listen_seconds = listen_seconds
+        self.subscribe_binary = subscribe_binary
         # Outgoing data packets are sequenced 1..63, 0, 1, ...; seq 0 with
         # BIT_START is reserved for the channel-open handshake.
         self.next_data_seq = 1
@@ -272,6 +300,8 @@ class NewerProtocolProbe:
         self.handshake_ack_event = asyncio.Event()
         # Filled in from the phase-2 server-config response.
         self.max_packet_size = self.DEFAULT_PACKET_SIZE
+        # ChangeIndication counter for the listen summary.
+        self.indication_count: dict[tuple[str, str], int] = {}
 
     # --- Transport (1-byte header + payload) ----------------------------
 
@@ -373,6 +403,13 @@ class NewerProtocolProbe:
 
     def _handle_message(self, msg_type: int, payload: bytes):
         name = MSG_NAMES.get(msg_type, f"Type{msg_type}")
+
+        # ChangeIndication is an unsolicited message from the device; it is
+        # not tied to the request/response cycle and must be acked separately.
+        if msg_type == MSG_CHANGE_IND:
+            self._handle_change_indication(payload)
+            return
+
         print(f"  <<< {name}: {payload.hex()}")
 
         if msg_type == MSG_GENERIC_RESP and len(payload) >= 1:
@@ -406,6 +443,66 @@ class NewerProtocolProbe:
 
         self.response_data = payload
         self.response_event.set()
+
+    def _handle_change_indication(self, payload: bytes):
+        """Format: <product>\\0<port>\\0<body>. Body is JSON for JSON ports,
+        raw bytes for *.b binary ports. Ack with MSG_CHANGE_IND_RESP.
+        """
+        stamp = time.strftime("%H:%M:%S") + f".{int((time.time() % 1) * 1000):03d}"
+
+        parts = payload.split(b"\x00", 2)
+        if len(parts) < 3:
+            print(f"  [{stamp}] <<< ChangeInd (malformed, {len(payload)}B): {payload.hex()}")
+            asyncio.get_event_loop().create_task(self._send_change_ind_ack())
+            return
+
+        prod = parts[0].decode("ascii", errors="replace")
+        port = parts[1].decode("ascii", errors="replace")
+        body = parts[2]
+        # Trailing NUL is present on JSON bodies coming from the device.
+        while body.endswith(b"\x00"):
+            body = body[:-1]
+
+        key = (prod, port)
+        self.indication_count[key] = self.indication_count.get(key, 0) + 1
+
+        is_binary = port.endswith(".b")
+        if is_binary:
+            summary = f"{len(body)}B: {body.hex()}"
+        else:
+            try:
+                decoded = body.decode("utf-8")
+                summary = decoded.strip()
+            except UnicodeDecodeError:
+                summary = f"(non-utf8 {len(body)}B) {body.hex()}"
+
+        print(f"  [{stamp}] <<< ChangeInd prod={prod} port={port}: {summary}")
+
+        asyncio.get_event_loop().create_task(self._send_change_ind_ack())
+
+    async def _send_change_ind_ack(self):
+        """Acknowledge a ChangeIndication with a single status byte (NoError)."""
+        try:
+            await self._send_msg(MSG_CHANGE_IND_RESP, bytes([0]))
+        except Exception as e:
+            print(f"      !!! ChangeIndResp send failed: {e}")
+
+    async def _subscribe_port(self, prod: str, port: str) -> bool:
+        """Subscribe to ChangeIndications for a single port. Returns True on NoError."""
+        body = json.dumps({"timeout": SUBSCRIBE_TIMEOUT_SECS}).encode("utf-8")
+        payload = prod.encode() + b"\x00" + port.encode() + b"\x00" + body
+        print(f"\n  -- Subscribe prod={prod} port={port} --")
+        resp = await self._send_and_wait(MSG_SUBSCRIBE, payload, timeout=5.0)
+        if not resp:
+            return False
+        status = resp[0] if resp else 255
+        return status == 0
+
+    async def _unsubscribe_port(self, prod: str, port: str) -> None:
+        """Unsubscribe a port. Failures are logged and ignored."""
+        payload = prod.encode() + b"\x00" + port.encode() + b"\x00" + b"{}"
+        print(f"\n  -- Unsubscribe prod={prod} port={port} --")
+        await self._send_and_wait(MSG_UNSUBSCRIBE, payload, timeout=3.0)
 
     # --- High-level probe sequence --------------------------------------
 
@@ -579,7 +676,62 @@ class NewerProtocolProbe:
                     await self._send_and_wait(MSG_GET_PROPS, payload, timeout=3.0)
                     await asyncio.sleep(0.2)
 
+        if self.listen_seconds > 0:
+            await self._listen_for_indications(product_ports)
+
         print("\n--- Probe complete ---")
+
+    async def _listen_for_indications(
+        self, discovered_ports: dict[str, list[str]]
+    ) -> None:
+        """Subscribe to default ports, log incoming ChangeIndications, then
+        cleanly unsubscribe. Only ports actually discovered on this device
+        are subscribed — skipping unknown ones avoids NoSuchPort errors.
+        """
+        print(f"\n--- Listen phase ({self.listen_seconds}s) ---")
+
+        candidates = list(DEFAULT_SUBSCRIBE_PORTS)
+        if self.subscribe_binary:
+            candidates += list(BINARY_SUBSCRIBE_PORTS)
+
+        subscribed: list[tuple[str, str]] = []
+        for prod, port in candidates:
+            if port not in discovered_ports.get(prod, []):
+                print(f"  -- Skip prod={prod} port={port} (not on device) --")
+                continue
+            ok = await self._subscribe_port(prod, port)
+            if ok:
+                subscribed.append((prod, port))
+            else:
+                print(f"      !!! Subscribe failed for {prod}/{port}")
+            await asyncio.sleep(0.2)
+
+        if not subscribed:
+            print("\n  No ports subscribed — nothing to listen for.")
+            return
+
+        print(
+            f"\n  Listening for {self.listen_seconds}s on {len(subscribed)} port(s). "
+            "Press the brush power button, switch modes, start/stop a session…"
+        )
+        try:
+            await asyncio.sleep(self.listen_seconds)
+        except asyncio.CancelledError:
+            print("\n  Listen interrupted.")
+
+        print("\n--- Listen summary ---")
+        if self.indication_count:
+            for (prod, port), count in sorted(self.indication_count.items()):
+                print(f"  prod={prod} port={port}: {count} indication(s)")
+        else:
+            print("  No ChangeIndications received.")
+
+        print("\n--- Cleaning up subscriptions ---")
+        for prod, port in subscribed:
+            if not self.client.is_connected:
+                break
+            await self._unsubscribe_port(prod, port)
+            await asyncio.sleep(0.1)
 
 
 # =====================================================================
@@ -700,7 +852,12 @@ def _remove_sonicare_bonds() -> list[str]:
     return removed
 
 
-async def scan_device(address: str, mtu: int | None = None):
+async def scan_device(
+    address: str,
+    mtu: int | None = None,
+    listen_seconds: int = 0,
+    subscribe_binary: bool = False,
+):
     """Connect to a Sonicare and dump all GATT services."""
     removed = _remove_sonicare_bonds()
     if removed:
@@ -788,7 +945,11 @@ async def scan_device(address: str, mtu: int | None = None):
 
         # Probe newer protocol if detected
         if has_newer:
-            probe = NewerProtocolProbe(client)
+            probe = NewerProtocolProbe(
+                client,
+                listen_seconds=listen_seconds,
+                subscribe_binary=subscribe_binary,
+            )
             await probe.run()
 
 
@@ -800,6 +961,28 @@ async def main():
         type=int,
         default=None,
         help="Force a specific ATT MTU (e.g. 247). Default: auto-negotiate.",
+    )
+    parser.add_argument(
+        "--listen",
+        type=int,
+        default=0,
+        metavar="SECONDS",
+        help=(
+            "After the newer-protocol probe, subscribe to the main ports "
+            "(Sonicare, RoutineStatus, Battery, BrushHead, SessionStorage) "
+            "and log incoming ChangeIndications for the given number of "
+            "seconds. Press the power button, switch modes, or run a session "
+            "during this window. Default: 0 (no listen phase)."
+        ),
+    )
+    parser.add_argument(
+        "--subscribe-binary",
+        action="store_true",
+        help=(
+            "Additionally subscribe to the binary streaming ports "
+            "(SensorData.b, SessionStorage.b) during --listen. These can be "
+            "high-rate — use only when investigating live sensor data."
+        ),
     )
     args = parser.parse_args()
 
@@ -816,7 +999,12 @@ async def main():
         if not address:
             sys.exit(1)
 
-    await scan_device(address, mtu=args.mtu)
+    await scan_device(
+        address,
+        mtu=args.mtu,
+        listen_seconds=args.listen,
+        subscribe_binary=args.subscribe_binary,
+    )
 
 
 asyncio.run(main())
