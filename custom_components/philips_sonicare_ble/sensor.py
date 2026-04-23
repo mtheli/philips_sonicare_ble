@@ -282,6 +282,7 @@ class SonicareBrushingTimeSensor(PhilipsSonicareEntity, SensorEntity):
 
     _attr_translation_key = "brushing_time"
     _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_suggested_display_precision = 0
     _data_key = "brushing_time"
@@ -306,6 +307,7 @@ class SonicareRoutineLengthSensor(PhilipsSonicareEntity, SensorEntity):
 
     _attr_translation_key = "routine_length"
     _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_suggested_display_precision = 0
     _data_key = "routine_length"
@@ -330,6 +332,7 @@ class SonicareRoutineCountdownSensor(PhilipsSonicareEntity, SensorEntity):
 
     _attr_translation_key = "routine_countdown"
     _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_suggested_display_precision = 0
     _data_key = "brushing_time"
