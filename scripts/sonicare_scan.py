@@ -445,20 +445,22 @@ class NewerProtocolProbe:
         self.response_event.set()
 
     def _handle_change_indication(self, payload: bytes):
-        """Format: <product>\\0<port>\\0<body>. Body is JSON for JSON ports,
-        raw bytes for *.b binary ports. Ack with MSG_CHANGE_IND_RESP.
+        """Format: <product>/<port>\\0<body>\\0. Note the path separator between
+        product and port is '/', not NUL — different from the Subscribe
+        request payload. Body is JSON for JSON ports, raw bytes for *.b
+        binary ports. Ack with MSG_CHANGE_IND_RESP.
         """
         stamp = time.strftime("%H:%M:%S") + f".{int((time.time() % 1) * 1000):03d}"
 
-        parts = payload.split(b"\x00", 2)
-        if len(parts) < 3:
+        parts = payload.split(b"\x00", 1)
+        if len(parts) < 2 or b"/" not in parts[0]:
             print(f"  [{stamp}] <<< ChangeInd (malformed, {len(payload)}B): {payload.hex()}")
             asyncio.get_event_loop().create_task(self._send_change_ind_ack())
             return
 
-        prod = parts[0].decode("ascii", errors="replace")
-        port = parts[1].decode("ascii", errors="replace")
-        body = parts[2]
+        header = parts[0].decode("ascii", errors="replace")
+        prod, port = header.split("/", 1)
+        body = parts[1]
         # Trailing NUL is present on JSON bodies coming from the device.
         while body.endswith(b"\x00"):
             body = body[:-1]
