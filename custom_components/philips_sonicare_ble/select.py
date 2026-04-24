@@ -23,7 +23,11 @@ async def async_setup_entry(
 
     model = entry.data.get("model", "")
     entities: list[SelectEntity] = []
-    if supports_mode_write(model):
+    # Condor (HX742X+) PutProps lands in a later phase; model-based
+    # gating alone would still try to wire a Legacy-flavoured select on
+    # a Condor device (mode labels differ between the two protocols),
+    # so also gate on the coordinator's write-capability flag.
+    if supports_mode_write(model) and coordinator.supports_writes:
         entities.append(SonicareBrushingModeSelect(coordinator, entry))
         entities.append(SonicareIntensitySelect(coordinator, entry))
 

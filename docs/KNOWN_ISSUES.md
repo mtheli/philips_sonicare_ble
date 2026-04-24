@@ -199,6 +199,65 @@ can add it to `MODE_WRITE_MODELS` in `const.py`.
 
 ---
 
+## Budget BT adapters can't scan while a GATT connection is active
+
+**Status:** Hardware / host-BT-stack limitation, no integration-side fix
+
+USB Bluetooth dongles built around CSR, Realtek and similar consumer-grade
+chipsets often cannot run **active BLE scanning and a GATT connection in
+parallel**. On such adapters, the scanner stops delivering advertisements
+to the host as soon as the first toothbrush is connected. Wake-ups for
+other toothbrushes are delayed until the next scanner restart.
+
+### Symptoms
+
+- First toothbrush connects normally.
+- Second / third toothbrush stays in `Waiting for advertisement from …`
+  for up to ~2 minutes after it has actually started advertising
+  (power button pressed, on/off the charger).
+- HA log shows `Scanner watchdog time_since_last_detection` climbing
+  steadily after the first connect, e.g. `1.6s → 25.9s → 55.9s → 85.9s`.
+- Wake-ups for the idle toothbrushes only fire right after an entry
+  like `Bluetooth scanner has gone quiet for 115.9s, restarting` —
+  the watchdog runs every ~120 seconds and briefly frees the radio
+  for scanning, which catches any queued advertisements.
+
+### Root cause
+
+The adapter only has one physical radio and cannot time-slice it cleanly
+between an active connection interval (30-50 ms) and an active-scan
+window. Once a connection is established, scanning either stalls or
+falls back to passive, producing no advertisement callbacks. `habluetooth`
+detects the starvation via its watchdog and force-restarts the scanner
+every 120 seconds, which is the mechanism that eventually unblocks
+wake-ups for the other toothbrushes.
+
+### Confirmed affected adapter
+
+- `00:0A:CD:46:B2:2D` (USB, IDs reported as generic CSR-class) — three
+  toothbrushes: first connect succeeds immediately, second/third require
+  a watchdog cycle.
+
+### Mitigations
+
+In rough order of effectiveness:
+
+1. **Better host adapter.** Intel AX200 / AX210 (M.2 WLAN+BT combos, often
+   already present on modern mainboards) and onboard BT5.2 on recent NUCs
+   / mini-PCs reliably do 3-7 concurrent BLE connections with parallel
+   scanning.
+2. **[ESP32 BLE Bridge](ESP32_BRIDGE.md) for the toothbrushes that wake
+   rarely.** Each bridge owns its GATT link end-to-end, so the host's
+   hci0 never has to multiplex. Scales linearly with ESPs.
+3. **Power-cycle workaround.** If you want to force a wake-up right now
+   rather than wait for the 120 s watchdog, briefly disable and re-enable
+   HA's Bluetooth integration — this restarts scanning immediately.
+
+Nothing in this repository can work around this in code. The integration
+sees only what `habluetooth` delivers; the starvation sits one layer down.
+
+---
+
 ## Toothbrush not reachable on charger
 
 **Status:** By design (hardware behavior)

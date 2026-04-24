@@ -27,6 +27,7 @@ from .transport import BleakTransport, EspBridgeTransport, SonicareTransport
 from .exceptions import TransportError
 from .const import (
     DOMAIN,
+    SVC_CONDOR,
     CHAR_BATTERY_LEVEL,
     CHAR_MODEL_NUMBER,
     CHAR_SERIAL_NUMBER,
@@ -97,15 +98,23 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry = entry
         self.address = entry.data.get("address", "unknown")
         self.transport = transport
-        # Protocol layer sits on top of the transport. Only Legacy is wired
-        # up today; Condor support is tracked on the newer-protocol branch.
-        # Currently only handles writes — reads and subscriptions still talk
-        # to the transport directly (migrated in later increments).
-        from .legacy_protocol import LegacyProtocol
-        self._protocol = LegacyProtocol(transport)
         self._is_esp_bridge = (
             entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
         )
+
+        # Protocol selection — Condor (framed, push-based, HX742X+) when
+        # its transport service is in the discovered set, Legacy (direct
+        # GATT-per-property) otherwise. The two protocols produce the
+        # same ``coordinator.data`` shape through their respective
+        # adapters, so entity code stays protocol-agnostic.
+        discovered = {s.lower() for s in entry.data.get(CONF_SERVICES, [])}
+        self._use_condor = SVC_CONDOR.lower() in discovered
+        if self._use_condor:
+            from .condor_protocol import CondorProtocol
+            self._protocol = CondorProtocol(transport)
+        else:
+            from .legacy_protocol import LegacyProtocol
+            self._protocol = LegacyProtocol(transport)
 
         # Read options
         options = entry.options
@@ -212,6 +221,16 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "handle_time": None,
             "last_seen": None,
         }
+
+    @property
+    def supports_writes(self) -> bool:
+        """True when the active protocol exposes mode / intensity / settings writes.
+
+        Condor's ``PutProps`` lands in a later phase — until then the
+        write-capable select and switch entities stay hidden so a user
+        can't trigger a ``NotImplementedError`` from the UI.
+        """
+        return not self._use_condor
 
     async def async_start(self) -> None:
         """Start live monitoring. Call after setup is complete."""
@@ -344,23 +363,35 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # Shared processing for poll + live
     # ------------------------------------------------------------------
     def _process_results(self, results: dict[str, bytes | None]) -> dict[str, Any]:
-        """Merge parsed GATT values into coordinator state.
+        """Legacy path: decode GATT bytes then apply shared post-processing.
 
-        Wire-format decoding lives in :meth:`LegacyProtocol.parse_results`.
-        This method layers the state-dependent behavior on top: brush-head
-        wear derivation, sensor-stream gating by brushing state, last-seen
-        bookkeeping and device-registry sync.
+        Wire-format decoding lives in :meth:`LegacyProtocol.parse_results`;
+        the Condor path produces the same parsed shape through its own
+        adapter, so both call into :meth:`_apply_parsed` for the shared
+        bookkeeping.
         """
         if not any(v is not None for v in results.values()):
             return self.data
-
         parsed = self._protocol.parse_results(results)
+        return self._apply_parsed(parsed)
+
+    def _apply_parsed(self, parsed: dict[str, Any]) -> dict[str, Any]:
+        """Merge a parsed partial dict into ``self.data`` with side-effects.
+
+        Layers on top of the raw merge: sensor-stream gating for Legacy
+        (keyed off ``brushing_state``), brush-head wear derivation,
+        last-seen bookkeeping, and device-registry sync on model/firmware
+        changes. Callers pass the output back through
+        :meth:`async_set_updated_data` once they've confirmed a state
+        transition is worth publishing.
+        """
         new_data = self.data.copy() if self.data else {}
         new_data.update(parsed)
 
-        # Sensor stream gates on brushing_state — subscribe on transition
-        # to "on", unsubscribe on transition away.
-        if "brushing_state" in parsed:
+        # Sensor stream gates on brushing_state — Legacy only, since
+        # Condor never emits this key (its sensor stream rides a separate
+        # Subscribe on the ``SensorData.b`` port instead of CCCD).
+        if not self._use_condor and "brushing_state" in parsed:
             old_state = (self.data or {}).get("brushing_state")
             new_state = parsed["brushing_state"]
             if new_state != old_state:
@@ -495,31 +526,14 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         )
                         await self.transport.set_notify_throttle(throttle_ms)
 
-                    # Read characteristics first, then subscribe.
-                    # First connect: read ALL chars (incl. static data like
-                    # brush head, model, firmware). Subsequent: dynamic only.
-                    read_chars = (
-                        self._poll_chars
-                        if not self._full_read_done
-                        else self._live_chars
-                    )
-                    results = await self._protocol.read_chars(read_chars)
-
-                    if any(v is not None for v in results.values()):
-                        new_data = self._process_results(results)
-                        new_data.pop("_connecting", None)
-                        self.async_set_updated_data(new_data)
-                        if not self._full_read_done:
-                            self._full_read_done = True
-                            _LOGGER.info(
-                                "%s: full initial data read complete (%d chars)",
-                                self.address, len(results),
-                            )
-                        else:
-                            _LOGGER.info("%s: initial data read complete", self.address)
-
-                    # Subscribe after reads are done
-                    sub_count = await self._start_all_notifications()
+                    # Initial refresh + live subscriptions. The two protocols
+                    # diverge here — Legacy polls char-by-char then starts
+                    # CCCD notifications; Condor runs its handshake, does a
+                    # framed refresh_all, and subscribes named JSON ports.
+                    if self._use_condor:
+                        sub_count = await self._setup_condor_session()
+                    else:
+                        sub_count = await self._setup_legacy_session()
                     if sub_count == 0:
                         raise TransportError("No notifications could be subscribed")
                     self._live_setup_done = True
@@ -611,7 +625,17 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             finally:
                 self._live_setup_done = False
                 self._sensor_subscribed = False
-                await self._protocol.unsubscribe_all()
+                if self._use_condor:
+                    try:
+                        await self._protocol.stop_live_updates()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    try:
+                        await self._protocol.disconnect()
+                    except Exception:  # noqa: BLE001
+                        pass
+                else:
+                    await self._protocol.unsubscribe_all()
                 _LOGGER.info("%s: live connection ended", self.address)
 
     def _update_bridge_device_version(self) -> None:
@@ -755,6 +779,78 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         finally:
             self._brushhead_read_pending = False
 
+    async def _setup_legacy_session(self) -> int:
+        """Legacy protocol setup: batch reads then CCCD notifications.
+
+        First connect reads every char we know about (model, firmware,
+        brush head, …); subsequent reconnects stick to the dynamic
+        subset. Returns the count of successful subscriptions so the
+        caller can fail the session if the device answered nothing.
+        """
+        read_chars = (
+            self._poll_chars
+            if not self._full_read_done
+            else self._live_chars
+        )
+        results = await self._protocol.read_chars(read_chars)
+
+        if any(v is not None for v in results.values()):
+            new_data = self._process_results(results)
+            new_data.pop("_connecting", None)
+            self.async_set_updated_data(new_data)
+            if not self._full_read_done:
+                self._full_read_done = True
+                _LOGGER.info(
+                    "%s: full initial data read complete (%d chars)",
+                    self.address, len(results),
+                )
+            else:
+                _LOGGER.info("%s: initial data read complete", self.address)
+
+        return await self._start_all_notifications()
+
+    async def _setup_condor_session(self) -> int:
+        """Condor protocol setup: run the framed handshake, pull a full
+        state snapshot, then subscribe named ports for push deltas.
+
+        Returns the number of ports that successfully subscribed —
+        callers treat zero as a fatal session error just like Legacy's
+        subscription count.
+        """
+        await self._protocol.connect()
+
+        initial = await self._protocol.refresh_all()
+        if initial:
+            new_data = self._apply_parsed(initial)
+            new_data.pop("_connecting", None)
+            self.async_set_updated_data(new_data)
+            if not self._full_read_done:
+                self._full_read_done = True
+                _LOGGER.info(
+                    "%s: Condor refresh_all complete (%d keys)",
+                    self.address, len(initial),
+                )
+            else:
+                _LOGGER.info("%s: Condor refresh_all complete", self.address)
+
+        await self._protocol.start_live_updates(self._on_condor_delta)
+        return len(getattr(self._protocol, "_subscribed_ports", []))
+
+    @callback
+    def _on_condor_delta(self, delta: dict[str, Any]) -> None:
+        """Route a Condor ChangeIndication delta into ``coordinator.data``.
+
+        Runs in the HA event loop from the BLE notification callback —
+        safe to call ``async_set_updated_data`` inline.
+        """
+        if not delta:
+            return
+        new_data = self._apply_parsed(delta)
+        new_data.pop("_connecting", None)
+        if new_data == self.data:
+            return
+        self.async_set_updated_data(new_data)
+
     async def _start_all_notifications(self) -> int:
         """Start GATT notifications for live updates. Returns number of successful subscriptions."""
         if not self.transport.is_connected:
@@ -839,7 +935,17 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._dbus_bus.disconnect()
             self._dbus_bus = None
 
-        await self._protocol.unsubscribe_all()
+        if self._use_condor:
+            try:
+                await self._protocol.stop_live_updates()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await self._protocol.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            await self._protocol.unsubscribe_all()
 
         if self._live_task:
             self._live_task.cancel()

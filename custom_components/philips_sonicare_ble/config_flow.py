@@ -59,6 +59,7 @@ from .const import (
     SVC_DIAGNOSTIC,
     SVC_EXTENDED,
     SVC_BYTESTREAM,
+    SVC_CONDOR,
 )
 from .transport import EspBridgeTransport, describe_connection_path
 from .exceptions import NotPairedException, TransportError
@@ -71,7 +72,10 @@ _STANDARD_BLE_SERVICES = {
     "00001801-0000-1000-8000-00805f9b34fb",  # Generic Attribute
 }
 
-# Expected Sonicare services
+# Services any supported Sonicare exposes. A device qualifies as a
+# Sonicare if *any* of these appear — older models fan out into the
+# per-feature Legacy services, HX742X / Series 7100 (Condor) collapses
+# everything onto a single framed transport service.
 _EXPECTED_SERVICES = {
     SVC_BATTERY.lower(),
     SVC_DEVICE_INFO.lower(),
@@ -82,6 +86,7 @@ _EXPECTED_SERVICES = {
     SVC_BRUSHHEAD.lower(),
     SVC_DIAGNOSTIC.lower(),
     SVC_EXTENDED.lower(),
+    SVC_CONDOR.lower(),
 }
 
 # Human-readable names for services
@@ -96,9 +101,16 @@ SERVICE_NAMES: dict[str, str] = {
     SVC_DIAGNOSTIC.lower(): "Diagnostic",
     SVC_EXTENDED.lower(): "Extended / Settings",
     SVC_BYTESTREAM.lower(): "ByteStreaming",
+    SVC_CONDOR.lower(): "Condor (Series 7100+)",
 }
 
-# Map each service to one representative characteristic for ESP probing
+# Map each service to one representative characteristic for ESP probing.
+# The ESP bridge has no "list services" call, so we read one char per
+# Legacy service and add the service when the read returns data. The
+# Condor service has no universally-readable char (e50b0005 is optional
+# firmware-side and missing on HX742X FW 1.8.20.0), so Condor is
+# inferred by exclusion below — if Device Information answered but no
+# Legacy service did, the device must be Condor.
 SERVICE_PROBE_CHARS: dict[str, str] = {
     SVC_BATTERY: CHAR_BATTERY_LEVEL,
     SVC_DEVICE_INFO: CHAR_MODEL_NUMBER,
@@ -362,6 +374,29 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             if not found_services:
                 raise TransportError(
                     "Could not read any service via ESP bridge - toothbrush may not be connected"
+                )
+
+            # Condor-by-exclusion: the only readable Condor char (e50b0005)
+            # is optional — HX742X FW 1.8.20.0 omits it entirely, so a
+            # direct probe misses that device. We're already past the
+            # name-based Sonicare discovery, so if the device answered
+            # Device Information but none of the Legacy feature services,
+            # the only supported protocol left is Condor.
+            legacy_seen = any(
+                svc in found_services for svc in (
+                    SVC_SONICARE, SVC_ROUTINE, SVC_STORAGE, SVC_SENSOR,
+                    SVC_BRUSHHEAD, SVC_DIAGNOSTIC, SVC_EXTENDED, SVC_BATTERY,
+                )
+            )
+            if (
+                model_number
+                and not legacy_seen
+                and SVC_CONDOR not in found_services
+            ):
+                found_services.append(SVC_CONDOR)
+                _LOGGER.debug(
+                    "ESP bridge: inferred Condor protocol on %s (model=%s, no Legacy services)",
+                    address, model_number,
                 )
 
             # Battery

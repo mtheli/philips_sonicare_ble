@@ -21,7 +21,6 @@ This document describes the Bluetooth Low Energy (BLE) GATT protocol used by Phi
   - [Extended Service](#extended-service-0x0008)
   - [ByteStreaming Service](#bytestreaming-service)
 - [Connection Behavior](#connection-behavior)
-- [Position Detection (Watson)](#position-detection-watson)
 - [References](#references)
 
 ---
@@ -303,7 +302,6 @@ Used for firmware updates and extended data transfer.
 - The toothbrush stays connectable for ~20 seconds after the last interaction
 - Active BLE notification subscriptions keep the connection alive indefinitely
 - Without subscriptions, the connection drops after ~6 seconds
-- The app uses `connectGatt(context, autoConnect=false, callback, TRANSPORT_LE)`
 - Default connection priority is `BALANCED` (0)
 
 ### Notification Characteristics
@@ -325,18 +323,6 @@ The following characteristics support notifications/indications and should be su
 0x40C0  Unknown (notify)
 0x4230  Brush Head Serial (notify)
 ```
-
----
-
-## Position Detection (Watson)
-
-The Sonicare app includes a proprietary native library `libwatsonWrapper.so` for brushing position detection using IMU sensor data. This is **not** part of the BLE protocol — it runs entirely on the phone.
-
-- **Input:** Accelerometer + Gyroscope data from characteristic `0x4130`
-- **Output:** Mouth sextant (1-6) with sub-segments (inner/outer)
-- **Requires:** Per-user calibration (stored in app SharedPreferences)
-- **Algorithm:** Sensor fusion (likely Madgwick filter) + position classification
-- **Configuration:** deltaTime=0.0315s (~31.7 Hz), kAcc=0.002394, kGyro=0.000583
 
 ---
 

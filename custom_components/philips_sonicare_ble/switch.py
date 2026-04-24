@@ -27,6 +27,11 @@ async def async_setup_entry(
         return
 
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    # Condor devices won't accept settings-bitmask writes until the
+    # PutProps flow lands, so skip wiring the switches altogether.
+    if not coordinator.supports_writes:
+        return
+
     async_add_entities([
         SonicareSettingsSwitch(
             coordinator, entry,
