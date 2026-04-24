@@ -10,8 +10,7 @@ protocol-agnostic:
   HX742X / Series 7100 and likely other newer models.
 
 `Condor` is the ASCII marker these newer devices advertise in their
-manufacturer-data (Philips Company ID 477, payload `"Condor"`), so the
-name is device-documented rather than private.
+manufacturer-data (Philips Company ID 477, payload `"Condor"`).
 
 Both protocols sit above `SonicareTransport`, which owns the BLE path
 (direct BlueZ vs. ESP bridge). A protocol implementation reads and

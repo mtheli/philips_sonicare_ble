@@ -31,6 +31,10 @@ SVC_BRUSHHEAD = "477ea600-a260-11e4-ae37-0002a5d50006"
 SVC_DIAGNOSTIC = "477ea600-a260-11e4-ae37-0002a5d50007"
 SVC_EXTENDED = "477ea600-a260-11e4-ae37-0002a5d50008"
 SVC_BYTESTREAM = "a651fff1-4074-4131-bce9-56d4261bc7b1"
+# Condor — newer-protocol transport service (HX742X / Series 7100 and later).
+# All named properties travel over framed messages on this one service;
+# Legacy-style per-property chars are absent on these devices.
+SVC_CONDOR = "e50ba3c0-af04-4564-92ad-fef019489de6"
 
 # ── Standard BLE Characteristics ─────────────────────────────────────────────
 CHAR_BATTERY_LEVEL = "00002a19-0000-1000-8000-00805f9b34fb"
@@ -144,8 +148,8 @@ INTENSITIES = {
 }
 
 # ── Model-based feature support ─────────────────────────────────────────────
-# Based on decompiled app: Device.java + TuscanyBLEConnector.java
-# XIAN = HX999X/HX9996 (Prestige), CAIRO = HX74XX (Kids Plus)
+# Prefix-based gating: the Prestige line (HX999X / HX9996) accepts both mode
+# and settings writes; the Kids Plus line (HX74xx) accepts mode writes only.
 MODE_WRITE_MODELS = ("HX999", "HX9996", "HX74")
 SETTINGS_WRITE_MODELS = ("HX999", "HX9996")
 
@@ -164,9 +168,9 @@ def supports_settings_write(model: str) -> bool:
 
 # ── Sector / zone count per model family ────────────────────────────────────
 # The brush does not report live sector data — sectors are derived from the
-# elapsed brushing time and the routine length. The Philips app visualises
-# 6 zones for premium Tuscany handles (HX99X, HX96X, HX995X) and 4 zones on
-# the Kids line (HX63xx). Default to 4 for unknown handles.
+# elapsed brushing time and the routine length. Premium handles (HX99X,
+# HX96X, HX995X) are divided into 6 zones; the Kids line (HX63xx) uses 4.
+# Unknown handles default to the premium layout.
 SECTORS_PREMIUM = 6
 SECTORS_KIDS = 4
 SECTORS_DEFAULT = SECTORS_PREMIUM
@@ -184,7 +188,7 @@ def number_of_sectors_for_model(model: str) -> int:
     return SECTORS_PREMIUM
 
 
-# Mode-specific sector visit sequences for Tuscany Premium handles.
+# Mode-specific sector visit sequences for premium handles.
 # Values are 1-indexed anatomical sector IDs. White+ and Gum Health revisit
 # the front-teeth sectors (2, 5) after the initial sweep.
 MODE_SECTOR_SEQUENCES: dict[str, list[int]] = {
@@ -399,6 +403,14 @@ CHAR_SERVICE_MAP: dict[str, str] = {
     # Extended Service (0x0008)
     CHAR_EXTENDED_UNKNOWN_4410: SVC_EXTENDED,
     CHAR_SETTINGS: SVC_EXTENDED,
+    # Condor protocol transport (e50b…) — newer models (HX742X and later)
+    "e50b0001-af04-4564-92ad-fef019489de6": SVC_CONDOR,
+    "e50b0002-af04-4564-92ad-fef019489de6": SVC_CONDOR,
+    "e50b0003-af04-4564-92ad-fef019489de6": SVC_CONDOR,
+    "e50b0004-af04-4564-92ad-fef019489de6": SVC_CONDOR,
+    "e50b0005-af04-4564-92ad-fef019489de6": SVC_CONDOR,
+    "e50b0006-af04-4564-92ad-fef019489de6": SVC_CONDOR,
+    "e50b0007-af04-4564-92ad-fef019489de6": SVC_CONDOR,
 }
 
 # ── Config ───────────────────────────────────────────────────────────────────
