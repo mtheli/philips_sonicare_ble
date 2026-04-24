@@ -6,3 +6,7 @@ __pycache__/
 dist/
 build/
 .venv/
+
+# Local-only planning / notes
+TODO.md
+NOTES.md
