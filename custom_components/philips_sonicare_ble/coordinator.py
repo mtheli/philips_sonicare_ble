@@ -55,12 +55,7 @@ from .const import (
     CHAR_BRUSHHEAD_RING_ID,
     CHAR_ERROR_PERSISTENT,
     CHAR_ERROR_VOLATILE,
-    CHAR_SENSOR_DATA,
-    CHAR_SENSOR_ENABLE,
     CHAR_HANDLE_TIME,
-    SENSOR_FRAME_PRESSURE,
-    SENSOR_FRAME_TEMPERATURE,
-    SENSOR_FRAME_GYROSCOPE,
     SENSOR_ENABLE_PRESSURE,
     SENSOR_ENABLE_TEMPERATURE,
     SENSOR_ENABLE_GYROSCOPE,
@@ -70,14 +65,7 @@ from .const import (
     DEFAULT_SENSOR_PRESSURE,
     DEFAULT_SENSOR_TEMPERATURE,
     DEFAULT_SENSOR_GYROSCOPE,
-    HANDLE_STATES,
-    PRESSURE_ALARM_STATES,
-    BRUSHING_MODES,
-    BRUSHING_STATES,
-    INTENSITIES,
-    CHAR_SETTINGS,
     supports_mode_write,
-    BRUSHHEAD_TYPES,
     CHAR_SERVICE_MAP,
     NOTIFICATION_CHARS,
     POLL_READ_CHARS,
@@ -109,6 +97,12 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry = entry
         self.address = entry.data.get("address", "unknown")
         self.transport = transport
+        # Protocol layer sits on top of the transport. Only Legacy is wired
+        # up today; Condor support is tracked on the newer-protocol branch.
+        # Currently only handles writes — reads and subscriptions still talk
+        # to the transport directly (migrated in later increments).
+        from .legacy_protocol import LegacyProtocol
+        self._protocol = LegacyProtocol(transport)
         self._is_esp_bridge = (
             entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
         )
@@ -350,196 +344,38 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # Shared processing for poll + live
     # ------------------------------------------------------------------
     def _process_results(self, results: dict[str, bytes | None]) -> dict[str, Any]:
-        """Process raw GATT values into coordinator data."""
+        """Merge parsed GATT values into coordinator state.
+
+        Wire-format decoding lives in :meth:`LegacyProtocol.parse_results`.
+        This method layers the state-dependent behavior on top: brush-head
+        wear derivation, sensor-stream gating by brushing state, last-seen
+        bookkeeping and device-registry sync.
+        """
         if not any(v is not None for v in results.values()):
             return self.data
 
+        parsed = self._protocol.parse_results(results)
         new_data = self.data.copy() if self.data else {}
+        new_data.update(parsed)
 
-        # === Standard GATT Characteristics ===
-        if raw := results.get(CHAR_BATTERY_LEVEL):
-            new_data["battery"] = raw[0]
-
-        if raw := results.get(CHAR_FIRMWARE_REVISION):
-            new_data["firmware"] = raw.decode("utf-8", "ignore").strip()
-
-        if raw := results.get(CHAR_HARDWARE_REVISION):
-            new_data["hardware_revision"] = raw.decode("utf-8", "ignore").strip()
-
-        if raw := results.get(CHAR_SOFTWARE_REVISION):
-            new_data["software_revision"] = raw.decode("utf-8", "ignore").strip()
-
-        if raw := results.get(CHAR_MODEL_NUMBER):
-            new_data["model_number"] = raw.decode("utf-8", "ignore").strip()
-
-        if raw := results.get(CHAR_SERIAL_NUMBER):
-            new_data["serial_number"] = raw.decode("utf-8", "ignore").strip()
-
-        if raw := results.get(CHAR_MANUFACTURER_NAME):
-            new_data["manufacturer_name"] = raw.decode("utf-8", "ignore").strip()
-
-        # === Sonicare-specific Characteristics ===
-
-        # Selected Routine ID (uint8 — only polled on models with mode write)
-        _mode_from_4022 = False
-        if raw := results.get(CHAR_AVAILABLE_ROUTINE_IDS):
-            mode_value = raw[0]
-            mapped = BRUSHING_MODES.get(mode_value)
-            if mapped:
-                new_data["brushing_mode"] = mapped
-                new_data["brushing_mode_value"] = mode_value
-                _mode_from_4022 = True
-
-        # Handle State (uint8)
-        if raw := results.get(CHAR_HANDLE_STATE):
-            state_byte = raw[0]
-            new_data["handle_state_value"] = state_byte
-            mapped = HANDLE_STATES.get(state_byte)
-            if mapped is None:
-                _LOGGER.warning("Unknown handle_state value: %d (raw: %s)", state_byte, raw.hex())
-            new_data["handle_state"] = mapped
-
-        # Brushing Mode from 0x4080 (read-only session status)
-        # Only use as fallback if 0x4022 hasn't provided a valid mode
-        if raw := results.get(CHAR_BRUSHING_MODE):
-            if len(raw) >= 2:
-                mode_value = int.from_bytes(raw[:2], "little")
-            else:
-                mode_value = raw[0]
-            mapped = BRUSHING_MODES.get(mode_value)
-            if mapped is None:
-                _LOGGER.warning("Unknown brushing_mode value: %d (raw: %s)", mode_value, raw.hex())
-            if not _mode_from_4022:
-                new_data["brushing_mode_value"] = mode_value
-                new_data["brushing_mode"] = mapped
-
-        # Brushing State (uint8)
-        if raw := results.get(CHAR_BRUSHING_STATE):
-            state_value = raw[0]
-            new_data["brushing_state_value"] = state_value
-            mapped = BRUSHING_STATES.get(state_value)
-            if mapped is None:
-                _LOGGER.warning("Unknown brushing_state value: %d (raw: %s)", state_value, raw.hex())
-            new_data["brushing_state"] = mapped
-
-            # Dynamic sensor subscription: subscribe during active sessions only
+        # Sensor stream gates on brushing_state — subscribe on transition
+        # to "on", unsubscribe on transition away.
+        if "brushing_state" in parsed:
             old_state = (self.data or {}).get("brushing_state")
-            if mapped != old_state:
-                if mapped == "on" and not self._sensor_subscribed:
+            new_state = parsed["brushing_state"]
+            if new_state != old_state:
+                if new_state == "on" and not self._sensor_subscribed:
                     self.hass.async_create_task(self._subscribe_sensor_data())
                 elif old_state == "on" and self._sensor_subscribed:
                     self.hass.async_create_task(self._unsubscribe_sensor_data())
 
-        # Intensity (uint8)
-        if raw := results.get(CHAR_INTENSITY):
-            intensity_value = raw[0]
-            new_data["intensity_value"] = intensity_value
-            mapped = INTENSITIES.get(intensity_value)
-            if mapped is None:
-                _LOGGER.warning("Unknown intensity value: %d (raw: %s)", intensity_value, raw.hex())
-            new_data["intensity"] = mapped
-
-        # Brushing Time (uint16 LE, seconds)
-        if raw := results.get(CHAR_BRUSHING_TIME):
-            new_data["brushing_time"] = int.from_bytes(raw[:2], "little")
-
-        # Routine Length (uint16 LE, seconds)
-        if raw := results.get(CHAR_ROUTINE_LENGTH):
-            new_data["routine_length"] = int.from_bytes(raw[:2], "little")
-
-        # Session ID (uint16 LE)
-        if raw := results.get(CHAR_SESSION_ID):
-            new_data["session_id"] = int.from_bytes(raw[:2], "little")
-
-        # Latest Session ID (uint16 LE)
-        if raw := results.get(CHAR_LATEST_SESSION_ID):
-            new_data["latest_session_id"] = int.from_bytes(raw[:2], "little")
-
-        # Session Count (uint16 LE)
-        if raw := results.get(CHAR_SESSION_COUNT):
-            new_data["session_count"] = int.from_bytes(raw[:2], "little")
-
-        # Motor Runtime (uint32 LE, seconds)
-        if raw := results.get(CHAR_MOTOR_RUNTIME):
-            new_data["motor_runtime"] = int.from_bytes(raw[:4], "little")
-
-        # Handle Time (uint32 LE, seconds)
-        if raw := results.get(CHAR_HANDLE_TIME):
-            new_data["handle_time"] = int.from_bytes(raw[:4], "little")
-
-        # Brush Head Lifetime Limit (uint16 LE)
-        if raw := results.get(CHAR_BRUSHHEAD_LIFETIME_LIMIT):
-            new_data["brushhead_lifetime_limit"] = int.from_bytes(raw[:2], "little")
-
-        # Brush Head Lifetime Usage (uint16 LE)
-        if raw := results.get(CHAR_BRUSHHEAD_LIFETIME_USAGE):
-            new_data["brushhead_lifetime_usage"] = int.from_bytes(raw[:2], "little")
-
-        # Brush Head Wear % (computed)
+        # Derived: brush head wear percentage
         limit = new_data.get("brushhead_lifetime_limit")
         usage = new_data.get("brushhead_lifetime_usage")
         if limit and usage is not None and limit > 0:
             new_data["brushhead_wear_pct"] = min(round(usage / limit * 100, 1), 100.0)
         elif usage == 0:
             new_data["brushhead_wear_pct"] = 0.0
-
-        # Brush Head Serial (7-byte NFC UID, displayed as colon-separated hex)
-        if raw := results.get(CHAR_BRUSHHEAD_SERIAL):
-            new_data["brushhead_serial"] = ":".join(f"{b:02X}" for b in raw)
-
-        # Brush Head Date (UTF-8 string)
-        if raw := results.get(CHAR_BRUSHHEAD_DATE):
-            new_data["brushhead_date"] = raw.decode("utf-8", "ignore").strip()
-
-        # Brush Head NFC Version (uint16 LE)
-        if raw := results.get(CHAR_BRUSHHEAD_NFC_VERSION):
-            new_data["brushhead_nfc_version"] = int.from_bytes(raw[:2], "little")
-
-        # Brush Head Type (uint8)
-        if raw := results.get(CHAR_BRUSHHEAD_TYPE):
-            new_data["brushhead_type"] = BRUSHHEAD_TYPES.get(raw[0], f"unknown_{raw[0]}")
-
-        # Brush Head Payload (NFC NDEF data — usually a URL, fallback to hex)
-        if raw := results.get(CHAR_BRUSHHEAD_PAYLOAD):
-            try:
-                text = raw.decode("utf-8")
-                if text.isprintable():
-                    new_data["brushhead_payload"] = text
-                else:
-                    new_data["brushhead_payload"] = raw.hex()
-            except (UnicodeDecodeError, ValueError):
-                new_data["brushhead_payload"] = raw.hex()
-
-        # Brush Head Ring ID (uint16 LE)
-        if raw := results.get(CHAR_BRUSHHEAD_RING_ID):
-            new_data["brushhead_ring_id"] = int.from_bytes(raw[:2], "little")
-
-        # Error Persistent (uint32 LE)
-        if raw := results.get(CHAR_ERROR_PERSISTENT):
-            new_data["error_persistent"] = int.from_bytes(raw[:4], "little")
-
-        # Error Volatile (uint32 LE)
-        if raw := results.get(CHAR_ERROR_VOLATILE):
-            new_data["error_volatile"] = int.from_bytes(raw[:4], "little")
-
-        # Settings bitmask (uint32 LE, characteristic 0x4420)
-        if raw := results.get(CHAR_SETTINGS):
-            new_data["settings_bitmask"] = int.from_bytes(
-                raw[:4].ljust(4, b"\x00"), "little"
-            )
-
-        # Sensor Data Stream (0x4130) — pressure, temperature, gyroscope frames
-        if raw := results.get(CHAR_SENSOR_DATA):
-            if len(raw) >= 4:
-                import struct
-                frame_type = struct.unpack("<H", raw[:2])[0]
-                if frame_type == SENSOR_FRAME_PRESSURE and len(raw) >= 7:
-                    new_data["pressure"] = struct.unpack("<h", raw[4:6])[0]
-                    alarm_value = raw[6]
-                    new_data["pressure_alarm"] = alarm_value
-                    new_data["pressure_state"] = PRESSURE_ALARM_STATES.get(alarm_value)
-                elif frame_type == SENSOR_FRAME_TEMPERATURE and len(raw) >= 6:
-                    new_data["temperature"] = round(struct.unpack("<H", raw[4:6])[0] / 256, 1)
 
         # Change detection: only update last_seen when data actually changed
         # or every 30s as heartbeat for availability tracking
@@ -667,15 +503,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         if not self._full_read_done
                         else self._live_chars
                     )
-                    results = {}
-                    for uuid in read_chars:
-                        if not self.transport.is_connected:
-                            break
-                        try:
-                            value = await self.transport.read_char(uuid)
-                            results[uuid] = value
-                        except Exception as e:
-                            _LOGGER.debug("Live initial read failed for %s: %s", uuid, e)
+                    results = await self._protocol.read_chars(read_chars)
 
                     if any(v is not None for v in results.values()):
                         new_data = self._process_results(results)
@@ -783,7 +611,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             finally:
                 self._live_setup_done = False
                 self._sensor_subscribed = False
-                await self.transport.unsubscribe_all()
+                await self._protocol.unsubscribe_all()
                 _LOGGER.info("%s: live connection ended", self.address)
 
     def _update_bridge_device_version(self) -> None:
@@ -919,15 +747,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.info("Brush head detected — reading NFC data")
             # Short delay to let the handle finish processing the NFC chip
             await asyncio.sleep(1)
-            results = {}
-            for uuid in self._BRUSHHEAD_REREAD_CHARS:
-                if not self.transport.is_connected:
-                    break
-                try:
-                    value = await self.transport.read_char(uuid)
-                    results[uuid] = value
-                except Exception as e:
-                    _LOGGER.debug("Brush head read failed for %s: %s", uuid, e)
+            results = await self._protocol.read_chars(self._BRUSHHEAD_REREAD_CHARS)
             if any(v is not None for v in results.values()):
                 new_data = self._process_results(results)
                 self.async_set_updated_data(new_data)
@@ -942,14 +762,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._live_cb = self._make_live_callback()
         self._sensor_subscribed = False
-        count = 0
-        for char_uuid in self._notify_chars:
-            try:
-                await self.transport.subscribe(char_uuid, self._live_cb)
-                count += 1
-                _LOGGER.debug("%s: subscribed to %s", self.address, char_uuid)
-            except Exception as e:
-                _LOGGER.warning("Failed to subscribe %s: %s", char_uuid, e)
+        count = await self._protocol.subscribe_notifications(
+            self._notify_chars, self._live_cb
+        )
 
         # If brush is already in an active session, subscribe sensor data now
         if (self.data or {}).get("brushing_state") == "on":
@@ -970,104 +785,49 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return mask
 
     async def _subscribe_sensor_data(self) -> None:
-        """Enable sensors and subscribe to sensor data stream (0x4130)."""
+        """Enable sensors and subscribe to sensor data stream."""
         if self._sensor_subscribed or not self.transport.is_connected or not self._live_cb:
             return
         mask = self._compute_sensor_enable_mask()
         if mask == 0:
             _LOGGER.debug("All sensors disabled in options — skipping sensor subscribe")
             return
-        try:
-            await self.transport.write_char(
-                CHAR_SENSOR_ENABLE,
-                bytes([mask]),
-            )
-            _LOGGER.debug("Sensor enable written: 0x%02X", mask)
-        except Exception as e:
-            _LOGGER.warning("Failed to write sensor enable: %s", e)
-        try:
-            await self.transport.subscribe(CHAR_SENSOR_DATA, self._live_cb)
+        if await self._protocol.start_sensor_stream(mask, self._live_cb):
             self._sensor_subscribed = True
             _LOGGER.info("Sensor data stream subscribed (session active)")
-        except Exception as e:
-            _LOGGER.warning("Failed to subscribe sensor data: %s", e)
 
     async def _unsubscribe_sensor_data(self) -> None:
         """Unsubscribe from sensor data stream and disable sensors."""
         if not self._sensor_subscribed:
             return
-        try:
-            await self.transport.unsubscribe(CHAR_SENSOR_DATA)
-        except Exception:
-            pass
-        try:
-            # Disable all sensors (write 0x00 to 0x4120)
-            await self.transport.write_char(CHAR_SENSOR_ENABLE, bytes([0x00]))
-        except Exception:
-            pass
+        await self._protocol.stop_sensor_stream()
         self._sensor_subscribed = False
         _LOGGER.info("Sensor data stream unsubscribed (session ended)")
 
     async def _stop_all_notifications(self) -> None:
         """Stop all GATT notifications."""
-        await self.transport.unsubscribe_all()
+        await self._protocol.unsubscribe_all()
 
     async def async_set_brushing_mode(self, mode_key: str) -> None:
-        """Write the selected brushing mode to the toothbrush (0x4080)."""
-        # Reverse-lookup: mode string → mode ID
-        mode_id = None
-        for mid, mname in BRUSHING_MODES.items():
-            if mname == mode_key:
-                mode_id = mid
-                break
-        if mode_id is None:
-            raise ValueError(f"Unknown brushing mode: {mode_key}")
-
-        await self.transport.write_char(
-            CHAR_AVAILABLE_ROUTINE_IDS, bytes([mode_id])
-        )
+        """Write the selected brushing mode to the toothbrush."""
+        await self._protocol.set_brushing_mode(mode_key)
         self.data["selected_mode"] = mode_key
         self.data["brushing_mode"] = mode_key
         self.async_set_updated_data(self.data)
-        _LOGGER.info("Brushing mode set to %s (id=%d)", mode_key, mode_id)
 
     async def async_set_intensity(self, intensity_key: str) -> None:
-        """Write the selected intensity to the toothbrush (0x40B0)."""
-        intensity_id = None
-        for iid, iname in INTENSITIES.items():
-            if iname == intensity_key:
-                intensity_id = iid
-                break
-        if intensity_id is None:
-            raise ValueError(f"Unknown intensity: {intensity_key}")
-
-        await self.transport.write_char(
-            CHAR_INTENSITY, bytes([intensity_id])
-        )
+        """Write the selected intensity to the toothbrush."""
+        await self._protocol.set_intensity(intensity_key)
         self.data["intensity"] = intensity_key
         self.async_set_updated_data(self.data)
-        _LOGGER.info("Intensity set to %s (id=%d)", intensity_key, intensity_id)
 
     async def async_read_settings(self) -> int:
-        """Read the settings bitmask from characteristic 0x4420."""
-        raw = await self.transport.read_char(CHAR_SETTINGS)
-        if raw and len(raw) >= 2:
-            return int.from_bytes(raw[:4].ljust(4, b"\x00"), "little")
-        return 0
+        """Read the settings bitmask."""
+        return await self._protocol.read_settings_bitmask()
 
     async def async_write_settings_bit(self, bit_mask: int, enabled: bool) -> None:
-        """Toggle a single bit in the settings bitmask (0x4420)."""
-        current = await self.async_read_settings()
-        if enabled:
-            new_value = current | bit_mask
-        else:
-            new_value = current & ~bit_mask
-        payload = new_value.to_bytes(4, "little")
-        await self.transport.write_char(CHAR_SETTINGS, payload)
-        _LOGGER.info(
-            "Settings updated: bit 0x%04x %s (0x%08x → 0x%08x)",
-            bit_mask, "ON" if enabled else "OFF", current, new_value,
-        )
+        """Toggle a single bit in the settings bitmask."""
+        await self._protocol.write_settings_bit(bit_mask, enabled)
 
     async def async_shutdown(self) -> None:
         """Called on unload - clean up everything."""
@@ -1079,7 +839,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._dbus_bus.disconnect()
             self._dbus_bus = None
 
-        await self.transport.unsubscribe_all()
+        await self._protocol.unsubscribe_all()
 
         if self._live_task:
             self._live_task.cancel()
