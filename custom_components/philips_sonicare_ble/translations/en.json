@@ -112,7 +112,9 @@
   },
   "entity": {
     "sensor": {
-      "battery": { "name": "Battery" },
+      "battery": {
+        "name": "Battery"
+      },
       "handle_state": {
         "name": "Handle State",
         "state": {
@@ -154,10 +156,18 @@
           "high": "High"
         }
       },
-      "brushing_time": { "name": "Brushing Time" },
-      "routine_length": { "name": "Routine Length" },
-      "routine_countdown": { "name": "Routine Countdown" },
-      "number_of_sectors": { "name": "Number of Sectors" },
+      "brushing_time": {
+        "name": "Brushing Time"
+      },
+      "routine_length": {
+        "name": "Routine Length"
+      },
+      "routine_countdown": {
+        "name": "Routine Countdown"
+      },
+      "number_of_sectors": {
+        "name": "Number of Sectors"
+      },
       "sector": {
         "name": "Sector",
         "state": {
@@ -171,17 +181,39 @@
           "no_sector": "No Sector"
         }
       },
-      "session_id": { "name": "Session ID" },
-      "latest_session_id": { "name": "Latest Session ID" },
-      "session_count": { "name": "Session Count" },
-      "motor_runtime": { "name": "Motor Runtime" },
-      "brushhead_wear": { "name": "Wear" },
-      "brushhead_usage": { "name": "Usage" },
-      "brushhead_limit": { "name": "Lifetime Limit" },
-      "brushhead_serial": { "name": "Serial" },
-      "brushhead_date": { "name": "Production Date" },
-      "brushhead_ring_id": { "name": "NFC Ring ID" },
-      "brushhead_nfc_version": { "name": "NFC Version" },
+      "session_id": {
+        "name": "Session ID"
+      },
+      "latest_session_id": {
+        "name": "Latest Session ID"
+      },
+      "session_count": {
+        "name": "Session Count"
+      },
+      "motor_runtime": {
+        "name": "Motor Runtime"
+      },
+      "brushhead_wear": {
+        "name": "Wear"
+      },
+      "brushhead_usage": {
+        "name": "Usage"
+      },
+      "brushhead_limit": {
+        "name": "Lifetime Limit"
+      },
+      "brushhead_serial": {
+        "name": "Serial"
+      },
+      "brushhead_date": {
+        "name": "Production Date"
+      },
+      "brushhead_ring_id": {
+        "name": "NFC Ring ID"
+      },
+      "brushhead_nfc_version": {
+        "name": "NFC Version"
+      },
       "brushhead_type": {
         "name": "Brush Head Type",
         "state": {
@@ -194,13 +226,27 @@
           "non_rfid": "Non-RFID"
         }
       },
-      "brushhead_payload": { "name": "NFC Payload" },
-      "bridge_version": { "name": "Version" },
-      "bridge_boot_time": { "name": "Bridge Last Boot" },
-      "model_number": { "name": "Model Number" },
-      "firmware": { "name": "Firmware" },
-      "last_seen": { "name": "Last Seen" },
-      "pressure": { "name": "Pressure" },
+      "brushhead_payload": {
+        "name": "NFC Payload"
+      },
+      "bridge_version": {
+        "name": "Version"
+      },
+      "bridge_boot_time": {
+        "name": "Bridge Last Boot"
+      },
+      "model_number": {
+        "name": "Model Number"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "last_seen": {
+        "name": "Last Seen"
+      },
+      "pressure": {
+        "name": "Pressure"
+      },
       "pressure_state": {
         "name": "Pressure State",
         "state": {
@@ -209,8 +255,12 @@
           "too_high": "Too High"
         }
       },
-      "temperature": { "name": "Temperature" },
-      "handle_time": { "name": "Handle Time" },
+      "temperature": {
+        "name": "Temperature"
+      },
+      "handle_time": {
+        "name": "Handle Time"
+      },
       "activity": {
         "name": "Activity",
         "state": {
@@ -222,15 +272,29 @@
           "charging": "Charging"
         }
       },
-      "rssi": { "name": "RSSI" },
-      "adapter": { "name": "Adapter" }
+      "rssi": {
+        "name": "RSSI"
+      },
+      "adapter": {
+        "name": "Adapter"
+      }
     },
     "binary_sensor": {
-      "is_brushing": { "name": "Brushing" },
-      "is_charging": { "name": "Charging" },
-      "pressure_alert": { "name": "Pressure Alert" },
-      "esp_bridge_alive": { "name": "ESP Bridge" },
-      "ble_connected": { "name": "BLE Connected" }
+      "is_brushing": {
+        "name": "Brushing"
+      },
+      "is_charging": {
+        "name": "Charging"
+      },
+      "pressure_alert": {
+        "name": "Pressure Alert"
+      },
+      "esp_bridge_alive": {
+        "name": "ESP Bridge"
+      },
+      "ble_connected": {
+        "name": "BLE Connected"
+      }
     },
     "select": {
       "brushing_mode_select": {
@@ -254,9 +318,15 @@
       }
     },
     "switch": {
-      "adaptive_intensity": { "name": "Adaptive Intensity" },
-      "scrubbing_feedback": { "name": "Scrubbing Feedback" },
-      "pressure_feedback": { "name": "Pressure Feedback" }
+      "adaptive_intensity": {
+        "name": "Adaptive Intensity"
+      },
+      "scrubbing_feedback": {
+        "name": "Scrubbing Feedback"
+      },
+      "pressure_feedback": {
+        "name": "Pressure Feedback"
+      }
     }
   }
 }
