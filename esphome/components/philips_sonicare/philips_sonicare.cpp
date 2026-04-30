@@ -1,9 +1,7 @@
 #include "philips_sonicare.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
-#include "esp_system.h"
-#include "esp_gap_ble_api.h"
-#include "esp_gattc_api.h"
+#include "esphome/components/esp32_ble/ble.h"
 
 namespace espbt = esphome::esp32_ble_tracker;
 
@@ -12,790 +10,256 @@ namespace philips_sonicare {
 
 static const char *const TAG = "philips_sonicare";
 
-static espbt::ESPBTUUID parse_uuid(const std::string &uuid_str) {
-  if (uuid_str.length() <= 8) {
-    uint16_t uuid16 = std::stoul(uuid_str, nullptr, 16);
-    return espbt::ESPBTUUID::from_uint16(uuid16);
-  }
-  return espbt::ESPBTUUID::from_raw(uuid_str);
-}
+// Service UUIDs for auto-discovery (no mac_address configured)
+static const espbt::ESPBTUUID LEGACY_SERVICE_UUID =
+    espbt::ESPBTUUID::from_raw("477ea600-a260-11e4-ae37-0002a5d50001");
+static const espbt::ESPBTUUID CONDOR_SERVICE_UUID =
+    espbt::ESPBTUUID::from_raw("e50ba3c0-af04-4564-92ad-fef019489de6");
 
-void PhilipsSonicare::apply_smp_params_() {
-  // LE Secure Connections pairing parameters.
-  // Models that don't need bonding (e.g. DiamondClean) will simply
-  // skip the pairing handshake.  Models that require bonding (e.g.
-  // ExpertClean, HX991M) negotiate the best supported level.
-  uint8_t auth_req = 0x2D;  // Bond(1) | MITM(4) | SC(8) | CT2(0x20)
-  esp_ble_io_cap_t io_cap = ESP_IO_CAP_IO;  // DisplayYesNo
-  uint8_t key_size = 16;
-  uint8_t init_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
-  uint8_t rsp_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
+// ── PhilipsSonicare (Mode A wrapper, BLEClientNode) ──────────────────────────
+// Compiled only when the user has a ble_client: block in YAML (USE_BLE_CLIENT
+// is defined by ESPHome's loader). Mode B users skip this entire class.
 
-  esp_ble_gap_set_security_param(ESP_BLE_SM_AUTHEN_REQ_MODE,
-                                  &auth_req, sizeof(auth_req));
-  esp_ble_gap_set_security_param(ESP_BLE_SM_IOCAP_MODE,
-                                  &io_cap, sizeof(io_cap));
-  esp_ble_gap_set_security_param(ESP_BLE_SM_MAX_KEY_SIZE,
-                                  &key_size, sizeof(key_size));
-  esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY,
-                                  &init_key, sizeof(init_key));
-  esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY,
-                                  &rsp_key, sizeof(rsp_key));
-  ESP_LOGD(TAG, "SMP parameters applied (auth=0x%02X, io_cap=%d)", auth_req, io_cap);
-}
+#ifdef USE_BLE_CLIENT
 
 void PhilipsSonicare::setup() {
-
-  this->register_service(&PhilipsSonicare::on_read_characteristic,
-                          this->svc_name_("ble_read_char"), {"service_uuid", "char_uuid"});
-  this->register_service(&PhilipsSonicare::on_subscribe,
-                          this->svc_name_("ble_subscribe"), {"service_uuid", "char_uuid"});
-  this->register_service(&PhilipsSonicare::on_unsubscribe,
-                          this->svc_name_("ble_unsubscribe"), {"service_uuid", "char_uuid"});
-  this->register_service(&PhilipsSonicare::on_write_characteristic,
-                          this->svc_name_("ble_write_char"), {"service_uuid", "char_uuid", "data"});
-  this->register_service(&PhilipsSonicare::on_set_throttle,
-                          this->svc_name_("ble_set_throttle"), {"throttle_ms"});
-  this->register_service(&PhilipsSonicare::on_get_info,
-                          this->svc_name_("ble_get_info"), {});
-  ESP_LOGI(TAG, "Services registered (suffix: '%s')", this->bridge_id_.c_str());
+  if (this->coord_ == nullptr) {
+    ESP_LOGE(TAG, "Coordinator not wired — Worker disabled");
+    this->mark_failed();
+    return;
+  }
+  this->coord_->set_parent(this->parent());
+  this->coord_->set_set_enabled_cb([this](bool enabled) {
+    if (this->parent()) this->parent()->set_enabled(enabled);
+  });
+  this->coord_->set_mode(MODE_EXTERNAL);
+  // Mode A always has a fixed MAC from the ble_client: block.
+  if (this->parent()) {
+    auto *bda = this->parent()->get_remote_bda();
+    char mac[18];
+    snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+             bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
+    this->coord_->set_identity_address(mac);
+  }
 }
 
 void PhilipsSonicare::loop() {
-  uint32_t now = millis();
-
-  // Auth failure backoff recovery
-  if (this->backoff_until_ms_ != 0 && now >= this->backoff_until_ms_) {
-    ESP_LOGI(TAG, "Auth backoff expired — re-enabling BLE");
-    this->backoff_until_ms_ = 0;
-    this->auth_fail_count_ = 0;
-    this->parent()->set_enabled(true);
-  }
-
-  if ((now - this->last_heartbeat_ms_) >= HEARTBEAT_INTERVAL_MS) {
-    this->last_heartbeat_ms_ = now;
-    char uptime_str[16];
-    snprintf(uptime_str, sizeof(uptime_str), "%u", now / 1000);
-    this->fire_homeassistant_event(
-        "esphome.philips_sonicare_ble_status",
-        {
-            {"status", "heartbeat"},
-            {"ble_connected", this->connected_ ? "true" : "false"},
-            {"mac", this->get_device_mac_()},
-            {"version", PHILIPS_SONICARE_VERSION},
-            {"uptime_s", std::string(uptime_str)},
-        });
-
-    // If BLE is connected, services discovered, but no subscriptions yet,
-    // re-fire "ready" so HA can set up subscriptions. After OTA reboot,
-    // BLE connects before the HA API stream is up — the initial "ready" is lost.
-    if (this->connected_ && this->services_discovered_ && this->notify_map_.empty()) {
-      ESP_LOGI(TAG, "BLE connected, no subscriptions — re-firing ready");
-      this->fire_homeassistant_event(
-          "esphome.philips_sonicare_ble_status",
-          {
-              {"status", "ready"},
-              {"mac", this->get_device_mac_()},
-              {"version", PHILIPS_SONICARE_VERSION},
-              {"uptime_s", std::string(uptime_str)},
-          });
-    }
-  }
-}
-
-std::string PhilipsSonicare::get_device_mac_() {
-  char mac[18];
-  auto *bda = this->parent()->get_remote_bda();
-  snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
-           bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
-  return std::string(mac);
-}
-
-std::string PhilipsSonicare::svc_name_(const std::string &action) {
-  if (this->bridge_id_.empty())
-    return action;
-  return action + "_" + this->bridge_id_;
+  if (this->coord_)
+    this->coord_->on_loop(millis());
 }
 
 void PhilipsSonicare::dump_config() {
-  ESP_LOGCONFIG(TAG, "Philips Sonicare BLE Bridge v%s", PHILIPS_SONICARE_VERSION);
-  if (!this->bridge_id_.empty())
-    ESP_LOGCONFIG(TAG, "  Bridge ID: %s", this->bridge_id_.c_str());
+  ESP_LOGCONFIG(TAG, "Philips Sonicare worker v%s", PHILIPS_SONICARE_VERSION);
 }
 
-void PhilipsSonicare::gattc_event_handler(esp_gattc_cb_event_t event,
-                                           esp_gatt_if_t gattc_if,
-                                           esp_ble_gattc_cb_param_t *param) {
-  switch (event) {
-    case ESP_GATTC_OPEN_EVT: {
-      if (param->open.status == ESP_GATT_OK) {
-        this->auth_completed_ = false;
-        this->connect_time_ms_ = millis();
-        ESP_LOGI(TAG, "Connected to Sonicare (%s%s%s)",
-                 this->get_device_mac_().c_str(),
-                 this->bridge_id_.empty() ? "" : ", bridge=",
-                 this->bridge_id_.empty() ? "" : this->bridge_id_.c_str());
-        this->connected_ = true;
-        if (this->connected_sensor_ != nullptr)
-          this->connected_sensor_->publish_state(true);
-        this->fire_homeassistant_event(
-            "esphome.philips_sonicare_ble_status",
-            {
-                {"status", "connected"},
-                {"mac", this->get_device_mac_()},
-            });
-      } else {
-        ESP_LOGW(TAG, "Connection failed, status=%d", param->open.status);
-      }
-      break;
-    }
-
-    case ESP_GATTC_DISCONNECT_EVT: {
-      // Stale bond detection: if auth never completed and disconnect
-      // was rapid, the bond keys may be out of sync.
-      if (this->auth_completed_ ||
-          this->connect_time_ms_ == 0 ||
-          (millis() - this->connect_time_ms_) > RAPID_DISCONNECT_THRESHOLD_MS) {
-        this->rapid_disconnect_count_ = 0;
-      } else {
-        this->rapid_disconnect_count_++;
-        ESP_LOGW(TAG, "Rapid disconnect without auth (%d/%d)",
-                 this->rapid_disconnect_count_, MAX_RAPID_DISCONNECTS);
-        if (this->rapid_disconnect_count_ >= MAX_RAPID_DISCONNECTS) {
-          ESP_LOGW(TAG, "Removing stale bond for %s", this->get_device_mac_().c_str());
-          esp_ble_remove_bond_device(this->parent()->get_remote_bda());
-          this->rapid_disconnect_count_ = 0;
-        }
-      }
-      ESP_LOGW(TAG, "Disconnected from Sonicare (reason=0x%02X). "
-               "%d subscription(s) will be restored on reconnect.",
-               param->disconnect.reason,
-               this->desired_subscriptions_.size());
-      this->connected_ = false;
-      this->services_discovered_ = false;
-      if (this->connected_sensor_ != nullptr)
-        this->connected_sensor_->publish_state(false);
-      this->pending_handle_ = 0;
-      this->name_handle_ = 0;
-      this->notify_map_.clear();
-      this->cccd_map_.clear();
-      this->char_props_map_.clear();
-      this->last_notify_ms_.clear();
-      char reason_str[5];
-      snprintf(reason_str, sizeof(reason_str), "0x%02X", param->disconnect.reason);
-      this->fire_homeassistant_event(
-          "esphome.philips_sonicare_ble_status",
-          {
-              {"status", "disconnected"},
-              {"mac", this->get_device_mac_()},
-              {"reason", reason_str},
-          });
-      break;
-    }
-
-    case ESP_GATTC_SEARCH_CMPL_EVT: {
-      ESP_LOGI(TAG, "Service discovery complete");
-      this->services_discovered_ = true;
-      this->encryption_requested_ = false;
-      if (!this->desired_subscriptions_.empty()) {
-        ESP_LOGI(TAG, "Restoring %d notification subscription(s)...",
-                 this->desired_subscriptions_.size());
-        this->resubscribe_all_();
-      }
-      // Read GAP Device Name (0x2A00) for display in HA config flow
-      if (this->remote_name_.empty()) {
-        auto gap_svc = espbt::ESPBTUUID::from_uint16(0x1800);
-        auto name_chr = espbt::ESPBTUUID::from_uint16(0x2A00);
-        auto *chr = this->parent()->get_characteristic(gap_svc, name_chr);
-        if (chr) {
-          this->name_handle_ = chr->handle;
-          auto status = esp_ble_gattc_read_char(
-              this->parent()->get_gattc_if(),
-              this->parent()->get_conn_id(),
-              chr->handle, ESP_GATT_AUTH_REQ_NONE);
-          if (status != ESP_GATT_OK) {
-            ESP_LOGD(TAG, "Failed to initiate device name read: %d", status);
-            this->name_handle_ = 0;
-          }
-        }
-      }
-      // Pairing probe: read Handle State (0x4010) from the Sonicare
-      // service.  GAP 0x2A00 may be readable without auth, but
-      // proprietary characteristics require bonding on some models.
-      {
-        auto sonicare_svc = espbt::ESPBTUUID::from_raw(
-            "477ea600-a260-11e4-ae37-0002a5d50001");
-        auto handle_state = espbt::ESPBTUUID::from_raw(
-            "477ea600-a260-11e4-ae37-0002a5d54010");
-        auto *chr = this->parent()->get_characteristic(sonicare_svc, handle_state);
-        if (chr) {
-          this->probe_handle_ = chr->handle;
-          esp_ble_gattc_read_char(
-              this->parent()->get_gattc_if(),
-              this->parent()->get_conn_id(),
-              chr->handle, ESP_GATT_AUTH_REQ_NONE);
-        }
-      }
-      this->fire_homeassistant_event(
-          "esphome.philips_sonicare_ble_status",
-          {
-              {"status", "ready"},
-              {"mac", this->get_device_mac_()},
-              {"version", PHILIPS_SONICARE_VERSION},
-          });
-      break;
-    }
-
-    case ESP_GATTC_READ_CHAR_EVT: {
-      // Handle device name read (GAP 0x2A00) — just for display
-      if (this->name_handle_ != 0 && param->read.handle == this->name_handle_) {
-        if (param->read.status == ESP_GATT_OK && param->read.value_len > 0) {
-          this->remote_name_ = std::string(
-              reinterpret_cast<const char *>(param->read.value),
-              param->read.value_len);
-          ESP_LOGI(TAG, "Device name: %s", this->remote_name_.c_str());
-        } else {
-          ESP_LOGD(TAG, "Device name read failed, status=%d", param->read.status);
-        }
-        this->name_handle_ = 0;
-        break;
-      }
-
-      // Pairing probe: Handle State (0x4010) from Sonicare service
-      if (this->probe_handle_ != 0 && param->read.handle == this->probe_handle_) {
-        if (param->read.status == ESP_GATT_OK) {
-          const char *state_names[] = {"Off", "Standby", "Running", "Charging", "Shutdown"};
-          uint8_t state = (param->read.value_len > 0) ? param->read.value[0] : 0xFF;
-          const char *state_name = (state <= 4) ? state_names[state] : "Unknown";
-          ESP_LOGI(TAG, "Pairing probe: open GATT (no pairing required) — handle state: %s (%d)",
-                   state_name, state);
-        } else if (param->read.status == ESP_GATT_INSUF_AUTHENTICATION ||
-                   param->read.status == ESP_GATT_INSUF_ENCRYPTION) {
-          ESP_LOGW(TAG, "Pairing probe: device requires BLE bonding (status=%d) — initiating pairing",
-                   param->read.status);
-          this->encryption_requested_ = true;
-          this->apply_smp_params_();
-          esp_ble_set_encryption(this->parent()->get_remote_bda(),
-                                  ESP_BLE_SEC_ENCRYPT_MITM);
-        } else {
-          ESP_LOGD(TAG, "Pairing probe failed, status=%d", param->read.status);
-        }
-        this->probe_handle_ = 0;
-        break;
-      }
-
-      if (param->read.status != ESP_GATT_OK) {
-        // Insufficient Authentication / Encryption → initiate pairing
-        // and retry the read after successful auth (don't report error yet)
-        if ((param->read.status == ESP_GATT_INSUF_AUTHENTICATION ||
-             param->read.status == ESP_GATT_INSUF_ENCRYPTION) &&
-            !this->encryption_requested_) {
-          ESP_LOGI(TAG, "Read requires authentication (status=%d) — initiating encryption",
-                   param->read.status);
-          this->encryption_requested_ = true;
-          this->pending_handle_ = 0;
-          this->apply_smp_params_();
-          esp_ble_set_encryption(this->parent()->get_remote_bda(),
-                                  ESP_BLE_SEC_ENCRYPT_MITM);
-        }
-        ESP_LOGW(TAG, "Read failed for %s, status=%d",
-                 this->pending_char_uuid_.c_str(), param->read.status);
-        this->fire_homeassistant_event(
-            "esphome.philips_sonicare_ble_data",
-            {
-                {"uuid", this->pending_char_uuid_},
-                {"payload", ""},
-                {"error", "read_failed"},
-                {"mac", this->get_device_mac_()},
-            });
-        this->pending_handle_ = 0;
-        break;
-      }
-
-      if (param->read.handle == this->pending_handle_) {
-        std::string hex_payload =
-            format_hex(param->read.value, param->read.value_len);
-
-        ESP_LOGI(TAG, "Read %s: %s (%d bytes)",
-                 this->pending_char_uuid_.c_str(),
-                 hex_payload.c_str(), param->read.value_len);
-
-        this->fire_homeassistant_event(
-            "esphome.philips_sonicare_ble_data",
-            {
-                {"uuid", this->pending_char_uuid_},
-                {"payload", hex_payload},
-                {"mac", this->get_device_mac_()},
-            });
-
-        this->pending_handle_ = 0;
-      }
-      break;
-    }
-
-    case ESP_GATTC_WRITE_CHAR_EVT: {
-      if (param->write.status == ESP_GATT_OK) {
-        ESP_LOGI(TAG, "Write confirmed for handle 0x%04X", param->write.handle);
-      } else {
-        ESP_LOGW(TAG, "Write FAILED for handle 0x%04X, status=%d",
-                 param->write.handle, param->write.status);
-      }
-      break;
-    }
-
-    case ESP_GATTC_REG_FOR_NOTIFY_EVT: {
-      if (param->reg_for_notify.status == ESP_GATT_OK) {
-        ESP_LOGI(TAG, "Notify registered for handle 0x%04X",
-                 param->reg_for_notify.handle);
-
-        auto it = this->cccd_map_.find(param->reg_for_notify.handle);
-        if (it != this->cccd_map_.end()) {
-          // Use 0x0002 for indicate, 0x0001 for notify, 0x0003 for both
-          uint16_t cccd_val = 0x0001;
-          auto props_it = this->char_props_map_.find(param->reg_for_notify.handle);
-          if (props_it != this->char_props_map_.end()) {
-            bool has_notify = props_it->second & ESP_GATT_CHAR_PROP_BIT_NOTIFY;
-            bool has_indicate = props_it->second & ESP_GATT_CHAR_PROP_BIT_INDICATE;
-            if (has_indicate && has_notify)
-              cccd_val = 0x0003;
-            else if (has_indicate)
-              cccd_val = 0x0002;
-          }
-          esp_ble_gattc_write_char_descr(
-              gattc_if,
-              this->parent()->get_conn_id(),
-              it->second,
-              sizeof(cccd_val),
-              (uint8_t *) &cccd_val,
-              ESP_GATT_WRITE_TYPE_RSP,
-              ESP_GATT_AUTH_REQ_NONE);
-          ESP_LOGI(TAG, "CCCD written for handle 0x%04X (descr 0x%04X, value 0x%04X)",
-                   param->reg_for_notify.handle, it->second, cccd_val);
-        }
-      } else {
-        ESP_LOGW(TAG, "Notify registration failed, status=%d",
-                 param->reg_for_notify.status);
-      }
-      break;
-    }
-
-    case ESP_GATTC_NOTIFY_EVT: {
-      // Note: indication confirmations (ATT_HANDLE_VALUE_CFM) are sent
-      // automatically by the ESP-IDF GATTC stack — no manual ACK needed.
-
-      auto it = this->notify_map_.find(param->notify.handle);
-      if (it == this->notify_map_.end())
-        break;
-
-      // Throttle: max 1 event per notify_throttle_ms_ per characteristic
-      uint32_t now = millis();
-      auto last_it = this->last_notify_ms_.find(param->notify.handle);
-      if (last_it != this->last_notify_ms_.end() &&
-          (now - last_it->second) < this->notify_throttle_ms_) {
-        break;
-      }
-      this->last_notify_ms_[param->notify.handle] = now;
-
-      std::string hex_payload =
-          format_hex(param->notify.value, param->notify.value_len);
-
-      ESP_LOGD(TAG, "%s %s: %s (%d bytes)",
-               param->notify.is_notify ? "Notify" : "Indicate",
-               it->second.c_str(),
-               hex_payload.c_str(), param->notify.value_len);
-
-      this->fire_homeassistant_event(
-          "esphome.philips_sonicare_ble_data",
-          {
-              {"uuid", it->second},
-              {"payload", hex_payload},
-              {"mac", this->get_device_mac_()},
-          });
-      break;
-    }
-
-    default:
-      break;
-  }
-}
-
-void PhilipsSonicare::on_read_characteristic(std::string service_uuid,
-                                              std::string characteristic_uuid) {
-  if (!this->connected_) {
-    ESP_LOGW(TAG, "Cannot read: not connected");
-    this->fire_homeassistant_event(
-        "esphome.philips_sonicare_ble_data",
-        {
-            {"uuid", characteristic_uuid},
-            {"payload", ""},
-            {"error", "not_connected"},
-            {"mac", this->get_device_mac_()},
-        });
-    return;
-  }
-
-  auto svc = parse_uuid(service_uuid);
-  auto chr_uuid = parse_uuid(characteristic_uuid);
-
-  auto *chr = this->parent()->get_characteristic(svc, chr_uuid);
-  if (chr == nullptr) {
-    ESP_LOGW(TAG, "Characteristic %s not found in service %s",
-             characteristic_uuid.c_str(), service_uuid.c_str());
-    this->fire_homeassistant_event(
-        "esphome.philips_sonicare_ble_data",
-        {
-            {"uuid", characteristic_uuid},
-            {"payload", ""},
-            {"error", "not_found"},
-            {"mac", this->get_device_mac_()},
-        });
-    return;
-  }
-
-  this->pending_handle_ = chr->handle;
-  this->pending_char_uuid_ = characteristic_uuid;
-
-  ESP_LOGI(TAG, "Reading %s (handle 0x%04X)...",
-           characteristic_uuid.c_str(), chr->handle);
-
-  auto status = esp_ble_gattc_read_char(
-      this->parent()->get_gattc_if(),
-      this->parent()->get_conn_id(),
-      chr->handle,
-      ESP_GATT_AUTH_REQ_NONE);
-
-  if (status != ESP_OK) {
-    ESP_LOGW(TAG, "Read request failed: %d", status);
-    this->pending_handle_ = 0;
-    char err_str[16];
-    snprintf(err_str, sizeof(err_str), "gatt_err_%d", status);
-    this->fire_homeassistant_event(
-        "esphome.philips_sonicare_ble_data",
-        {
-            {"uuid", characteristic_uuid},
-            {"payload", ""},
-            {"error", std::string(err_str)},
-            {"mac", this->get_device_mac_()},
-        });
-  }
-}
-
-void PhilipsSonicare::on_subscribe(std::string service_uuid,
-                                    std::string characteristic_uuid) {
-  if (!this->connected_) {
-    ESP_LOGW(TAG, "Cannot subscribe: not connected");
-    return;
-  }
-
-  auto svc = parse_uuid(service_uuid);
-  auto chr_uuid = parse_uuid(characteristic_uuid);
-
-  auto *chr = this->parent()->get_characteristic(svc, chr_uuid);
-  if (chr == nullptr) {
-    ESP_LOGW(TAG, "Characteristic %s not found in service %s",
-             characteristic_uuid.c_str(), service_uuid.c_str());
-    return;
-  }
-
-  // Check if already subscribed (e.g., restored after reconnect)
-  if (this->notify_map_.count(chr->handle)) {
-    ESP_LOGD(TAG, "Already subscribed to %s (handle 0x%04X), skipping",
-             characteristic_uuid.c_str(), chr->handle);
-    return;
-  }
-
-  uint16_t cccd_handle = this->find_cccd_handle_(chr->handle);
-  this->cccd_map_[chr->handle] = cccd_handle;
-  this->char_props_map_[chr->handle] = chr->properties;
-
-  this->notify_map_[chr->handle] = characteristic_uuid;
-
-  // Track for auto-resubscribe after reconnect
-  bool already_tracked = false;
-  for (const auto &entry : this->desired_subscriptions_) {
-    if (entry.first == service_uuid && entry.second == characteristic_uuid) {
-      already_tracked = true;
-      break;
-    }
-  }
-  if (!already_tracked) {
-    this->desired_subscriptions_.push_back(
-        std::make_pair(service_uuid, characteristic_uuid));
-  }
-
-  ESP_LOGI(TAG, "Subscribing to %s (handle 0x%04X, cccd 0x%04X)...",
-           characteristic_uuid.c_str(), chr->handle, cccd_handle);
-
-  auto status = esp_ble_gattc_register_for_notify(
-      this->parent()->get_gattc_if(),
-      this->parent()->get_remote_bda(),
-      chr->handle);
-
-  if (status != ESP_OK) {
-    ESP_LOGW(TAG, "Subscribe failed: %d", status);
-    this->notify_map_.erase(chr->handle);
-    this->cccd_map_.erase(chr->handle);
-  }
-}
-
-void PhilipsSonicare::on_unsubscribe(std::string service_uuid,
-                                      std::string characteristic_uuid) {
-  if (!this->connected_) {
-    ESP_LOGW(TAG, "Cannot unsubscribe: not connected");
-    return;
-  }
-
-  auto svc = parse_uuid(service_uuid);
-  auto chr_uuid = parse_uuid(characteristic_uuid);
-
-  auto *chr = this->parent()->get_characteristic(svc, chr_uuid);
-  if (chr == nullptr) {
-    ESP_LOGW(TAG, "Characteristic %s not found in service %s",
-             characteristic_uuid.c_str(), service_uuid.c_str());
-    return;
-  }
-
-  // Remove from desired subscriptions (connected unsubscribe = intentional)
-  for (auto it = this->desired_subscriptions_.begin();
-       it != this->desired_subscriptions_.end(); ++it) {
-    if (it->first == service_uuid && it->second == characteristic_uuid) {
-      this->desired_subscriptions_.erase(it);
-      break;
-    }
-  }
-
-  ESP_LOGI(TAG, "Unsubscribing from %s (handle 0x%04X)...",
-           characteristic_uuid.c_str(), chr->handle);
-
-  esp_ble_gattc_unregister_for_notify(
-      this->parent()->get_gattc_if(),
-      this->parent()->get_remote_bda(),
-      chr->handle);
-
-  this->notify_map_.erase(chr->handle);
-}
-
-void PhilipsSonicare::on_write_characteristic(std::string service_uuid,
-                                               std::string characteristic_uuid,
-                                               std::string hex_data) {
-  if (!this->connected_) {
-    ESP_LOGW(TAG, "Cannot write: not connected");
-    return;
-  }
-
-  auto svc = parse_uuid(service_uuid);
-  auto chr_uuid = parse_uuid(characteristic_uuid);
-
-  auto *chr = this->parent()->get_characteristic(svc, chr_uuid);
-  if (chr == nullptr) {
-    ESP_LOGW(TAG, "Characteristic %s not found in service %s",
-             characteristic_uuid.c_str(), service_uuid.c_str());
-    return;
-  }
-
-  std::vector<uint8_t> bytes;
-  size_t count = hex_data.length() / 2;
-  if (count == 0 || !parse_hex(hex_data, bytes, count)) {
-    ESP_LOGW(TAG, "Invalid hex data: %s", hex_data.c_str());
-    return;
-  }
-
-  ESP_LOGI(TAG, "Writing %s (handle 0x%04X): %s (%d bytes)",
-           characteristic_uuid.c_str(), chr->handle,
-           hex_data.c_str(), bytes.size());
-
-  auto status = esp_ble_gattc_write_char(
-      this->parent()->get_gattc_if(),
-      this->parent()->get_conn_id(),
-      chr->handle,
-      bytes.size(),
-      bytes.data(),
-      ESP_GATT_WRITE_TYPE_RSP,
-      ESP_GATT_AUTH_REQ_NONE);
-
-  if (status != ESP_OK) {
-    ESP_LOGW(TAG, "Write request failed: %d", status);
-  }
-}
-
-void PhilipsSonicare::on_set_throttle(std::string throttle_ms) {
-  uint32_t ms = std::stoul(throttle_ms);
-  this->notify_throttle_ms_ = ms;
-  ESP_LOGI(TAG, "Notification throttle set to %u ms", ms);
-}
-
-void PhilipsSonicare::on_get_info() {
-  char uptime_str[16];
-  snprintf(uptime_str, sizeof(uptime_str), "%u", millis() / 1000);
-
-  char heap_str[16];
-  snprintf(heap_str, sizeof(heap_str), "%u", (uint32_t) esp_get_free_heap_size());
-
-  char subs_str[8];
-  snprintf(subs_str, sizeof(subs_str), "%u", (uint32_t) this->notify_map_.size());
-
-  char throttle_str[16];
-  snprintf(throttle_str, sizeof(throttle_str), "%u", this->notify_throttle_ms_);
-
-  // Check bond status
-  int bond_count = esp_ble_get_bond_device_num();
-  bool is_paired = false;
-  if (bond_count > 0) {
-    esp_ble_bond_dev_t *bonded = (esp_ble_bond_dev_t *) malloc(
-        bond_count * sizeof(esp_ble_bond_dev_t));
-    if (bonded) {
-      esp_ble_get_bond_device_list(&bond_count, bonded);
-      auto *our_bda = this->parent()->get_remote_bda();
-      for (int i = 0; i < bond_count; i++) {
-        if (memcmp(bonded[i].bd_addr, our_bda, 6) == 0) {
-          is_paired = true;
-          break;
-        }
-      }
-      free(bonded);
-    }
-  }
-
-  std::map<std::string, std::string> info = {
-      {"status", "info"},
-      {"version", PHILIPS_SONICARE_VERSION},
-      {"ble_connected", this->connected_ ? "true" : "false"},
-      {"paired", is_paired ? "true" : "false"},
-      {"bridge_id", this->bridge_id_},
-      {"mac", this->get_device_mac_()},
-      {"uptime_s", std::string(uptime_str)},
-      {"free_heap", std::string(heap_str)},
-      {"subscriptions", std::string(subs_str)},
-      {"notify_throttle_ms", std::string(throttle_str)},
-  };
-  if (!this->remote_name_.empty()) {
-    info["ble_name"] = this->remote_name_;
-  }
-  this->fire_homeassistant_event("esphome.philips_sonicare_ble_status", info);
-
-  ESP_LOGI(TAG, "Info: v%s uptime=%ss heap=%s subs=%s name=%s",
-           PHILIPS_SONICARE_VERSION, uptime_str, heap_str, subs_str,
-           this->remote_name_.empty() ? "(none)" : this->remote_name_.c_str());
-}
-
-uint16_t PhilipsSonicare::find_cccd_handle_(uint16_t char_handle) {
-  // Try ESP-IDF API first — queries the GATT table directly,
-  // bypassing ESPHome's potentially empty descriptor cache.
-  uint16_t count = 1;
-  esp_gattc_descr_elem_t result;
-  memset(&result, 0, sizeof(result));
-  esp_bt_uuid_t cccd_uuid;
-  cccd_uuid.len = ESP_UUID_LEN_16;
-  cccd_uuid.uuid.uuid16 = 0x2902;
-
-  auto status = esp_ble_gattc_get_descr_by_char_handle(
-      this->parent()->get_gattc_if(),
-      this->parent()->get_conn_id(),
-      char_handle,
-      cccd_uuid,
-      &result,
-      &count);
-
-  if (status == ESP_GATT_OK && count > 0) {
-    ESP_LOGD(TAG, "CCCD found via ESP-IDF API: handle 0x%04X for char 0x%04X",
-             result.handle, char_handle);
-    return result.handle;
-  }
-
-  // Fallback: handle + 1 (standard BLE layout)
-  uint16_t fallback = char_handle + 1;
-  ESP_LOGW(TAG, "CCCD not found via API for char 0x%04X, using fallback 0x%04X",
-           char_handle, fallback);
-  return fallback;
-}
-
-void PhilipsSonicare::resubscribe_all_() {
-  for (const auto &entry : this->desired_subscriptions_) {
-    const auto &svc_uuid_str = entry.first;
-    const auto &chr_uuid_str = entry.second;
-
-    auto svc = parse_uuid(svc_uuid_str);
-    auto chr_uuid = parse_uuid(chr_uuid_str);
-
-    auto *chr = this->parent()->get_characteristic(svc, chr_uuid);
-    if (chr == nullptr) {
-      ESP_LOGW(TAG, "Resubscribe: characteristic %s not found, skipping",
-               chr_uuid_str.c_str());
-      continue;
-    }
-
-    uint16_t cccd_handle = this->find_cccd_handle_(chr->handle);
-    this->cccd_map_[chr->handle] = cccd_handle;
-    this->char_props_map_[chr->handle] = chr->properties;
-    this->notify_map_[chr->handle] = chr_uuid_str;
-
-    auto status = esp_ble_gattc_register_for_notify(
-        this->parent()->get_gattc_if(),
-        this->parent()->get_remote_bda(),
-        chr->handle);
-
-    if (status == ESP_OK) {
-      ESP_LOGI(TAG, "Resubscribe: %s (handle 0x%04X, cccd 0x%04X)",
-               chr_uuid_str.c_str(), chr->handle, cccd_handle);
+#endif  // USE_BLE_CLIENT
+
+// ── PhilipsSonicareStandalone (Mode B, extends BLEClientBase) ────────────────
+
+void PhilipsSonicareStandalone::setup() {
+  // Restore identity address (if any) before tracker logic kicks in
+  this->pref_ = global_preferences->make_preference<uint64_t>(this->pref_ns_);
+  if (this->address_ != 0) {
+    ESP_LOGI(TAG, "Using configured MAC address — MAC mode");
+    this->uuid_scan_mode_ = false;
+  } else {
+    uint64_t stored = 0;
+    if (this->pref_.load(&stored) && stored != 0) {
+      ESP_LOGI(TAG, "Loaded identity address from flash — MAC mode");
+      this->set_address(stored);
+      this->uuid_scan_mode_ = false;
     } else {
-      ESP_LOGW(TAG, "Resubscribe failed for %s: %d",
-               chr_uuid_str.c_str(), status);
-      this->notify_map_.erase(chr->handle);
-      this->cccd_map_.erase(chr->handle);
+      ESP_LOGI(TAG, "No identity in flash — UUID scan mode (waiting for pair-mode)");
     }
   }
+
+  // Wire ourselves into the coordinator as parent + set_enabled callback
+  if (this->coord_ != nullptr) {
+    this->coord_->set_parent(this);
+    this->coord_->set_set_enabled_cb(
+        [this](bool enabled) { this->set_enabled(enabled); });
+    this->coord_->set_mode(MODE_STANDALONE);
+    if (!this->uuid_scan_mode_ && this->address_ != 0) {
+      // We have a known identity (YAML-configured or NVS-restored). Format
+      // for the identity_address field so HA can detect "already bound".
+      uint64_t a = this->address_;
+      char mac[18];
+      snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+               (uint8_t)(a >> 40), (uint8_t)(a >> 32), (uint8_t)(a >> 24),
+               (uint8_t)(a >> 16), (uint8_t)(a >> 8), (uint8_t)(a));
+      this->coord_->set_identity_address(mac);
+    }
+    // Wipe NVS + reset to UUID-scan when HA requests unpair.
+    this->coord_->set_unpair_cb([this]() {
+      uint64_t zero = 0;
+      this->pref_.save(&zero);
+      this->uuid_scan_mode_ = true;
+      this->set_address(0);
+      ESP_LOGW(TAG, "Identity cleared — back to UUID scan mode");
+    });
+    // Open-GATT pair complete: Coordinator detected success without SMP.
+    // Persist the currently-connected MAC as identity (mirrors the AUTH_CMPL
+    // path in gap_event_handler for bonded brushes).
+    this->coord_->set_save_identity_cb([this]() {
+      auto *bda = this->get_remote_bda();
+      uint64_t identity = esp32_ble::ble_addr_to_uint64(bda);
+      ESP_LOGI(TAG, "Open-GATT pair complete — saving identity %02X:%02X:%02X:%02X:%02X:%02X",
+               bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
+      this->pref_.save(&identity);
+      this->set_address(identity);
+      this->set_auto_connect(true);  // identity persisted → enable background reconnect
+      this->uuid_scan_mode_ = false;
+    });
+  }
+
+  BLEClientBase::setup();
+  // Stay disabled in pure UUID-scan mode (no YAML MAC, no NVS identity) until
+  // HA arms pair-mode. With a known identity, behave like before.
+  this->enabled_ = !this->uuid_scan_mode_;
+  // BLEClientBase::parse_device returns early when auto_connect_ is false,
+  // so a bridge with a known target (YAML MAC or NVS-restored identity)
+  // would never reconnect on adverts otherwise. Force it on whenever we
+  // have an identity. UUID-scan-only mode keeps it off so we don't
+  // direct-connect to whatever happens to show up during boot.
+  if (!this->uuid_scan_mode_)
+    this->set_auto_connect(true);
 }
 
-void PhilipsSonicare::gap_event_handler(esp_gap_ble_cb_event_t event,
-                                         esp_ble_gap_cb_param_t *param) {
-  switch (event) {
-    case ESP_GAP_BLE_NC_REQ_EVT: {
-      ESP_LOGI(TAG, "Numeric Comparison request — auto-confirming (passkey %06lu)",
-               (unsigned long) param->ble_security.key_notif.passkey);
-      esp_ble_confirm_reply(param->ble_security.key_notif.bd_addr, true);
-      break;
+void PhilipsSonicareStandalone::loop() {
+  // Coordinator's on_loop drives pair-mode timeout + auth-backoff timers, so
+  // it must run regardless of enabled_. The BLEClientBase loop is only
+  // skipped while we're explicitly disabled (auth backoff) and not idle.
+  if (this->enabled_ || this->state() == espbt::ClientState::IDLE)
+    BLEClientBase::loop();
+  if (this->coord_)
+    this->coord_->on_loop(millis());
+}
+
+void PhilipsSonicareStandalone::set_enabled(bool enabled) {
+  if (enabled == this->enabled_)
+    return;
+  if (!enabled && this->state() != espbt::ClientState::IDLE) {
+    ESP_LOGI(TAG, "Disabling BLE client.");
+    auto err = esp_ble_gattc_close(this->gattc_if_, this->conn_id_);
+    if (err != ESP_OK) {
+      ESP_LOGW(TAG, "esp_ble_gattc_close error, status=%d", err);
     }
-
-    case ESP_GAP_BLE_AUTH_CMPL_EVT: {
-      auto &auth = param->ble_security.auth_cmpl;
-      // Only handle events for our device
-      auto *our_bda = this->parent()->get_remote_bda();
-      if (memcmp(auth.bd_addr, our_bda, 6) != 0)
-        break;
-
-      if (auth.success) {
-        ESP_LOGI(TAG, "Pairing successful — device bonded (auth_mode=%d)", auth.auth_mode);
-        this->auth_completed_ = true;
-        this->rapid_disconnect_count_ = 0;
-        this->auth_fail_count_ = 0;
-      } else {
-        ESP_LOGW(TAG, "Authentication FAILED (reason=0x%X)", auth.fail_reason);
-        esp_ble_remove_bond_device(auth.bd_addr);
-        this->auth_fail_count_++;
-        if (this->auth_fail_count_ >= MAX_AUTH_FAILURES) {
-          ESP_LOGE(TAG, "Too many auth failures (%d) — backing off for %lus",
-                   this->auth_fail_count_, AUTH_BACKOFF_MS / 1000);
-          this->backoff_until_ms_ = millis() + AUTH_BACKOFF_MS;
-          this->parent()->set_enabled(false);
-          char fail_str[4], backoff_str[8];
-          snprintf(fail_str, sizeof(fail_str), "%d", this->auth_fail_count_);
-          snprintf(backoff_str, sizeof(backoff_str), "%lu", AUTH_BACKOFF_MS / 1000);
-          this->fire_homeassistant_event(
-              "esphome.philips_sonicare_ble_status",
-              {
-                  {"status", "auth_failed"},
-                  {"mac", this->get_device_mac_()},
-                  {"fail_count", std::string(fail_str)},
-                  {"backoff_s", std::string(backoff_str)},
-              });
-        }
-      }
-      break;
-    }
-
-    default:
-      break;
   }
+  this->enabled_ = enabled;
+}
+
+bool PhilipsSonicareStandalone::parse_device(const espbt::ESPBTDevice &device) {
+  if (!this->enabled_)
+    return false;
+
+  if (!this->uuid_scan_mode_)
+    return BLEClientBase::parse_device(device);
+
+  // No coordinator → cannot decide; stay passive.
+  if (this->coord_ == nullptr)
+    return false;
+
+  // Match against Sonicare service UUIDs. Returns "" (no match), "legacy" or
+  // "condor" so callers can label scan_result events.
+  std::string matched_service;
+  for (const auto &uuid : device.get_service_uuids()) {
+    if (uuid == LEGACY_SERVICE_UUID) { matched_service = "legacy"; break; }
+    if (uuid == CONDOR_SERVICE_UUID) { matched_service = "condor"; break; }
+  }
+
+  // Scan-only: emit one event per unique MAC, never connect.
+  if (this->coord_->is_scan_mode_active()) {
+    if (!matched_service.empty()) {
+      const char *addr_type =
+          device.get_address_type() == BLE_ADDR_TYPE_PUBLIC ? "public" : "random";
+      std::string mfr_hex;
+      const auto &mfr_datas = device.get_manufacturer_datas();
+      if (!mfr_datas.empty()) {
+        const auto &m = mfr_datas[0];
+        if (m.uuid.get_uuid().len == ESP_UUID_LEN_16) {
+          uint16_t cid = m.uuid.get_uuid().uuid.uuid16;
+          char buf[5];
+          // Company ID is little-endian on wire — preserve that here.
+          snprintf(buf, sizeof(buf), "%02X%02X",
+                   (uint8_t)(cid & 0xFF), (uint8_t)((cid >> 8) & 0xFF));
+          mfr_hex = buf;
+        }
+        if (!m.data.empty())
+          mfr_hex += format_hex(m.data.data(), m.data.size());
+      }
+      this->coord_->emit_scan_result(device.address_str(), addr_type,
+                                       device.get_name(), mfr_hex,
+                                       device.get_rssi(), matched_service);
+    }
+    return false;
+  }
+
+  // Pair-mode: connect to first match (or to target_mac_ if set).
+  if (!this->coord_->is_pair_mode_active())
+    return false;
+  if (this->state() != espbt::ClientState::IDLE)
+    return false;
+
+  const std::string &target = this->coord_->get_target_mac();
+  if (!target.empty()) {
+    // Targeted: ble_pair_mac flow. Match exactly this MAC, no UUID filter
+    // (the brush may not advertise its service UUID in some adverts).
+    if (device.address_str() != target)
+      return false;
+    ESP_LOGI(TAG, "Pair-mode targeted match: %s", target.c_str());
+  } else {
+    if (matched_service.empty())
+      return false;
+    ESP_LOGI(TAG, "Found Sonicare via UUID at %s (pair-mode, %s)",
+             device.address_str().c_str(), matched_service.c_str());
+  }
+
+  this->set_address(device.address_uint64());
+  this->remote_addr_type_ = device.get_address_type();
+  this->set_state(espbt::ClientState::DISCOVERED);
+  return true;
+}
+
+bool PhilipsSonicareStandalone::gattc_event_handler(
+    esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if,
+    esp_ble_gattc_cb_param_t *param) {
+  // BLEClientBase returns true only when this event is for our own GATT
+  // connection (matched conn_id / gattc_if). The ESP-BLE stack dispatches
+  // every event to every registered client, so on multi-bridge boards this
+  // gate is what keeps us from reacting to other bridges' events.
+  bool result = BLEClientBase::gattc_event_handler(event, gattc_if, param);
+  if (this->coord_ && result)
+    this->coord_->on_gattc_event(event, gattc_if, param);
+  return result;
+}
+
+void PhilipsSonicareStandalone::gap_event_handler(esp_gap_ble_cb_event_t event,
+                                                    esp_ble_gap_cb_param_t *param) {
+  BLEClientBase::gap_event_handler(event, param);
+
+  // Identity address persistence: after first successful bonding while in
+  // UUID-scan mode, save the (now stable) identity address to flash so future
+  // boots can target it directly. GAP events are global (every registered
+  // client sees them), so on multi-bridge boards we must filter to events
+  // for *our* connection — otherwise a parallel bond on bridge A would
+  // overwrite bridge B's NVS with bridge A's identity.
+  if (event == ESP_GAP_BLE_AUTH_CMPL_EVT
+      && param->ble_security.auth_cmpl.success
+      && this->uuid_scan_mode_
+      && memcmp(this->remote_bda_,
+                param->ble_security.auth_cmpl.bd_addr, 6) == 0) {
+    uint64_t identity = esp32_ble::ble_addr_to_uint64(
+        param->ble_security.auth_cmpl.bd_addr);
+    ESP_LOGI(TAG, "Bonded — saving identity address, switching to MAC mode");
+    this->pref_.save(&identity);
+    this->set_address(identity);
+    this->set_auto_connect(true);  // identity persisted → enable background reconnect
+    this->remote_addr_type_ = param->ble_security.auth_cmpl.addr_type;
+    this->uuid_scan_mode_ = false;
+  }
+
+  if (this->coord_)
+    this->coord_->on_gap_event(event, param);
 }
 
 }  // namespace philips_sonicare
