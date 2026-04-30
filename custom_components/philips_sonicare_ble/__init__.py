@@ -259,3 +259,82 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _LOGGER.info("Unloading Philips Sonicare integration finished")
     return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Release the device-side bond when the entry is permanently removed.
+
+    Distinct from ``async_unload_entry`` (which fires on every reload /
+    restart). Only ``async_remove_entry`` reflects the user's intent to
+    delete the entry for good — the right hook for un-bonding the brush
+    so the next setup attempt sees a clean slate.
+
+    Two transport-specific paths:
+
+    - **ESP bridge**: call the bridge's ``ble_unpair`` ESPHome service.
+      That wipes the BLE bond and the NVS-persisted identity on the
+      ESP, returning the bridge to ``pair_capable=true``.
+    - **Direct BLE**: drop the host-side BlueZ bond via the same
+      ``async_pair_and_trust``-companion D-Bus call we already use for
+      stale-bond cleanup during pairing. Symmetric to the auto-pair path.
+
+    Both branches are best-effort. If the ESP is offline or D-Bus is
+    unreachable we log and return quietly — HA will delete the entry
+    regardless of what this returns.
+    """
+    transport = entry.data.get(CONF_TRANSPORT_TYPE)
+
+    if transport == TRANSPORT_ESP_BRIDGE:
+        esp_device_name = entry.data.get(CONF_ESP_DEVICE_NAME)
+        if not esp_device_name:
+            return
+        esp_device_name = esphome_service_id(esp_device_name)
+        bridge_id = entry.data.get(CONF_ESP_BRIDGE_ID, "")
+
+        svc_name = f"{esp_device_name}_ble_unpair"
+        if bridge_id:
+            svc_name += f"_{bridge_id}"
+
+        if not hass.services.has_service("esphome", svc_name):
+            _LOGGER.info(
+                "ESP bridge %s offline at remove time — skipping ble_unpair "
+                "(bond on bridge stays)",
+                esp_device_name,
+            )
+            return
+
+        try:
+            await hass.services.async_call(
+                "esphome", svc_name, {}, blocking=True,
+            )
+            _LOGGER.info(
+                "Removed bond on ESP bridge %s for %s",
+                esp_device_name,
+                entry.unique_id or entry.data.get(CONF_ADDRESS, "<unknown>"),
+            )
+        except Exception as err:  # noqa: BLE001 — removal must not fail
+            _LOGGER.warning(
+                "ble_unpair on %s failed during entry removal: %s",
+                esp_device_name,
+                err,
+            )
+        return
+
+    # Direct BLE — release host-side BlueZ bond.
+    address = entry.data.get(CONF_ADDRESS)
+    if not address:
+        return
+    from .dbus_pairing import async_remove_device, is_dbus_available
+    if not is_dbus_available():
+        _LOGGER.debug(
+            "D-Bus unavailable — skipping host-side unpair for %s", address
+        )
+        return
+    try:
+        await async_remove_device(address)
+    except Exception as err:  # noqa: BLE001 — removal must not fail
+        _LOGGER.warning(
+            "Host-side unpair failed during entry removal for %s: %s",
+            address,
+            err,
+        )

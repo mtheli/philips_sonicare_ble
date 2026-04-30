@@ -124,6 +124,50 @@ async def _find_device_path(bus: MessageBus, mac: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+async def async_remove_device(mac: str) -> bool:
+    """Remove a BlueZ-known device — drops bond, trust, and cached GATT.
+
+    Returns True if the device was removed (or wasn't present), False if
+    BlueZ couldn't be reached or rejected the call. No agent registration
+    is needed for RemoveDevice — just locating the device path via the
+    object manager and dispatching to its parent adapter.
+
+    Used by ``async_remove_entry`` to release the host-side bond when a
+    Direct-BLE config entry is permanently removed, mirroring how the
+    ESP-bridge path drops its NVS-stored identity.
+    """
+    bus: MessageBus | None = None
+    try:
+        bus = MessageBus(bus_type=BusType.SYSTEM)
+        await bus.connect()
+
+        device_path = await _find_device_path(bus, mac)
+        if not device_path:
+            _LOGGER.debug(
+                "Device %s not in BlueZ — nothing to remove", mac
+            )
+            return True
+
+        adapter_path = device_path.rsplit("/", 1)[0]
+        adapter_intro = await bus.introspect("org.bluez", adapter_path)
+        adapter_proxy = bus.get_proxy_object(
+            "org.bluez", adapter_path, adapter_intro
+        )
+        adapter_iface = adapter_proxy.get_interface("org.bluez.Adapter1")
+        await adapter_iface.call_remove_device(device_path)
+        _LOGGER.info("Removed BlueZ bond for %s", mac)
+        return True
+    except DBusError as err:
+        _LOGGER.warning("BlueZ refused RemoveDevice on %s: %s", mac, err)
+        return False
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("D-Bus error removing %s: %s", mac, err)
+        return False
+    finally:
+        if bus and bus.connected:
+            bus.disconnect()
+
+
 async def async_pair_and_trust(mac: str) -> None:
     """Pair and trust a BLE device via BlueZ D-Bus.
 

@@ -91,11 +91,20 @@ void PhilipsSonicareStandalone::setup() {
     }
     // Wipe NVS + reset to UUID-scan when HA requests unpair.
     this->coord_->set_unpair_cb([this]() {
+      uint64_t prev = this->address_;
       uint64_t zero = 0;
       this->pref_.save(&zero);
       this->uuid_scan_mode_ = true;
       this->set_address(0);
-      ESP_LOGW(TAG, "Identity cleared — back to UUID scan mode");
+      if (prev != 0) {
+        ESP_LOGW(TAG,
+                 "Identity cleared (was %02X:%02X:%02X:%02X:%02X:%02X) — back to UUID scan mode",
+                 (uint8_t)(prev >> 40), (uint8_t)(prev >> 32),
+                 (uint8_t)(prev >> 24), (uint8_t)(prev >> 16),
+                 (uint8_t)(prev >> 8),  (uint8_t)(prev));
+      } else {
+        ESP_LOGW(TAG, "Identity cleared — back to UUID scan mode");
+      }
     });
     // Open-GATT pair complete: Coordinator detected success without SMP.
     // Persist the currently-connected MAC as identity (mirrors the AUTH_CMPL
@@ -250,7 +259,11 @@ void PhilipsSonicareStandalone::gap_event_handler(esp_gap_ble_cb_event_t event,
                 param->ble_security.auth_cmpl.bd_addr, 6) == 0) {
     uint64_t identity = esp32_ble::ble_addr_to_uint64(
         param->ble_security.auth_cmpl.bd_addr);
-    ESP_LOGI(TAG, "Bonded — saving identity address, switching to MAC mode");
+    const auto *bda = param->ble_security.auth_cmpl.bd_addr;
+    ESP_LOGI(TAG,
+             "Bonded — saving identity %02X:%02X:%02X:%02X:%02X:%02X, "
+             "switching to MAC mode",
+             bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
     this->pref_.save(&identity);
     this->set_address(identity);
     this->set_auto_connect(true);  // identity persisted → enable background reconnect

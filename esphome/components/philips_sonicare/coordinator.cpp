@@ -249,8 +249,9 @@ void SonicareCoordinator::set_pair_mac(const std::string &mac,
 }
 
 void SonicareCoordinator::unpair() {
-  ESP_LOGW(TAG, "Unpair requested — clearing bond and identity");
   std::string previous_mac = this->identity_address_;
+  ESP_LOGW(TAG, "Unpair requested — clearing bond and identity (was: %s)",
+           previous_mac.empty() ? "<none>" : previous_mac.c_str());
   if (this->parent_ != nullptr) {
     auto *bda = this->parent_->get_remote_bda();
     esp_ble_remove_bond_device(bda);
@@ -698,7 +699,12 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
         break;
 
       if (auth.success) {
-        ESP_LOGI(TAG, "Pairing successful — device bonded (auth_mode=%d)", auth.auth_mode);
+        ESP_LOGI(TAG,
+                 "Pairing successful — device bonded "
+                 "(%02X:%02X:%02X:%02X:%02X:%02X, auth_mode=%d)",
+                 auth.bd_addr[0], auth.bd_addr[1], auth.bd_addr[2],
+                 auth.bd_addr[3], auth.bd_addr[4], auth.bd_addr[5],
+                 auth.auth_mode);
         this->auth_completed_ = true;
         this->rapid_disconnect_count_ = 0;
         this->auth_fail_count_ = 0;
