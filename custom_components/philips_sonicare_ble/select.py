@@ -24,7 +24,7 @@ async def async_setup_entry(
     model = entry.data.get("model", "")
     entities: list[SelectEntity] = []
     # Condor (HX742X+) PutProps lands in a later phase; model-based
-    # gating alone would still try to wire a Legacy-flavoured select on
+    # gating alone would still try to wire a Classic-flavoured select on
     # a Condor device (mode labels differ between the two protocols),
     # so also gate on the coordinator's write-capability flag.
     if supports_mode_write(model) and coordinator.supports_writes:

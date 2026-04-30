@@ -1,4 +1,4 @@
-"""Legacy protocol implementation — one GATT characteristic per property.
+"""Classic protocol implementation — one GATT characteristic per property.
 
 Used by HX992X, HX9992 / Prestige 9900, HX6340 / Kids, HX962V, HX991M,
 HX9996 and other Sonicare models that expose Philips' original service
@@ -67,11 +67,11 @@ from .protocol import SonicareProtocol, UpdateCallback
 _LOGGER = logging.getLogger(__name__)
 
 
-class LegacyProtocol(SonicareProtocol):
+class ClassicProtocol(SonicareProtocol):
     """Direct-GATT protocol: every property is a distinct characteristic."""
 
     # --- Session lifecycle -------------------------------------------------
-    # Legacy has no framed session; the transport-level GATT connection
+    # Classic has no framed session; the transport-level GATT connection
     # is all that's needed.
 
     async def connect(self) -> None:
@@ -82,19 +82,19 @@ class LegacyProtocol(SonicareProtocol):
 
     # --- High-level lifecycle placeholders --------------------------------
     # The coordinator drives reads/subscribes via the primitive GATT
-    # methods below because Legacy needs per-call connection checks and
+    # methods below because Classic needs per-call connection checks and
     # retry behavior that the state-free protocol interface can't model
     # without duplicating coordinator logic. Condor will implement these
     # directly since its framed transport owns its own session state.
 
     async def refresh_all(self):
-        raise NotImplementedError("Legacy refresh still lives in coordinator")
+        raise NotImplementedError("Classic refresh still lives in coordinator")
 
     async def start_live_updates(self, on_update: UpdateCallback) -> None:
-        raise NotImplementedError("Legacy subscribe still lives in coordinator")
+        raise NotImplementedError("Classic subscribe still lives in coordinator")
 
     async def stop_live_updates(self) -> None:
-        raise NotImplementedError("Legacy unsubscribe still lives in coordinator")
+        raise NotImplementedError("Classic unsubscribe still lives in coordinator")
 
     # --- GATT primitives ---------------------------------------------------
 

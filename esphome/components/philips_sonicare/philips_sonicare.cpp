@@ -11,7 +11,7 @@ namespace philips_sonicare {
 static const char *const TAG = "philips_sonicare";
 
 // Service UUIDs for auto-discovery (no mac_address configured)
-static const espbt::ESPBTUUID LEGACY_SERVICE_UUID =
+static const espbt::ESPBTUUID CLASSIC_SERVICE_UUID =
     espbt::ESPBTUUID::from_raw("477ea600-a260-11e4-ae37-0002a5d50001");
 static const espbt::ESPBTUUID CONDOR_SERVICE_UUID =
     espbt::ESPBTUUID::from_raw("e50ba3c0-af04-4564-92ad-fef019489de6");
@@ -168,11 +168,11 @@ bool PhilipsSonicareStandalone::parse_device(const espbt::ESPBTDevice &device) {
   if (this->coord_ == nullptr)
     return false;
 
-  // Match against Sonicare service UUIDs. Returns "" (no match), "legacy" or
+  // Match against Sonicare service UUIDs. Returns "" (no match), "classic" or
   // "condor" so callers can label scan_result events.
   std::string matched_service;
   for (const auto &uuid : device.get_service_uuids()) {
-    if (uuid == LEGACY_SERVICE_UUID) { matched_service = "legacy"; break; }
+    if (uuid == CLASSIC_SERVICE_UUID) { matched_service = "classic"; break; }
     if (uuid == CONDOR_SERVICE_UUID) { matched_service = "condor"; break; }
   }
 

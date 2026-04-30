@@ -413,7 +413,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       }
       // Pairing probe.
       //
-      // Legacy (Sonicare service 477ea600-…): read Handle State (0x4010).
+      // Classic (Sonicare service 477ea600-…): read Handle State (0x4010).
       // The read either succeeds (open-GATT brushes like HX6340 Kids) or
       // returns INSUF_AUTHENTICATION (bonded brushes like HX9992) which
       // we use as the SMP trigger.

@@ -2,7 +2,7 @@
 
 Condor ports expose their state as UTF-8 JSON. This module translates
 those JSON objects into the flat ``coordinator.data`` keys shared with
-Legacy — entities stay protocol-agnostic as long as the two protocols
+Classic — entities stay protocol-agnostic as long as the two protocols
 agree on the dict shape.
 
 The same mapper handles both full-state (``GetProps``) and partial
@@ -30,8 +30,8 @@ _PortMapper = Callable[[dict[str, Any], dict[str, Any]], None]
 # Universal routine-id → mode-label table used by all Condor devices.
 # Devices always report ``RoutineStatus.Mode`` as an ordinal 0..5,
 # regardless of which modes a specific model exposes in its UI. Labels
-# differ slightly from Legacy's ``BRUSHING_MODES``: Condor uses
-# ``white`` / ``gum_care`` / ``deep_clean``, Legacy (Prestige) uses
+# differ slightly from Classic's ``BRUSHING_MODES``: Condor uses
+# ``white`` / ``gum_care`` / ``deep_clean``, Classic (Prestige) uses
 # ``white_plus`` / ``gum_health`` / ``deep_clean_plus``.
 CONDOR_BRUSHING_MODES: dict[int, str] = {
     0: "clean",
@@ -71,7 +71,7 @@ def _map_sonicare(props: dict[str, Any], out: dict[str, Any]) -> None:
         if mapped is None:
             _LOGGER.warning("Condor Sonicare.HandleState unknown: %d", v)
         out["handle_state"] = mapped
-        # Condor lacks Legacy's explicit brushing_state char — derive a
+        # Condor lacks Classic's explicit brushing_state char — derive a
         # coarse on/off from HandleState so entities that key off that
         # label keep working. Pause is not distinguishable here; the
         # RoutineStatus.Duration stream still reflects real activity.
@@ -79,7 +79,7 @@ def _map_sonicare(props: dict[str, Any], out: dict[str, Any]) -> None:
         out["brushing_state"] = "on" if running else "off"
         out["brushing_state_value"] = 1 if running else 0
     # Condor HandleTime is a Unix epoch timestamp (wall-clock from the
-    # handle) — the same key Legacy exposes as a seconds counter. Both
+    # handle) — the same key Classic exposes as a seconds counter. Both
     # go into ``handle_time`` as-is; a future refactor could split them.
     if (v := props.get("HandleTime")) is not None:
         out["handle_time"] = v
@@ -144,7 +144,7 @@ def _map_diagnostics(props: dict[str, Any], out: dict[str, Any]) -> None:
 
 
 def _map_extended(props: dict[str, Any], out: dict[str, Any]) -> None:
-    # Condor's FeatureCtrl is the same 0x4420 settings bitmask Legacy
+    # Condor's FeatureCtrl is the same 0x4420 settings bitmask Classic
     # exposes as ``CHAR_SETTINGS`` — same bit positions, same semantics.
     if (v := props.get("FeatureCtrl")) is not None:
         out["settings_bitmask"] = v

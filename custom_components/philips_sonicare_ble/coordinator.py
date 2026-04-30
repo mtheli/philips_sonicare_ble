@@ -103,7 +103,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         # Protocol selection — Condor (framed, push-based, HX742X+) when
-        # its transport service is in the discovered set, Legacy (direct
+        # its transport service is in the discovered set, Classic (direct
         # GATT-per-property) otherwise. The two protocols produce the
         # same ``coordinator.data`` shape through their respective
         # adapters, so entity code stays protocol-agnostic.
@@ -113,8 +113,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             from .condor_protocol import CondorProtocol
             self._protocol = CondorProtocol(transport)
         else:
-            from .legacy_protocol import LegacyProtocol
-            self._protocol = LegacyProtocol(transport)
+            from .classic_protocol import ClassicProtocol
+            self._protocol = ClassicProtocol(transport)
 
         # Read options
         options = entry.options
@@ -363,9 +363,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # Shared processing for poll + live
     # ------------------------------------------------------------------
     def _process_results(self, results: dict[str, bytes | None]) -> dict[str, Any]:
-        """Legacy path: decode GATT bytes then apply shared post-processing.
+        """Classic path: decode GATT bytes then apply shared post-processing.
 
-        Wire-format decoding lives in :meth:`LegacyProtocol.parse_results`;
+        Wire-format decoding lives in :meth:`ClassicProtocol.parse_results`;
         the Condor path produces the same parsed shape through its own
         adapter, so both call into :meth:`_apply_parsed` for the shared
         bookkeeping.
@@ -378,7 +378,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _apply_parsed(self, parsed: dict[str, Any]) -> dict[str, Any]:
         """Merge a parsed partial dict into ``self.data`` with side-effects.
 
-        Layers on top of the raw merge: sensor-stream gating for Legacy
+        Layers on top of the raw merge: sensor-stream gating for Classic
         (keyed off ``brushing_state``), brush-head wear derivation,
         last-seen bookkeeping, and device-registry sync on model/firmware
         changes. Callers pass the output back through
@@ -388,7 +388,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         new_data = self.data.copy() if self.data else {}
         new_data.update(parsed)
 
-        # Sensor stream gates on brushing_state — Legacy only, since
+        # Sensor stream gates on brushing_state — Classic only, since
         # Condor never emits this key (its sensor stream rides a separate
         # Subscribe on the ``SensorData.b`` port instead of CCCD).
         if not self._use_condor and "brushing_state" in parsed:
@@ -527,13 +527,13 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         await self.transport.set_notify_throttle(throttle_ms)
 
                     # Initial refresh + live subscriptions. The two protocols
-                    # diverge here — Legacy polls char-by-char then starts
+                    # diverge here — Classic polls char-by-char then starts
                     # CCCD notifications; Condor runs its handshake, does a
                     # framed refresh_all, and subscribes named JSON ports.
                     if self._use_condor:
                         sub_count = await self._setup_condor_session()
                     else:
-                        sub_count = await self._setup_legacy_session()
+                        sub_count = await self._setup_classic_session()
                     if sub_count == 0:
                         raise TransportError("No notifications could be subscribed")
                     self._live_setup_done = True
@@ -779,8 +779,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         finally:
             self._brushhead_read_pending = False
 
-    async def _setup_legacy_session(self) -> int:
-        """Legacy protocol setup: batch reads then CCCD notifications.
+    async def _setup_classic_session(self) -> int:
+        """Classic protocol setup: batch reads then CCCD notifications.
 
         First connect reads every char we know about (model, firmware,
         brush head, …); subsequent reconnects stick to the dynamic
@@ -814,7 +814,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         state snapshot, then subscribe named ports for push deltas.
 
         Returns the number of ports that successfully subscribed —
-        callers treat zero as a fatal session error just like Legacy's
+        callers treat zero as a fatal session error just like Classic's
         subscription count.
         """
         await self._protocol.connect()

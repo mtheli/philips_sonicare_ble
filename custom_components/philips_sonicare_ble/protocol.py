@@ -3,7 +3,7 @@
 Separates the two on-device protocols so the Coordinator can stay
 protocol-agnostic:
 
-- Legacy  (`477ea600-…`) — one GATT characteristic per property, used by
+- Classic  (`477ea600-…`) — one GATT characteristic per property, used by
   HX992X, HX9992/Prestige 9900, HX6340/Kids, HX962V, HX991M, HX9996.
 - Condor  (`e50ba3c0-…`) — framed request/response over a small set of
   GATT characteristics with push-style change indications. Used by
@@ -49,7 +49,7 @@ class SonicareProtocol(abc.ABC):
     async def connect(self) -> None:
         """Establish the protocol session on top of an already-open transport.
 
-        Legacy: no-op (direct GATT).
+        Classic: no-op (direct GATT).
         Condor: runs the version-negotiation / channel-open handshake.
         """
 
@@ -91,8 +91,8 @@ class SonicareProtocol(abc.ABC):
     async def set_intensity(self, intensity_key: str) -> None:
         """Set the active intensity by its string key (INTENSITIES)."""
 
-    # --- Legacy-only extension points --------------------------------------
-    # Default implementations treat these as unsupported; the Legacy
+    # --- Classic-only extension points --------------------------------------
+    # Default implementations treat these as unsupported; the Classic
     # protocol overrides them. Kept on the base class so callers don't
     # need to know which protocol is active.
 

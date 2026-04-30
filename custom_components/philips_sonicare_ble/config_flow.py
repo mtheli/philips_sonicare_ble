@@ -81,7 +81,7 @@ _STANDARD_BLE_SERVICES = {
 
 # Services any supported Sonicare exposes. A device qualifies as a
 # Sonicare if *any* of these appear — older models fan out into the
-# per-feature Legacy services, HX742X / Series 7100 (Condor) collapses
+# per-feature Classic services, HX742X / Series 7100 (Condor) collapses
 # everything onto a single framed transport service.
 _EXPECTED_SERVICES = {
     SVC_BATTERY.lower(),
@@ -111,13 +111,41 @@ SERVICE_NAMES: dict[str, str] = {
     SVC_CONDOR.lower(): "Condor (Series 7100+)",
 }
 
+# What each service enables in HA — shown as the "Provides" column.
+SERVICE_FEATURES: dict[str, str] = {
+    SVC_BATTERY.lower(): "Battery level",
+    SVC_DEVICE_INFO.lower(): "Model, serial, firmware",
+    SVC_SONICARE.lower(): "Handle state, brushing mode",
+    SVC_ROUTINE.lower(): "Session timing, current mode",
+    SVC_STORAGE.lower(): "Session history",
+    SVC_SENSOR.lower(): "Pressure & motion sensors",
+    SVC_BRUSHHEAD.lower(): "Brush head NFC, wear tracking",
+    SVC_DIAGNOSTIC.lower(): "Error log",
+    SVC_EXTENDED.lower(): "Adaptive intensity, feedback toggles",
+    SVC_BYTESTREAM.lower(): "Streaming data channel",
+    SVC_CONDOR.lower(): "Newer protocol (HX7100+)",
+}
+
+# Classic services that the Condor protocol replaces with its single
+# framed transport service.
+_CLASSIC_SERVICE_UUIDS = {
+    SVC_BATTERY.lower(),
+    SVC_SONICARE.lower(),
+    SVC_ROUTINE.lower(),
+    SVC_STORAGE.lower(),
+    SVC_SENSOR.lower(),
+    SVC_BRUSHHEAD.lower(),
+    SVC_DIAGNOSTIC.lower(),
+    SVC_EXTENDED.lower(),
+}
+
 # Map each service to one representative characteristic for ESP probing.
 # The ESP bridge has no "list services" call, so we read one char per
-# Legacy service and add the service when the read returns data. The
+# Classic service and add the service when the read returns data. The
 # Condor service has no universally-readable char (e50b0005 is optional
 # firmware-side and missing on HX742X FW 1.8.20.0), so Condor is
 # inferred by exclusion below — if Device Information answered but no
-# Legacy service did, the device must be Condor.
+# Classic service did, the device must be Condor.
 SERVICE_PROBE_CHARS: dict[str, str] = {
     SVC_BATTERY: CHAR_BATTERY_LEVEL,
     SVC_DEVICE_INFO: CHAR_MODEL_NUMBER,
@@ -148,6 +176,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._bridge_info: dict[str, str] | None = None
         self._probed_bridges: dict[str, list[tuple[str, dict[str, str]]]] = {}
         self._manual_address_entry: bool = False
+        self._configured_bridge_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Duplicate check
@@ -391,12 +420,15 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
             found_services: list[str] = []
             model_number: str | None = None
+            battery: int | None = None
             for svc_uuid, probe_char in SERVICE_PROBE_CHARS.items():
                 raw = await transport.read_char(probe_char)
                 if raw is not None:
                     found_services.append(svc_uuid)
                     if probe_char == CHAR_MODEL_NUMBER:
                         model_number = raw.decode("utf-8", errors="replace").strip()
+                    elif probe_char == CHAR_BATTERY_LEVEL and raw:
+                        battery = raw[0]
 
             if not found_services:
                 raise TransportError(
@@ -407,9 +439,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             # is optional — HX742X FW 1.8.20.0 omits it entirely, so a
             # direct probe misses that device. We're already past the
             # name-based Sonicare discovery, so if the device answered
-            # Device Information but none of the Legacy feature services,
+            # Device Information but none of the Classic feature services,
             # the only supported protocol left is Condor.
-            legacy_seen = any(
+            classic_seen = any(
                 svc in found_services for svc in (
                     SVC_SONICARE, SVC_ROUTINE, SVC_STORAGE, SVC_SENSOR,
                     SVC_BRUSHHEAD, SVC_DIAGNOSTIC, SVC_EXTENDED, SVC_BATTERY,
@@ -417,20 +449,14 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             )
             if (
                 model_number
-                and not legacy_seen
+                and not classic_seen
                 and SVC_CONDOR not in found_services
             ):
                 found_services.append(SVC_CONDOR)
                 _LOGGER.debug(
-                    "ESP bridge: inferred Condor protocol on %s (model=%s, no Legacy services)",
+                    "ESP bridge: inferred Condor protocol on %s (model=%s, no Classic services)",
                     address, model_number,
                 )
-
-            # Battery
-            battery: int | None = None
-            raw_bat = await transport.read_char(CHAR_BATTERY_LEVEL)
-            if raw_bat:
-                battery = raw_bat[0]
 
             # Serial
             serial: str | None = None
@@ -444,6 +470,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             if raw_fw:
                 firmware = raw_fw.decode("utf-8", errors="replace").strip()
 
+            connection_path = esp_device_name
+            if esp_bridge_id:
+                connection_path = f"{esp_device_name} / {esp_bridge_id}"
             return {
                 "services": found_services,
                 "sonicare_mac": transport.detected_mac,
@@ -451,7 +480,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "serial": serial,
                 "firmware": firmware,
                 "battery": battery,
-                "connection_path": esp_device_name,
+                "connection_path": connection_path,
             }
 
         except TransportError:
@@ -463,47 +492,94 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     # Display helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def _get_service_status_text(fetched_uuids: list[str]) -> str:
-        """Format found services as HTML table with checkmarks."""
+    def _detect_family(fetched_lower: set[str], model: str) -> str:
+        """Return device family: 'condor', 'mode_b', or 'classic'."""
+        if SVC_CONDOR.lower() in fetched_lower:
+            return "condor"
+        # HX63xx / HX64xx are Mode-B brushes with a reduced service set.
+        m = (model or "").upper()
+        if m.startswith(("HX63", "HX64")):
+            return "mode_b"
+        return "classic"
+
+    @staticmethod
+    def _missing_reason(uuid_lower: str, family: str) -> str:
+        """Why a service is absent on this device, if we can explain it."""
+        if family == "condor" and uuid_lower in _CLASSIC_SERVICE_UUIDS:
+            return "via Condor protocol"
+        if uuid_lower == SVC_CONDOR.lower():
+            return "for HX7100+ models"
+        if family == "mode_b":
+            return "not on this model"
+        return ""
+
+    @classmethod
+    def _get_service_status_text(
+        cls, fetched_uuids: list[str], model: str = ""
+    ) -> str:
+        """Format found and missing services as an HTML table (no header).
+
+        Cells stay terse — the *why* of a missing service collapses into
+        a footer below the table so that long reason strings don't wrap
+        cells across multiple lines.
+        """
         fetched_lower = {s.lower() for s in fetched_uuids} - _STANDARD_BLE_SERVICES
+        family = cls._detect_family(fetched_lower, model)
+
+        def _row(icon: str, name: str, provides: str) -> str:
+            return (
+                f"<tr><td>{icon}</td><td>{name}</td>"
+                f"<td>{provides}</td></tr>"
+            )
 
         found_rows: list[str] = []
         missing_rows: list[str] = []
-        unknown_rows: list[str] = []
+        used_reasons: set[str] = set()
 
         for uuid in sorted(_EXPECTED_SERVICES):
-            name = SERVICE_NAMES.get(uuid, "Unknown")
-            short = uuid.split("-")[0]
+            name = SERVICE_NAMES.get(uuid)
+            if not name:
+                continue
+            feature = SERVICE_FEATURES.get(uuid, "")
             if uuid in fetched_lower:
-                found_rows.append(
-                    f"<tr><td>✅</td><td>{name}</td><td><code>{short}</code></td></tr>"
-                )
+                found_rows.append(_row("✅", name, feature))
             else:
-                missing_rows.append(
-                    f"<tr><td>❌</td><td>{name}</td><td><code>{short}</code></td></tr>"
-                )
+                reason = cls._missing_reason(uuid, family)
+                if reason:
+                    used_reasons.add(reason)
+                missing_rows.append(_row("❌", name, feature))
 
         known_all = _EXPECTED_SERVICES | {SVC_BYTESTREAM.lower()}
         for uuid in sorted(fetched_lower - _EXPECTED_SERVICES):
-            name = SERVICE_NAMES.get(uuid, "Unknown")
-            short = uuid.split("-")[0]
-            if uuid in known_all:
-                found_rows.append(
-                    f"<tr><td>✅</td><td>{name}</td><td><code>{short}</code></td></tr>"
-                )
-            else:
-                unknown_rows.append(
-                    f"<tr><td>❔</td><td>{name}</td><td><code>{short}</code></td></tr>"
-                )
+            name = SERVICE_NAMES.get(uuid)
+            if not name or uuid not in known_all:
+                # Drop services we can't name or describe — visual noise.
+                continue
+            found_rows.append(_row("✅", name, SERVICE_FEATURES.get(uuid, "")))
 
-        rows = found_rows + unknown_rows
+        rows = found_rows + missing_rows
         if not rows:
             return "No services detected"
-        return "<table>" + "".join(rows) + "</table>"
+
+        table = f"<table><tbody>{''.join(rows)}</tbody></table>"
+
+        footer_for = {
+            "not on this model":
+                "❌ entries are not available on this model.",
+            "for HX7100+ models":
+                "Condor protocol is exclusive to HX7100+ (Series 7100+).",
+            "via Condor protocol":
+                "Classic feature services are replaced by the Condor "
+                "protocol on this model.",
+        }
+        notes = [footer_for[r] for r in sorted(used_reasons) if r in footer_for]
+        if notes:
+            table += "\n\n" + "\n\n".join(notes)
+        return table
 
     @staticmethod
     def _get_device_info_text(data: dict[str, Any], address: str | None = None) -> str:
-        """Format device info as HTML table."""
+        """Format device info as an HTML table (no header)."""
         rows: list[str] = []
         if model := data.get("model"):
             rows.append(f"<tr><td><b>Model</b></td><td>{model}</td></tr>")
@@ -514,15 +590,21 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if (battery := data.get("battery")) is not None:
             rows.append(f"<tr><td><b>Battery</b></td><td>{battery}%</td></tr>")
         if address:
-            rows.append(f"<tr><td><b>MAC</b></td><td><code>{address.upper()}</code></td></tr>")
+            rows.append(
+                f"<tr><td><b>MAC</b></td><td><code>{address.upper()}</code></td></tr>"
+            )
         pairing = data.get("pairing")
         if pairing == "bonded":
-            rows.append("<tr><td><b>BLE Security</b></td><td>Paired (bonded)</td></tr>")
+            rows.append(
+                "<tr><td><b>BLE Security</b></td><td>Bonded (encrypted)</td></tr>"
+            )
         elif pairing == "open_gatt":
-            rows.append("<tr><td><b>BLE Security</b></td><td>Open GATT (no pairing)</td></tr>")
+            rows.append(
+                "<tr><td><b>BLE Security</b></td><td>Unpaired (no encryption)</td></tr>"
+            )
         if not rows:
             return "Could not read device information"
-        return "<table>" + "".join(rows) + "</table>"
+        return f"<table><tbody>{''.join(rows)}</tbody></table>"
 
     @staticmethod
     def _has_sonicare_services(data: dict[str, Any]) -> bool:
@@ -536,7 +618,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         name: str, bridge_info: str, data: dict[str, Any]
     ) -> str:
         """Return connection status message based on fetched data."""
-        return f"✅ Successfully connected to **{name}**{bridge_info}."
+        if bridge_info:
+            return f"✅ Connected{bridge_info}."
+        return "✅ Connected."
 
     # ------------------------------------------------------------------
     # ESP bridge helpers
@@ -567,13 +651,34 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
                 continue
             self._probed_bridges[device_name] = sonicare
-            suffix = f", {len(sonicare)} bridges" if len(sonicare) > 1 else ""
-            options.append(
-                SelectOptionDict(
-                    value=device_name,
-                    label=f"{entry.title} ({device_name}{suffix})",
+
+            slot_info = ""
+            if len(sonicare) > 1:
+                paired_count = sum(
+                    1 for _, info in sonicare
+                    if info.get("pair_capable") != "true"
+                    and info.get("mac", "") not in ("", "00:00:00:00:00:00")
                 )
-            )
+                free_count = len(sonicare) - paired_count
+                parts = []
+                if paired_count:
+                    parts.append(f"{paired_count} paired")
+                if free_count:
+                    parts.append(f"{free_count} free")
+                if parts:
+                    slot_info = f"{' / '.join(parts)} slots"
+
+            show_slug = entry.title.lower() != device_name.lower()
+            if show_slug and slot_info:
+                label = f"{entry.title} ({device_name}, {slot_info})"
+            elif show_slug:
+                label = f"{entry.title} ({device_name})"
+            elif slot_info:
+                label = f"{entry.title} ({slot_info})"
+            else:
+                label = entry.title
+
+            options.append(SelectOptionDict(value=device_name, label=label))
         return options
 
     def _detect_esp_bridge_ids(self, esp_device_name: str) -> list[str]:
@@ -753,12 +858,17 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self.context["title_placeholders"] = {"name": self._name}
         return await self.async_step_bluetooth_confirm()
 
-    async def _find_esp_bridge(self) -> str | None:
-        """Find an ESP device running the philips_sonicare component.
+    async def _find_esp_bridge_for_mac(
+        self, target_mac: str
+    ) -> tuple[str, str] | None:
+        """Locate an ESP bridge slot that already has this MAC bonded.
 
-        Probes ble_get_info to disambiguate from a philips_shaver bridge
-        on the same ESP (same service names, different event channel).
+        Returns (esp_device_name, bridge_id) when an ESP slot reports
+        `mac` equal to ``target_mac``; otherwise None. We deliberately
+        only match bonded slots — an empty pair-capable slot doesn't
+        justify diverting a discovered brush away from Direct BLE.
         """
+        target = target_mac.upper()
         esphome_entries = self.hass.config_entries.async_entries("esphome")
         for entry in esphome_entries:
             device_name = entry.data.get("device_name")
@@ -768,23 +878,24 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             bridge_ids = self._detect_esp_bridge_ids(device_name)
             if not bridge_ids:
                 continue
-            if await self._probe_sonicare_bridges(device_name, bridge_ids):
-                return device_name
+            sonicare = await self._probe_sonicare_bridges(device_name, bridge_ids)
+            for bridge_id, info in sonicare:
+                mac = info.get("mac", "").upper()
+                if mac and mac == target:
+                    return (device_name, bridge_id)
         return None
 
     async def async_step_bluetooth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Confirm Bluetooth discovery."""
-        # If an ESP bridge with our component is available, skip Direct BLE
-        # and go straight to the ESP Bridge flow.
-        esp_device = await self._find_esp_bridge()
-        if esp_device:
-            self._esp_device_name = esp_device
-            self._esp_bridge_ids = self._detect_esp_bridge_ids(esp_device)
-            if len(self._esp_bridge_ids) > 1:
-                return await self.async_step_esp_select_device()
-            self._esp_bridge_id = self._esp_bridge_ids[0]
+        # Auto-route to ESP only when an ESP slot already has this MAC
+        # bonded — otherwise fall through to Direct BLE confirm so the
+        # user can pick the manual ESP path themselves if needed.
+        match = await self._find_esp_bridge_for_mac(self._address or "")
+        if match:
+            self._esp_device_name, self._esp_bridge_id = match
+            self._esp_bridge_ids = self._detect_esp_bridge_ids(self._esp_device_name)
             return await self._esp_bridge_health_check()
 
         if user_input is None:
@@ -982,21 +1093,26 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         esp_options = await self._get_esphome_device_options()
 
-        if esp_options:
-            data_schema = vol.Schema(
-                {
-                    vol.Required("esp_device_name"): SelectSelector(
-                        SelectSelectorConfig(options=esp_options)
-                    ),
-                }
-            )
-        else:
-            data_schema = vol.Schema(
-                {
-                    vol.Required("esp_device_name"): str,
-                }
-            )
-            errors["base"] = "no_esphome_devices"
+        if not esp_options:
+            return self.async_abort(reason="no_esphome_devices")
+
+        if len(esp_options) == 1 and not user_input:
+            sole = esp_options[0]["value"]
+            self._esp_device_name = sole
+            bridge_ids = self._detect_esp_bridge_ids(sole)
+            self._esp_bridge_ids = bridge_ids
+            if len(bridge_ids) > 1:
+                return await self.async_step_esp_select_device()
+            self._esp_bridge_id = bridge_ids[0] if bridge_ids else ""
+            return await self._esp_bridge_health_check()
+
+        data_schema = vol.Schema(
+            {
+                vol.Required("esp_device_name"): SelectSelector(
+                    SelectSelectorConfig(options=esp_options)
+                ),
+            }
+        )
 
         return self.async_show_form(
             step_id="esp_bridge",
@@ -1010,7 +1126,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         """Let user pick which device on a multi-device ESP bridge."""
         if user_input is not None:
             selected = user_input["esp_bridge_id"]
-            if selected.startswith("✅ "):
+            if selected in self._configured_bridge_ids:
                 return self.async_abort(reason="already_configured")
             self._esp_bridge_id = selected
             return await self._esp_bridge_health_check()
@@ -1031,21 +1147,37 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             )
             self._probed_bridges[self._esp_device_name] = cached
 
+        self._configured_bridge_ids = set()
         options: list[SelectOptionDict] = []
         has_available = False
+        shown_states: set[str] = set()
+
         for did, info in cached:
             mac = info.get("mac", "")
             has_mac = bool(mac) and mac != "00:00:00:00:00:00"
+            is_configured = has_mac and mac.upper() in configured_macs
             label = self._format_bridge_label(did, info)
 
-            if has_mac and mac.upper() in configured_macs:
-                options.append(SelectOptionDict(
-                    value=f"✅ {did}",
-                    label=f"✅ {label}",
-                ))
+            if is_configured:
+                self._configured_bridge_ids.add(did)
+                options.append(SelectOptionDict(value=did, label=f"✅ {label}"))
+                shown_states.add("already_configured")
             else:
                 has_available = True
                 options.append(SelectOptionDict(value=did, label=label))
+
+            if info.get("pair_capable") == "true":
+                shown_states.add("pair_required")
+                continue
+            paired = info.get("paired", "")
+            if paired == "true":
+                shown_states.add("bonded")
+            elif paired == "false":
+                shown_states.add("open_gatt")
+            if info.get("ble_connected") == "true":
+                shown_states.add("online")
+            else:
+                shown_states.add("offline")
 
         if not cached:
             return self.async_abort(reason="no_devices_found")
@@ -1053,7 +1185,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="already_configured")
 
         # Auto-select if only one unconfigured device and no configured ones shown
-        unconfigured = [o for o in options if not o["value"].startswith("✅ ")]
+        unconfigured = [
+            o for o in options if o["value"] not in self._configured_bridge_ids
+        ]
         if len(unconfigured) == 1 and len(options) == 1:
             self._esp_bridge_id = unconfigured[0]["value"]
             return await self._esp_bridge_health_check()
@@ -1061,6 +1195,26 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # Default to first unconfigured option so users don't have to deselect
         # the already-configured ✅ entry every time.
         default_value = unconfigured[0]["value"] if unconfigured else options[0]["value"]
+
+        legend_parts: list[str] = []
+        if "already_configured" in shown_states:
+            legend_parts.append("✅ already configured")
+        if "bonded" in shown_states:
+            legend_parts.append("🔒 bonded")
+        if "open_gatt" in shown_states:
+            legend_parts.append("🔓 unpaired")
+        if "online" in shown_states:
+            legend_parts.append("🟢 online")
+        if "offline" in shown_states:
+            legend_parts.append("⚪ offline")
+
+        pair_hint = (
+            "Entries without status icons are empty bridges in pair-mode. "
+            "Switch on the toothbrush you want to bond before submitting."
+            if "pair_required" in shown_states
+            else ""
+        )
+
         return self.async_show_form(
             step_id="esp_select_device",
             data_schema=vol.Schema(
@@ -1070,6 +1224,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     ),
                 }
             ),
+            description_placeholders={
+                "legend": " · ".join(legend_parts),
+                "pair_hint": pair_hint,
+            },
         )
 
     @staticmethod
@@ -1077,7 +1235,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         """Human-readable label for a bridge entry in the picker."""
         name = bridge_id or "default"
         if info.get("pair_capable") == "true":
-            return f"{name} — empty bridge, pair-mode required"
+            return name
 
         mac = info.get("mac", "")
         model = info.get("model", "")
@@ -1085,20 +1243,21 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         connected = info.get("ble_connected") == "true"
         paired = info.get("paired", "")
 
-        descriptor = " / ".join(p for p in (model, ble_name) if p)
-        parts = [name]
-        if descriptor:
-            parts.append(descriptor)
-        if mac and mac != "00:00:00:00:00:00":
-            parts.append(mac)
-        icons = []
+        icons: list[str] = []
         if paired == "true":
             icons.append("🔒")
         elif paired == "false":
             icons.append("🔓")
-        icons.append("🟢" if connected else "○")
-        parts.append(" ".join(icons))
-        return " — ".join(parts)
+        icons.append("🟢" if connected else "⚪")
+
+        descriptor = " / ".join(p for p in (model, ble_name) if p)
+        body_parts = [name]
+        if descriptor:
+            body_parts.append(descriptor)
+        if mac and mac != "00:00:00:00:00:00":
+            body_parts.append(mac.upper())
+
+        return f"{' '.join(icons)} {' — '.join(body_parts)}"
 
     async def _esp_bridge_health_check(self) -> FlowResult:
         """Run bridge health check and proceed to status step."""
@@ -1218,24 +1377,30 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
             paired_str = info.get("paired", "")
             if paired_str == "true":
-                paired_text = "Paired (bonded)"
+                paired_text = "Bonded (encrypted)"
             elif paired_str == "false":
-                paired_text = "Open GATT (no pairing)"
+                paired_text = "Unpaired (no encryption)"
             else:
                 paired_text = ""
 
-            rows = [
-                f"<tr><td><b>Version</b></td><td>v{version}</td></tr>",
-                f"<tr><td><b>BLE</b></td><td>{ble_status}</td></tr>",
-            ]
-            if mac and mac != "00:00:00:00:00:00":
-                rows.append(f"<tr><td><b>MAC</b></td><td><code>{mac}</code></td></tr>")
+            rows = [f"<tr><td><b>BLE</b></td><td>{ble_status}</td></tr>"]
             if paired_text:
-                rows.append(f"<tr><td><b>Security</b></td><td>{paired_text}</td></tr>")
+                rows.append(
+                    f"<tr><td><b>Security</b></td><td>{paired_text}</td></tr>"
+                )
+            if mac and mac != "00:00:00:00:00:00":
+                rows.append(
+                    f"<tr><td><b>Toothbrush MAC</b></td><td><code>{mac}</code></td></tr>"
+                )
+            rows.append(f"<tr><td><b>Version</b></td><td>v{version}</td></tr>")
 
-            status_text = "<table>" + "".join(rows) + "</table>"
+            status_text = f"<table><tbody>{''.join(rows)}</tbody></table>"
         else:
             status_text = "Diagnostic details not available."
+
+        target = self._esp_device_name or ""
+        if self._esp_bridge_id:
+            target = f"{target} / {self._esp_bridge_id}"
 
         step_id = (
             "esp_bridge_status_connected" if ble_connected else "esp_bridge_status"
@@ -1245,6 +1410,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({}),
             description_placeholders={
                 "device_name": self._esp_device_name or "",
+                "target": target,
                 "status": status_text,
             },
             errors=errors,
@@ -1445,7 +1611,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         device_info_text = self._get_device_info_text(self._fetched_data, self._address)
         services_text = self._get_service_status_text(
-            self._fetched_data.get("services", [])
+            self._fetched_data.get("services", []),
+            self._fetched_data.get("model") or "",
         )
 
         path = self._fetched_data.get("connection_path")

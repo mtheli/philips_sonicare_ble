@@ -374,7 +374,7 @@ Discovery-only — list all Sonicares in range without connecting.
 | `local_name` | Possibly empty |
 | `mfr_data` | Hex (Company-ID little-endian + payload), possibly empty |
 | `rssi` | Signed int as string |
-| `service_uuid` | `"legacy"` (`477ea600-…-0001`) or `"condor"` (`e50ba3c0-…`) |
+| `service_uuid` | `"classic"` (`477ea600-…-0001`) or `"condor"` (`e50ba3c0-…`) |
 
 **`scan_complete` fields:** `status="scan_complete"`, `count` (number of unique MACs)
 

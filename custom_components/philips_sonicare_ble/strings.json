@@ -32,32 +32,31 @@
         "description": "Select the ESPHome device that acts as the BLE bridge for your toothbrush.",
         "data": {
           "esp_device_name": "ESPHome Bridge Device"
-        },
-        "data_description": {
-          "esp_device_name": "The ESPHome device that runs the Philips Sonicare BLE bridge component."
         }
       },
       "esp_select_device": {
         "title": "Select BLE Device",
-        "description": "This ESP bridge has multiple Philips devices connected. Select the device you want to add.",
+        "description": "This ESP bridge has multiple Philips devices connected. Select the device you want to add.\n\n{legend}",
         "data": {
           "esp_bridge_id": "BLE Device"
         },
         "data_description": {
-          "esp_bridge_id": "Devices marked **empty bridge, pair-mode required** will trigger a pairing step — switch on the toothbrush you want to bond before submitting.\n\n✅ already configured · 🔒 bonded · 🔓 open GATT · 🟢 online · ○ offline"
+          "esp_bridge_id": "{pair_hint}"
         }
       },
       "esp_bridge_status": {
         "title": "Connection via ESP32 Bridge",
-        "description": "Setting up toothbrush via **ESP32 Bridge** ({device_name}).\n\n{status}\n\nMake sure the toothbrush is **turned on** (press button or pick up from charger) and **keep it on**, then click **Submit** to read its capabilities."
+        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n{status}\n\nMake sure the toothbrush is **turned on** (press button or pick up from charger) and **keep it on**, then click **Read capabilities** to finish setup.",
+        "submit": "Read capabilities"
       },
       "esp_bridge_status_connected": {
         "title": "Connection via ESP32 Bridge",
-        "description": "Setting up toothbrush via **ESP32 Bridge** ({device_name}).\n\n{status}\n\nThe bridge is already connected to your toothbrush. **Keep it switched on** — click **Submit** to read its capabilities and finish setup."
+        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n{status}\n\nThe bridge is already connected to your toothbrush. **Keep the toothbrush switched on** — click **Read capabilities** to finish setup.",
+        "submit": "Read capabilities"
       },
       "request_pair": {
         "title": "Pair toothbrush with bridge",
-        "description": "The bridge **{device_name}** has no toothbrush bonded yet.\n\n1. **Turn on** your Sonicare (press the power button) and hold it within ~1 m of the bridge.\n2. Click **Submit**. The bridge will scan for ~60 s and pair with the first Sonicare it finds.\n\n> ℹ️ If you have multiple toothbrushes nearby, only switch on the one you want to bond now.",
+        "description": "The bridge **{target}** has no toothbrush bonded yet.\n\n1. **Switch on** the Sonicare you want to bond and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.\n2. Click **Start pairing**. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.",
         "submit": "Start pairing"
       },
       "reset_bridge": {
@@ -81,7 +80,6 @@
       "not_a_sonicare": "Connected to the device, but no Philips Sonicare characteristics were found. Check that the address belongs to a Sonicare toothbrush.",
       "pairing_failed": "Device is still not paired. Make sure the toothbrush is awake and try pairing again.",
       "pair_timeout": "No Sonicare paired within the time window. Press the toothbrush's power button to wake it and try again.",
-      "no_esphome_devices": "No ESPHome devices found. Please set up an ESPHome device with the BLE bridge component first.",
       "unknown": "Unexpected error. Check the logs for details."
     },
     "abort": {
@@ -89,6 +87,7 @@
       "already_configured_detail": "This toothbrush is already configured via **{transport}** (status: {status}). Remove or re-enable the existing entry first.",
       "already_in_progress": "Configuration flow is already in progress.",
       "no_devices_found": "No supported Philips Sonicare devices were found on this ESP bridge.",
+      "no_esphome_devices": "No ESPHome bridge found. Set up an ESPHome device with the Sonicare BLE bridge component first — click the help icon (top-right) for the setup guide.",
       "not_supported": "This ESPHome device does not host a Philips Sonicare bridge component."
     }
   },

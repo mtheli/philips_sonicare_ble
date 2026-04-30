@@ -33,7 +33,7 @@ SVC_EXTENDED = "477ea600-a260-11e4-ae37-0002a5d50008"
 SVC_BYTESTREAM = "a651fff1-4074-4131-bce9-56d4261bc7b1"
 # Condor — newer-protocol transport service (HX742X / Series 7100 and later).
 # All named properties travel over framed messages on this one service;
-# Legacy-style per-property chars are absent on these devices.
+# Classic-style per-property chars are absent on these devices.
 SVC_CONDOR = "e50ba3c0-af04-4564-92ad-fef019489de6"
 
 # ── Condor Service Characteristics (e50b…) ───────────────────────────────────
