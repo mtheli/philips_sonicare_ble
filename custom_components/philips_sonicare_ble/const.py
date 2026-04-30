@@ -17,7 +17,7 @@ SONICARE_SERVICE_UUIDS = [
 SONICARE_MANUFACTURER_ID = 477
 
 # Minimum ESP bridge component version required for full functionality
-MIN_BRIDGE_VERSION = "1.2.2"
+MIN_BRIDGE_VERSION = "1.3.0"
 
 # ── Service UUIDs ────────────────────────────────────────────────────────────
 SVC_BATTERY = "0000180f-0000-1000-8000-00805f9b34fb"
@@ -35,6 +35,18 @@ SVC_BYTESTREAM = "a651fff1-4074-4131-bce9-56d4261bc7b1"
 # All named properties travel over framed messages on this one service;
 # Legacy-style per-property chars are absent on these devices.
 SVC_CONDOR = "e50ba3c0-af04-4564-92ad-fef019489de6"
+
+# ── Condor Service Characteristics (e50b…) ───────────────────────────────────
+# Framed transport: app→device on RX/TX_ACK, device→app on TX/RX_ACK.
+# Version + channel negotiation happens on SERVER_CFG / CLIENT_CFG.
+# PROTO_CFG (…0005) is absent on V4 firmware (e.g. HX742X 1.8.20.0).
+CHAR_RX = "e50b0001-af04-4564-92ad-fef019489de6"
+CHAR_RX_ACK = "e50b0002-af04-4564-92ad-fef019489de6"
+CHAR_TX = "e50b0003-af04-4564-92ad-fef019489de6"
+CHAR_TX_ACK = "e50b0004-af04-4564-92ad-fef019489de6"
+CHAR_PROTO_CFG = "e50b0005-af04-4564-92ad-fef019489de6"
+CHAR_SERVER_CFG = "e50b0006-af04-4564-92ad-fef019489de6"
+CHAR_CLIENT_CFG = "e50b0007-af04-4564-92ad-fef019489de6"
 
 # ── Standard BLE Characteristics ─────────────────────────────────────────────
 CHAR_BATTERY_LEVEL = "00002a19-0000-1000-8000-00805f9b34fb"
@@ -404,13 +416,13 @@ CHAR_SERVICE_MAP: dict[str, str] = {
     CHAR_EXTENDED_UNKNOWN_4410: SVC_EXTENDED,
     CHAR_SETTINGS: SVC_EXTENDED,
     # Condor protocol transport (e50b…) — newer models (HX742X and later)
-    "e50b0001-af04-4564-92ad-fef019489de6": SVC_CONDOR,
-    "e50b0002-af04-4564-92ad-fef019489de6": SVC_CONDOR,
-    "e50b0003-af04-4564-92ad-fef019489de6": SVC_CONDOR,
-    "e50b0004-af04-4564-92ad-fef019489de6": SVC_CONDOR,
-    "e50b0005-af04-4564-92ad-fef019489de6": SVC_CONDOR,
-    "e50b0006-af04-4564-92ad-fef019489de6": SVC_CONDOR,
-    "e50b0007-af04-4564-92ad-fef019489de6": SVC_CONDOR,
+    CHAR_RX: SVC_CONDOR,
+    CHAR_RX_ACK: SVC_CONDOR,
+    CHAR_TX: SVC_CONDOR,
+    CHAR_TX_ACK: SVC_CONDOR,
+    CHAR_PROTO_CFG: SVC_CONDOR,
+    CHAR_SERVER_CFG: SVC_CONDOR,
+    CHAR_CLIENT_CFG: SVC_CONDOR,
 }
 
 # ── Config ───────────────────────────────────────────────────────────────────

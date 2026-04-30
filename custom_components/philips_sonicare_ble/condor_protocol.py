@@ -27,22 +27,21 @@ import struct
 from typing import Any
 
 from .condor_adapter import map_port_props
+from .const import (
+    CHAR_CLIENT_CFG,
+    CHAR_PROTO_CFG,
+    CHAR_RX,
+    CHAR_RX_ACK,
+    CHAR_SERVER_CFG,
+    CHAR_TX,
+    CHAR_TX_ACK,
+    SVC_CONDOR,
+)
 from .exceptions import TransportError
 from .protocol import SonicareProtocol, UpdateCallback
 from .transport import SonicareTransport
 
 _LOGGER = logging.getLogger(__name__)
-
-
-# GATT service / characteristics — mirrors scripts/sonicare_scan.py
-SVC_CONDOR = "e50ba3c0-af04-4564-92ad-fef019489de6"
-CHAR_RX = "e50b0001-af04-4564-92ad-fef019489de6"
-CHAR_RX_ACK = "e50b0002-af04-4564-92ad-fef019489de6"
-CHAR_TX = "e50b0003-af04-4564-92ad-fef019489de6"
-CHAR_TX_ACK = "e50b0004-af04-4564-92ad-fef019489de6"
-CHAR_PROTO_CFG = "e50b0005-af04-4564-92ad-fef019489de6"
-CHAR_SERVER_CFG = "e50b0006-af04-4564-92ad-fef019489de6"
-CHAR_CLIENT_CFG = "e50b0007-af04-4564-92ad-fef019489de6"
 
 # Message types on the framed layer
 MSG_INITIALIZE_REQ = 1

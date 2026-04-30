@@ -844,5 +844,38 @@ class EspBridgeTransport(SonicareTransport):
         except HomeAssistantError:
             pass
 
+    async def set_pair_mode(self, enabled: bool, timeout_s: int = 60) -> None:
+        """Arm (enabled=True) or cancel (enabled=False) pair-mode on the bridge.
+
+        Mode B only — Mode A bridges accept the call but have nothing to do.
+        On enable, the bridge will scan via service-UUID and pair the first
+        Sonicare it finds, then emit a `pair_complete` status event with the
+        identity_address. On timeout: `pair_timeout`. Events are filtered by
+        bridge_id on the HA side.
+        """
+        if not self._setup_done:
+            raise TransportError("Not connected")
+        await self._hass.services.async_call(
+            "esphome",
+            self._svc_name("ble_pair_mode"),
+            {"enabled": enabled, "timeout_s": str(timeout_s)},
+            blocking=True,
+        )
+
+    async def request_unpair(self) -> None:
+        """Remove the BLE bond and clear the persisted identity on the bridge.
+
+        Bridge ends up with `pair_capable=true` again so the user can re-pair
+        another Sonicare.
+        """
+        if not self._setup_done:
+            raise TransportError("Not connected")
+        await self._hass.services.async_call(
+            "esphome",
+            self._svc_name("ble_unpair"),
+            {},
+            blocking=True,
+        )
+
     def set_disconnect_callback(self, cb: Callable[[], None]) -> None:
         self._disconnect_cb = cb

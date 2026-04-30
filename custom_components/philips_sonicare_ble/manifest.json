@@ -3,7 +3,8 @@
   "name": "Philips Sonicare",
   "after_dependencies": ["esphome"],
   "bluetooth": [
-    {"service_uuid": "477ea600-a260-11e4-ae37-0002a5d50001"}
+    {"service_uuid": "477ea600-a260-11e4-ae37-0002a5d50001"},
+    {"service_uuid": "e50ba3c0-af04-4564-92ad-fef019489de6"}
   ],
   "codeowners": ["@mtheli"],
   "config_flow": true,

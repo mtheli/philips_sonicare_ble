@@ -285,7 +285,7 @@ The integration communicates directly via BLE -- no cloud, no app required. All 
 
 The toothbrush exposes multiple GATT services with individual characteristics for each data point (battery, brushing state, pressure, brush head, etc.). Data is read directly from these characteristics and live updates are received via GATT notifications.
 
-For a detailed technical description of the BLE protocol including service UUIDs, characteristic reference, data formats, and enum values, see [PROTOCOL.md](docs/PROTOCOL.md).
+For a detailed technical description of the BLE protocol including service UUIDs, characteristic reference, data formats, and enum values, see [BLE_PROTOCOL.md](docs/BLE_PROTOCOL.md).
 
 ---
 

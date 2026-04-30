@@ -21,6 +21,7 @@ from .const import (
     CHAR_SERVICE_MAP,
 )
 from .coordinator import PhilipsSonicareCoordinator
+from .helpers import esphome_service_id
 from .transport import BleakTransport, EspBridgeTransport
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,12 +45,14 @@ def _async_link_via_esp_device(hass: HomeAssistant, entry: ConfigEntry) -> None:
     esp_device_name = entry.data[CONF_ESP_DEVICE_NAME]
     dev_reg = dr.async_get(hass)
 
-    # Find the ESPHome config entry matching our bridge device name
+    # Find the ESPHome config entry matching our bridge device name.
+    # ESPHome stores device_name in mDNS form (atom-lite); we store it
+    # in service-id form (atom_lite). Normalize the entry side and compare.
     esp_mac: str | None = None
-    normalized = esp_device_name.replace("_", "-")
+    target = esphome_service_id(esp_device_name)
     for esphome_entry in hass.config_entries.async_entries("esphome"):
-        entry_name = esphome_entry.data.get("device_name", "")
-        if entry_name == esp_device_name or entry_name == normalized:
+        entry_name = esphome_service_id(esphome_entry.data.get("device_name", ""))
+        if entry_name == target:
             esp_mac = esphome_entry.unique_id
             break
 

@@ -21,7 +21,7 @@ import sys
 import time
 import warnings
 from bleak import BleakClient, BleakScanner
-from bleak.exc import BleakCharacteristicNotFoundError
+from bleak.exc import BleakCharacteristicNotFoundError, BleakError
 
 LEGACY_PREFIX = "477ea600"
 NEWER_PREFIX = "e50ba3c0"
@@ -525,67 +525,8 @@ class NewerProtocolProbe:
             return None
         return self.server_cfg_data
 
-    async def run(self):
-        """Run the full newer-protocol probe."""
-        print("\n--- Newer Protocol Probe ---\n")
-
-        # Read protocol config (optional — not present on all firmware versions).
-        # When absent, fall back to the CLIENT_CFG / SERVER_CFG negotiation path below.
-        try:
-            cfg = await self.client.read_gatt_char(CHAR_PROTO_CFG)
-            print(f"  Protocol Config: {cfg.hex()}")
-            if len(cfg) >= 3:
-                print(f"    Version={cfg[0]}, InBuf={cfg[1]}, OutBuf={cfg[2]}")
-        except BleakCharacteristicNotFoundError:
-            print("  Protocol Config: characteristic absent — using negotiation fallback")
-
-        # SERVER_CFG must be subscribed before any CLIENT_CFG write so we
-        # don't miss the response. Subscribing to TX/RX_ACK is deferred
-        # until after phase-1 negotiation: some firmwares (HX742X 1.8.20.0)
-        # drop the connection if TX is enabled too early.
-
-        print("\n  [1/6] Subscribe to Server Config...")
-        try:
-            await asyncio.wait_for(
-                self.client.start_notify(CHAR_SERVER_CFG, self._on_server_cfg),
-                timeout=5.0,
-            )
-        except asyncio.TimeoutError:
-            print("      !!! Timeout subscribing to Server Config — aborting probe")
-            return
-        except Exception as e:
-            print(f"      !!! Error subscribing to Server Config: {e} — aborting probe")
-            return
-        if not self.client.is_connected:
-            print("      !!! Disconnected during Server Config subscribe — aborting probe")
-            return
-
-        # Phase 1 — version negotiation. Device replies with a single byte
-        # equal to the chosen transport version.
-        print("\n  [2/6] Version negotiation...")
-        self.server_cfg_event.clear()
-        try:
-            await self.client.write_gatt_char(
-                CHAR_CLIENT_CFG, self.NEG_VERSIONS, response=False
-            )
-        except Exception as e:
-            print(f"      !!! Write to CLIENT_CFG failed: {e} — aborting probe")
-            return
-        version_data = await self._await_server_cfg(expected_len=1)
-        if version_data is None:
-            print("      !!! Aborting — no usable version response")
-            return
-        chosen_version = version_data[0]
-        print(f"      Chosen version: {chosen_version}")
-        if chosen_version != 4:
-            print(f"      !!! Only transport v4 is implemented here. Aborting.")
-            return
-        if not self.client.is_connected:
-            print("      !!! Disconnected after version negotiation — aborting probe")
-            return
-
-        # Subscribe to data + ack channels before sending anything else.
-        print("\n  [3/6] Subscribe to TX and RX ACK...")
+    async def _subscribe_data_channels(self) -> bool:
+        """Subscribe to TX and RX_ACK. Common to both V3 and V4."""
         for uuid, cb, label in [
             (CHAR_TX, self._on_tx, "TX"),
             (CHAR_RX_ACK, self._on_rx_ack, "RX ACK"),
@@ -593,30 +534,115 @@ class NewerProtocolProbe:
             try:
                 await asyncio.wait_for(self.client.start_notify(uuid, cb), timeout=5.0)
             except asyncio.TimeoutError:
-                print(f"      !!! Timeout subscribing to {label} ({uuid}) — aborting probe")
-                return
+                print(f"      !!! Timeout subscribing to {label} ({uuid})")
+                return False
             except Exception as e:
-                print(f"      !!! Error subscribing to {label} ({uuid}): {e} — aborting probe")
-                return
+                print(f"      !!! Error subscribing to {label} ({uuid}): {e}")
+                return False
             if not self.client.is_connected:
-                print(f"      !!! Disconnected during subscribe to {label} — aborting probe")
-                return
+                print(f"      !!! Disconnected during subscribe to {label}")
+                return False
+        return True
+
+    async def _open_data_channel(self) -> bool:
+        """Send the BIT_START packet on RX, wait for RX_ACK. Common to V3 + V4."""
+        try:
+            await self._send_handshake()
+        except Exception as e:
+            print(f"      !!! Channel-open write failed: {e}")
+            return False
+        try:
+            await asyncio.wait_for(self.handshake_ack_event.wait(), 5.0)
+        except asyncio.TimeoutError:
+            print("      !!! No channel-open ACK on RX_ACK")
+            return False
+        return self.client.is_connected
+
+    async def _handshake_v3(self, cfg_bytes: bytes) -> bool:
+        """V3 handshake: no version/channel negotiation, PROTO_CFG is static.
+
+        Packet size is fixed at 20 bytes per the V3 spec. Buffer sizes are
+        reported by PROTO_CFG but the transport does not exchange anything
+        with the device — we just subscribe the data channels and open
+        channel 0. Verified on Philips OneBlade QP4530 (2026-04-24).
+        """
+        self.max_packet_size = 20
+        print(f"      V3 static config → packet_size=20, in_buf={cfg_bytes[1]}, "
+              f"out_buf={cfg_bytes[2]}")
+
+        print("\n  [V3 1/2] Subscribe to TX and RX ACK...")
+        if not await self._subscribe_data_channels():
+            return False
+
+        print("\n  [V3 2/2] Open data channel...")
+        if not await self._open_data_channel():
+            return False
+        print("      Data channel open.")
+        return True
+
+    async def _handshake_v4(self) -> bool:
+        """V4 handshake: version-negotiation → channel-config → channel-open.
+
+        SERVER_CFG must be subscribed before any CLIENT_CFG write so we
+        don't miss the response. Subscribing to TX/RX_ACK is deferred
+        until after phase-1 negotiation: some firmwares (HX742X 1.8.20.0)
+        drop the connection if TX is enabled too early.
+        """
+        print("\n  [V4 1/5] Subscribe to Server Config...")
+        try:
+            await asyncio.wait_for(
+                self.client.start_notify(CHAR_SERVER_CFG, self._on_server_cfg),
+                timeout=5.0,
+            )
+        except asyncio.TimeoutError:
+            print("      !!! Timeout subscribing to Server Config")
+            return False
+        except Exception as e:
+            print(f"      !!! Error subscribing to Server Config: {e}")
+            return False
+        if not self.client.is_connected:
+            return False
+
+        # Phase 1 — version negotiation. Device replies with a single byte
+        # equal to the chosen transport version.
+        print("\n  [V4 2/5] Version negotiation...")
+        self.server_cfg_event.clear()
+        try:
+            await self.client.write_gatt_char(
+                CHAR_CLIENT_CFG, self.NEG_VERSIONS, response=False
+            )
+        except Exception as e:
+            print(f"      !!! Write to CLIENT_CFG failed: {e}")
+            return False
+        version_data = await self._await_server_cfg(expected_len=1)
+        if version_data is None:
+            return False
+        chosen_version = version_data[0]
+        print(f"      Chosen version: {chosen_version}")
+        if chosen_version != 4:
+            print(f"      !!! Only transport v4 is implemented in this branch.")
+            return False
+        if not self.client.is_connected:
+            return False
+
+        print("\n  [V4 3/5] Subscribe to TX and RX ACK...")
+        if not await self._subscribe_data_channels():
+            return False
 
         # Phase 2 — channel configuration. Device replies with 6 bytes:
         # 3× little-endian uint16 = (max_packet_size, ch0_buf, ch1_buf).
-        print("\n  [4/6] Channel configuration...")
+        print("\n  [V4 4/5] Channel configuration...")
         self.server_cfg_event.clear()
         try:
             await self.client.write_gatt_char(
                 CHAR_CLIENT_CFG, self.CFG_REQUEST, response=False
             )
         except Exception as e:
-            print(f"      !!! Channel-config request failed: {e} — aborting probe")
-            return
+            print(f"      !!! Channel-config request failed: {e}")
+            return False
         cfg_data = await self._await_server_cfg(expected_len=6)
         if cfg_data is None:
-            print("      !!! Aborting — no usable channel-config response")
-            return
+            return False
         max_pkt, ch0_buf, ch1_buf = struct.unpack("<HHH", cfg_data)
         print(f"      max_packet_size={max_pkt}, ch0_buf={ch0_buf}, ch1_buf={ch1_buf}")
         with warnings.catch_warnings():
@@ -627,30 +653,52 @@ class NewerProtocolProbe:
         self.max_packet_size = max(min(max_pkt, link_mtu - 3), 4)
         print(f"      effective max_packet_size={self.max_packet_size} (link MTU={link_mtu})")
         if not self.client.is_connected:
-            print("      !!! Disconnected after channel config — aborting probe")
-            return
+            return False
 
         # Phase 3 — open the data channel with an empty start packet. The
         # device acks it on RX_ACK; until that ack arrives, any framed data
         # we send would be discarded.
-        print("\n  [5/6] Open data channel...")
-        try:
-            await self._send_handshake()
-        except Exception as e:
-            print(f"      !!! Channel-open write failed: {e} — aborting probe")
-            return
-        try:
-            await asyncio.wait_for(self.handshake_ack_event.wait(), 5.0)
-        except asyncio.TimeoutError:
-            print("      !!! No channel-open ACK on RX_ACK — aborting probe")
-            return
-        if not self.client.is_connected:
-            print("      !!! Disconnected after channel open — aborting probe")
-            return
+        print("\n  [V4 5/5] Open data channel...")
+        if not await self._open_data_channel():
+            return False
         print("      Data channel open.")
+        return True
 
-        # Phase 4 — drive the framed protocol now that the transport is up.
-        print("\n  [6/6] Framed exchange...")
+    async def run(self):
+        """Run the full newer-protocol probe."""
+        print("\n--- Newer Protocol Probe ---\n")
+
+        # PROTO_CFG detection selects V3 vs V4:
+        #   - Present + byte[0] == 3 → V3 path (OneBlade QP4530 confirmed; no
+        #     known V3 Sonicare as of 2026-04-24, but the transport layer is
+        #     identical across the Philips platform so this should just work)
+        #   - Absent or byte[0] != 3 → V4 path (HX742X etc)
+        version_hint: int | None = None
+        cfg_bytes: bytes = b""
+        try:
+            cfg_bytes = bytes(await self.client.read_gatt_char(CHAR_PROTO_CFG))
+            print(f"  Protocol Config: {cfg_bytes.hex()}")
+            if len(cfg_bytes) >= 3:
+                print(f"    Version={cfg_bytes[0]}, InBuf={cfg_bytes[1]}, OutBuf={cfg_bytes[2]}")
+                version_hint = cfg_bytes[0]
+        except BleakCharacteristicNotFoundError:
+            print("  Protocol Config: characteristic absent — assuming V4")
+        except BleakError as e:
+            print(f"  Protocol Config read failed: {e} — assuming V4")
+
+        if version_hint == 3:
+            print("\n  → Using V3 handshake (static PROTO_CFG, no negotiation)")
+            if not await self._handshake_v3(cfg_bytes):
+                print("      !!! V3 handshake failed — aborting probe")
+                return
+        else:
+            print("\n  → Using V4 handshake (CLIENT_CFG/SERVER_CFG negotiation)")
+            if not await self._handshake_v4():
+                print("      !!! V4 handshake failed — aborting probe")
+                return
+
+        # Framed protocol now up — identical for both V3 and V4.
+        print("\n  -- Framed exchange --")
 
         print("\n  -- Initialize --")
         await self._send_and_wait(MSG_INITIALIZE_REQ)
