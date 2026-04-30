@@ -52,6 +52,8 @@ See [Configuration](#configuration) for setup instructions.
 | **DiamondClean Smart** | | | |
 | [HX992X](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app) | :white_check_mark: | :white_check_mark: | Maintainer |
 | **DiamondClean 9000** | | | |
+| [HX960X](https://www.philips.de/c-p/HX9601_03/sonicare-diamondclean-9000-elektrische-zahnbuerste-mit-app) | :white_check_mark: | — | Community ([#9](https://github.com/mtheli/philips_sonicare_ble/issues/9)) |
+| HX991B | :white_check_mark: | — | Community ([#9](https://github.com/mtheli/philips_sonicare_ble/issues/9#issuecomment-4321642114)) |
 | [HX991M](https://www.usa.philips.com/c-p/HX9911_91/9000-series-sonic-electric-toothbrush) | :white_check_mark: | :white_check_mark: | Community ([forum](http://community-smarthome.com/t/philips-sonicare-ble-zahnbuerste-in-home-assistant-mit-echtzeit-sensoren/10555/17), [#7](https://github.com/mtheli/philips_sonicare_ble/issues/7)) |
 | **DiamondClean Prestige** | | | |
 | [HX999X](https://www.usa.philips.com/c-p/HX9990_11/sonicare-9900-prestige-power-toothbrush-with-senseiq) | :white_check_mark: | :white_check_mark: | Maintainer, Community ([forum](https://community.home-assistant.io/t/philips-sonicare-ble-toothbrush-integration-with-30-sensors/999515/5)) |
