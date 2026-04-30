@@ -10,3 +10,6 @@ build/
 # Local-only planning / notes
 TODO.md
 NOTES.md
+
+# Generated artifact from scripts/render_config_flow.py — regenerable
+docs/config_flow.html

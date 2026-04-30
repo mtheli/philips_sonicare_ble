@@ -271,6 +271,52 @@ If data still doesn't flow:
 
 ---
 
+## Events
+
+The bridge publishes two event types on the Home Assistant event bus. Both can be
+watched live in **Developer Tools → Events** by entering the event name and clicking
+**Start Listening**.
+
+### `esphome.philips_sonicare_ble_data`
+
+GATT-side traffic — notifications, read results, and read errors.
+
+| Field        | When set                            | Example                                  |
+|--------------|-------------------------------------|------------------------------------------|
+| `mac`        | Always (the brush MAC)              | `24:E5:AA:14:9B:86`                      |
+| `uuid`       | Characteristic UUID                 | `477ea600-a260-11e4-ae37-0002a5d54010`   |
+| `payload`    | Hex-encoded bytes (notify or read)  | `02`                                     |
+| `error`      | Read failure reason (mutually exclusive with `payload`) | `auth_required` |
+| `bridge_id`  | Multi-device setups — identifies which bridge fired the event | `prestige` |
+
+### `esphome.philips_sonicare_ble_status`
+
+Bridge lifecycle — heartbeats, info responses, ready/connected/disconnected
+transitions. The exact field set depends on the value of `status`.
+
+| `status`        | Meaning                                                     | Additional fields                                |
+|-----------------|-------------------------------------------------------------|--------------------------------------------------|
+| `heartbeat`     | Periodic keep-alive (every ~15 s)                           | `version`, `uptime_s`, `ble_connected`, `mac`    |
+| `info`          | Response to a `ble_get_info` service call                   | `version`, `uptime_s`, `mac`, `identity_address`, `paired`, `ble_connected`, `mode`, `pair_capable`, `pair_mode_active`, `bridge_id` |
+| `ready`         | GATT discovery complete on the brush                        | `mac`, `bridge_id`, `version`, `uptime_s`        |
+| `connected`     | BLE link came up (before service discovery completes)       | `mac`, `bridge_id`                               |
+| `disconnected`  | BLE link dropped                                            | `mac`, `bridge_id`                               |
+| `pair_complete` | Pairing succeeded (Mode-B / Open-GATT)                      | `mac`, `bonding`, `model`, `ble_name`, `bridge_id` |
+| `pair_timeout`  | Pair-mode window expired without success                    | `bridge_id`                                      |
+| `scan_result`   | One advertised device seen during `ble_scan`                | `mac`, `name`, `rssi`, `bridge_id`               |
+
+**Filtering tip**: in multi-bridge setups, every event carries a `bridge_id` field
+(`""` for legacy single-bridge configs). To watch a single device, filter on
+`bridge_id == "<your_id>"` in your automation/script. The integration's
+`EspBridgeTransport` does this internally.
+
+**Heartbeat-driven restart detection**: the integration tracks `uptime_s`
+across heartbeats; a regression flags an ESP restart and triggers BLE
+re-subscription. So if you spot the bridge boot-time sensor jumping in HA,
+that is what the heartbeat told us.
+
+---
+
 ## Multi-Device Setup
 
 A single ESP32 can bridge **multiple** Sonicare toothbrushes. Each device needs its own `ble_client` and `philips_sonicare` entry with a unique `bridge_id`:
