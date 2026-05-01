@@ -59,6 +59,11 @@ void PhilipsSonicare::dump_config() {
 void PhilipsSonicareStandalone::setup() {
   // Restore identity address (if any) before tracker logic kicks in
   this->pref_ = global_preferences->make_preference<uint64_t>(this->pref_ns_);
+  // Capture YAML provenance BEFORE any branch — at this point a non-zero
+  // address_ can only have come from to_code()'s set_address(YAML_MAC).
+  // NVS-restored addresses are loaded later inside the else branch. The flag
+  // governs the unpair-callback's behavior (Fixed-MAC vs Auto-Discovery).
+  this->has_yaml_mac_ = (this->address_ != 0);
   if (this->address_ != 0) {
     ESP_LOGI(this->log_tag_.c_str(), "Using configured MAC address — MAC mode");
     this->uuid_scan_mode_ = false;
@@ -89,11 +94,27 @@ void PhilipsSonicareStandalone::setup() {
                (uint8_t)(a >> 16), (uint8_t)(a >> 8), (uint8_t)(a));
       this->coord_->set_identity_address(mac);
     }
-    // Wipe NVS + reset to UUID-scan when HA requests unpair.
+    // Bond removed by Coordinator::unpair() — react based on identity source:
+    //
+    // - Fixed-MAC (YAML mac_address:): keep targeting the configured MAC,
+    //   wipe NVS as a precaution (was likely empty), don't touch address_.
+    //   The brush re-bonds automatically on the next connect (mirrors Mode A).
+    //
+    // - Auto-Discovery (no YAML MAC): clear runtime identity, drop back to
+    //   UUID-scan mode and wait for the next ble_pair_mode arming.
     this->coord_->set_unpair_cb([this]() {
       uint64_t prev = this->address_;
       uint64_t zero = 0;
       this->pref_.save(&zero);
+      if (this->has_yaml_mac_) {
+        ESP_LOGW(this->log_tag_.c_str(),
+                 "Bond cleared, YAML MAC %02X:%02X:%02X:%02X:%02X:%02X "
+                 "stays — will re-bond on next connect",
+                 (uint8_t)(prev >> 40), (uint8_t)(prev >> 32),
+                 (uint8_t)(prev >> 24), (uint8_t)(prev >> 16),
+                 (uint8_t)(prev >> 8),  (uint8_t)(prev));
+        return;
+      }
       this->uuid_scan_mode_ = true;
       this->set_address(0);
       if (prev != 0) {

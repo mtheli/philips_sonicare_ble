@@ -71,7 +71,15 @@ void SonicareBridge::loop() {
   if (this->coord_ == nullptr)
     return;
 
+  // Drive the Coordinator's timer state machine from here too — the Worker's
+  // own loop() can starve briefly during BLE teardown (close+disconnect+bond
+  // remove sequence), and the unpair-drain timer must fire on time so the
+  // `unpaired` status event reaches HA before its 4 s timeout. on_loop is
+  // idempotent (each timer check toggles state once), so duplicate ticks
+  // from Worker + Bridge are harmless.
   uint32_t now = millis();
+  this->coord_->on_loop(now);
+
   if ((now - this->last_heartbeat_ms_) < HEARTBEAT_INTERVAL_MS)
     return;
 

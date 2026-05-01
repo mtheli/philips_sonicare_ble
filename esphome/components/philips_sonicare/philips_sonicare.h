@@ -76,6 +76,14 @@ class PhilipsSonicareStandalone : public esp32_ble_client::BLEClientBase {
   std::string log_tag_;  // fallback to file-scope TAG until set
   bool uuid_scan_mode_{true};
   bool enabled_{true};
+  // Captured at setup() before any source-of-address logic: true when
+  // mac_address: was set in YAML (Fixed-MAC pinning). Used by the unpair
+  // callback to mirror Mode A behavior — bond removed, but the YAML MAC
+  // stays as the targeting source so the brush re-bonds automatically on
+  // the next connection. Without this flag we'd fall through to the
+  // Auto-Discovery path and clear address_ + flip uuid_scan_mode_ on, which
+  // would leave the bridge dormant until reboot.
+  bool has_yaml_mac_{false};
   uint32_t pref_ns_{0};
   ESPPreferenceObject pref_;
 };

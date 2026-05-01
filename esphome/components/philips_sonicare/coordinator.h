@@ -20,7 +20,7 @@ namespace philips_sonicare {
 class SonicareBridge;  // forward — defined in bridge.h
 
 // HA event names — used by both Worker and Bridge
-static const char *const PHILIPS_SONICARE_VERSION = "1.3.1";
+static const char *const PHILIPS_SONICARE_VERSION = "1.3.2";
 static const char *const EVENT_STATUS = "esphome.philips_sonicare_ble_status";
 static const char *const EVENT_DATA = "esphome.philips_sonicare_ble_data";
 static const char *const EVENT_SERVICES = "esphome.philips_sonicare_ble_services";
@@ -147,6 +147,15 @@ class SonicareCoordinator {
   // Pair-mode (Mode B only): UUID-scan only happens while this is true.
   bool pair_mode_active_{false};
   uint32_t pair_mode_until_ms_{0};
+  // Unpair drain window: after unpair() force-disables the BLE client and wipes
+  // the bond, on_loop() waits this long before re-enabling and emitting the
+  // `unpaired` status — so the GAP_DISCONNECT and any in-flight notifications
+  // have time to settle. Without the wait, a fast re-enable raced the disconnect
+  // and could wedge the BLE stack until reboot.
+  bool unpair_pending_{false};
+  uint32_t unpair_until_ms_{0};
+  std::string unpair_previous_mac_;
+  static const uint32_t UNPAIR_DRAIN_MS = 2000;
   // Scan-only mode (Mode B only): observe but never connect.
   bool scan_mode_active_{false};
   uint32_t scan_mode_until_ms_{0};

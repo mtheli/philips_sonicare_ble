@@ -1,5 +1,23 @@
 # ESP Bridge Changelog
 
+## v1.3.2 — 2026-05-01
+
+- Robust unpair: failed `ble_unpair` no longer wedges the BLE stack until
+  reboot. Use the persistent `identity_address_` as the source of truth for
+  `esp_ble_remove_bond_device()` (the live `parent_->get_remote_bda()` was
+  stale or zero during teardown), check the return code instead of silently
+  proceeding, drain queued GATT calls, and defer the BLE-client re-enable +
+  `unpaired` event by 2 s so the GAP disconnect and any in-flight
+  notifications can settle. The `unpaired` event now reliably fires after
+  the bridge is actually back in UUID-scan mode.
+- Safety-net bond-list sweep — filtered to entries matching the brush's
+  identity only. The ESP NVS bond list is global across all BLE clients on
+  the chip (multiple `philips_sonicare:` bridges, `philips_shaver:`, etc.),
+  so unfiltered iteration would silently un-bond unrelated devices.
+- Bumps `MIN_BRIDGE_VERSION` to `1.3.2` on the HA side — the unpair-wedge
+  has bricked entry-removal flows for affected users; the integration warns
+  if a bridge older than 1.3.2 is in use.
+
 ## v1.3.1 — 2026-05-01
 
 - Per-instance log tag for multi-bridge setups: every `ESP_LOG` call routes

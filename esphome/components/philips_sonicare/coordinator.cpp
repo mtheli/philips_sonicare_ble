@@ -32,6 +32,34 @@ static espbt::ESPBTUUID parse_uuid(const std::string &uuid_str) {
   return espbt::ESPBTUUID::from_raw(uuid_str);
 }
 
+// Parse "AA:BB:CC:DD:EE:FF" into a 6-byte BDA. Returns true on success.
+// File-scope helper so unpair() can use the persistent identity_address_ string
+// as the source of truth instead of parent_->get_remote_bda() (unreliable
+// during teardown — zero when not connected, stale when disconnect already
+// in flight).
+static bool parse_mac_to_bda(const std::string &mac, uint8_t out[6]) {
+  if (mac.length() != 17)
+    return false;
+  auto hex_nibble = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+  };
+  for (int i = 0; i < 6; i++) {
+    int hi_pos = i * 3;
+    int lo_pos = hi_pos + 1;
+    if (i < 5 && mac[hi_pos + 2] != ':')
+      return false;
+    int h = hex_nibble(mac[hi_pos]);
+    int l = hex_nibble(mac[lo_pos]);
+    if (h < 0 || l < 0)
+      return false;
+    out[i] = (uint8_t)((h << 4) | l);
+  }
+  return true;
+}
+
 void SonicareCoordinator::emit_(const std::string &event_type,
                                   const std::map<std::string, std::string> &data) {
   if (this->bridge_ != nullptr)
@@ -83,6 +111,20 @@ void SonicareCoordinator::apply_smp_params_() {
 }
 
 void SonicareCoordinator::on_loop(uint32_t now_ms) {
+  // Unpair drain window — re-enable + emit `unpaired` after the BLE stack
+  // had time to finish GAP_DISCONNECT and drain in-flight notifications.
+  if (this->unpair_pending_ && now_ms >= this->unpair_until_ms_) {
+    this->unpair_pending_ = false;
+    this->unpair_until_ms_ = 0;
+    if (this->set_enabled_cb_)
+      this->set_enabled_cb_(true);
+    this->emit_status_("unpaired", {{"previous_mac", this->unpair_previous_mac_}});
+    ESP_LOGI(this->log_tag_.c_str(),
+             "Unpair complete — back to UUID-scan mode (was: %s)",
+             this->unpair_previous_mac_.empty() ? "<none>"
+                                                : this->unpair_previous_mac_.c_str());
+    this->unpair_previous_mac_.clear();
+  }
   // Auth failure backoff recovery
   if (this->backoff_until_ms_ != 0 && now_ms >= this->backoff_until_ms_) {
     ESP_LOGI(this->log_tag_.c_str(), "Auth backoff expired — re-enabling BLE");
@@ -252,35 +294,108 @@ void SonicareCoordinator::set_pair_mac(const std::string &mac,
 
 void SonicareCoordinator::unpair() {
   std::string previous_mac = this->identity_address_;
-  ESP_LOGW(this->log_tag_.c_str(), "Unpair requested — clearing bond and identity (was: %s)",
+  ESP_LOGW(this->log_tag_.c_str(),
+           "Unpair requested — removing bond and clearing identity (was: %s)",
            previous_mac.empty() ? "<none>" : previous_mac.c_str());
-  if (this->parent_ != nullptr) {
-    auto *bda = this->parent_->get_remote_bda();
-    esp_ble_remove_bond_device(bda);
+
+  // Parse identity_address_ once — used for both the targeted remove and the
+  // safety-net sweep. The ESP NVS bond list is GLOBAL across all BLE clients
+  // on this chip (other philips_sonicare bridges, philips_shaver, etc.), so
+  // every bond touch MUST filter to bonds that match THIS brush's identity.
+  // An unfiltered iterate-and-remove would silently un-bond unrelated devices.
+  uint8_t our_bda[6] = {0};
+  bool bda_valid = false;
+  if (!previous_mac.empty()) {
+    if (parse_mac_to_bda(previous_mac, our_bda)) {
+      bda_valid = true;
+    } else {
+      ESP_LOGW(this->log_tag_.c_str(),
+               "Cannot parse identity '%s' to BDA — skipping bond cleanup",
+               previous_mac.c_str());
+    }
   }
+
+  // Step 1+2: targeted bond removal using the persistent identity.
+  // parent_->get_remote_bda() is unreliable during teardown (zero when not
+  // connected, stale when disconnect already in flight); the identity is
+  // correct.
+  if (bda_valid) {
+    esp_err_t err = esp_ble_remove_bond_device(our_bda);
+    if (err == ESP_OK) {
+      ESP_LOGI(this->log_tag_.c_str(), "Bond removed for %s", previous_mac.c_str());
+    } else {
+      ESP_LOGW(this->log_tag_.c_str(),
+               "esp_ble_remove_bond_device(%s) failed: %d (%s)",
+               previous_mac.c_str(), err, esp_err_to_name(err));
+    }
+  }
+
+  // Step 3: safety-net sweep — ONLY entries whose BDA matches our identity.
+  // Catches edge cases where identity_address_ was stored in a slightly
+  // different format than what the bond list returns. Other bonds on the
+  // same ESP must stay intact.
+  if (bda_valid) {
+    int total = esp_ble_get_bond_device_num();
+    if (total > 0) {
+      auto *list = (esp_ble_bond_dev_t *) malloc(sizeof(esp_ble_bond_dev_t) * total);
+      if (list != nullptr) {
+        esp_err_t list_err = esp_ble_get_bond_device_list(&total, list);
+        if (list_err == ESP_OK) {
+          for (int i = 0; i < total; i++) {
+            if (memcmp(list[i].bd_addr, our_bda, 6) != 0)
+              continue;  // belongs to another component — leave alone
+            esp_err_t rm_err = esp_ble_remove_bond_device(list[i].bd_addr);
+            if (rm_err == ESP_OK) {
+              ESP_LOGI(this->log_tag_.c_str(),
+                       "Bond-sweep removed lingering entry for %s",
+                       previous_mac.c_str());
+            } else {
+              ESP_LOGW(this->log_tag_.c_str(),
+                       "Bond-sweep failed for %s: %d (%s)",
+                       previous_mac.c_str(), rm_err, esp_err_to_name(rm_err));
+            }
+          }
+        }
+        free(list);
+      }
+    }
+  }
+
+  // Worker wipes NVS-persisted identity + resets uuid_scan_mode_.
   if (this->unpair_cb_)
-    this->unpair_cb_();  // Worker wipes NVS + resets uuid_scan_mode_
+    this->unpair_cb_();
   this->identity_address_.clear();
-  // Synchronously clear cached connection state so a probe between
-  // unpair and the actual GAP_DISCONNECT_EVT doesn't report a half-
-  // alive bridge (stale connected_ + model + name with mac=00:00).
+
+  // Synchronously clear cached connection state so a probe between unpair and
+  // the actual GAP_DISCONNECT_EVT doesn't report a half-alive bridge (stale
+  // connected_ + model + name with mac=00:00).
   this->connected_ = false;
   this->services_discovered_ = false;
   this->model_number_.clear();
   this->remote_name_.clear();
-  // Subscriptions are tied to the previous brush's char handles (HA
-  // registered them against an entry that's now gone). After a brush
-  // swap they'd resubscribe against stale UUIDs and emit a flurry of
-  // "characteristic not found" warnings — clear them here so the new
-  // brush starts clean.
+  // Subscriptions are tied to the previous brush's char handles (HA registered
+  // them against an entry that's now gone). After a brush swap they'd
+  // resubscribe against stale UUIDs and emit a flurry of "characteristic not
+  // found" warnings — clear here so the new brush starts clean.
   this->desired_subscriptions_.clear();
-  // Force a disconnect so the next reconnect goes through the (now empty)
-  // identity → UUID-scan path.
-  if (this->set_enabled_cb_) {
-    this->set_enabled_cb_(false);
-    this->set_enabled_cb_(true);
+  // Drop any queued GATT calls — they'd race the disconnect.
+  if (!this->pending_calls_.empty()) {
+    ESP_LOGW(this->log_tag_.c_str(),
+             "Discarding %u queued GATT call(s) on unpair",
+             (unsigned) this->pending_calls_.size());
+    this->pending_calls_.clear();
   }
-  this->emit_status_("unpaired", {{"previous_mac", previous_mac}});
+
+  // Step 4: force a disconnect, but defer re-enable + the unpaired event by
+  // UNPAIR_DRAIN_MS so the BLE stack has time to finish GAP_DISCONNECT and
+  // any in-flight notifications drain. The state machine completes in
+  // on_loop(); a sync re-enable here raced the disconnect and could wedge
+  // the BLE stack until reboot.
+  if (this->set_enabled_cb_)
+    this->set_enabled_cb_(false);
+  this->unpair_previous_mac_ = previous_mac;
+  this->unpair_pending_ = true;
+  this->unpair_until_ms_ = millis() + UNPAIR_DRAIN_MS;
 }
 
 std::string SonicareCoordinator::get_device_mac() {
