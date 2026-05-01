@@ -57,7 +57,7 @@ discovery result to the GATT cache.
 ### Tested configurations
 
 All tests on ESPHome 2026.3.1, M5Stack Atom Lite (ESP32 rev1.1), Sonicare
-HX992B (`24:E5:AA:14:9B:86`).
+HX992B (`AA:BB:CC:DD:EE:FF`).
 
 | Setup | Framework | Result |
 |-------|-----------|--------|

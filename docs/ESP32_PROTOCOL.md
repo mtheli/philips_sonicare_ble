@@ -4,11 +4,30 @@ This document describes the Home Assistant–facing protocol of the
 `philips_sonicare` ESPHome component: which services it registers, what
 arguments they take, and which events the bridge fires in response.
 
-The bridge is a thin façade — every action HA wants the ESP to perform is an
+The bridge is a thin facade — every action HA wants the ESP to perform is an
 `esphome.<device>_<service>` call, every reply comes back as a Home Assistant
 event the integration listens for. There is no direct return value.
 
 > Component version: **1.3.0**
+
+## Architecture
+
+```
+┌─────────────┐   BLE    ┌─────────┐  WiFi/API  ┌──────────────────┐
+│ Toothbrush  │◄────────►│  ESP32  │◄──────────►│ Home Assistant   │
+│             │   open   │  Bridge │  ESPHome   │ Philips Sonicare │
+│             │   GATT   │         │  services  │ Integration      │
+└─────────────┘          └─────────┘            └──────────────────┘
+```
+
+- **HA → ESP32**: ESPHome service calls (`ble_read_char`, `ble_subscribe`,
+  `ble_write_char`, `ble_unsubscribe`, `ble_get_info`, `ble_list_services`,
+  `ble_pair_mode`, `ble_unpair`, `ble_scan`, `ble_pair_mac`) — see
+  [Services](#services).
+- **ESP32 → HA**: events on the HA event bus (`_ble_data`, `_ble_status`,
+  `_ble_services`) — see [Events](#events).
+- **Heartbeat**: the bridge fires a `_ble_status` event with `status="heartbeat"`
+  every 15 s, regardless of any service call.
 
 ## Conventions
 
@@ -41,20 +60,11 @@ philips_sonicare:
 
 ### Events and `bridge_id`
 
-Every event payload includes a `bridge_id` field. For single-bridge setups it
-is an empty string. Multi-bridge setups must filter by it on the HA side, the
-ESP fires the same event names regardless of which slot triggered them.
-
-The bridge emits three event types only:
-
-| Event name | Used for |
-|---|---|
-| `esphome.philips_sonicare_ble_status` | Lifecycle, info, pair-mode, errors |
-| `esphome.philips_sonicare_ble_data` | Read responses + notifications |
-| `esphome.philips_sonicare_ble_services` | Output of `ble_list_services` |
-
-The `status` field of `_ble_status` events disambiguates which lifecycle
-condition fired — see the per-service tables below.
+The bridge emits three event types only — see [Events](#events) for the full
+field reference. Every event payload includes a `bridge_id` field; for
+single-bridge setups it is an empty string, multi-bridge setups must filter
+on it because the ESP fires the same event names regardless of which slot
+triggered them.
 
 ### UUID parsing
 
@@ -73,26 +83,33 @@ fails downstream as `error="not_found"`.
 
 The bridge runs in one of two modes, chosen at build time by the YAML schema.
 HA detects which is active by reading `ble_get_info` and checking the `mode`
-field.
+field — the values below are exactly what that field reports.
 
-| Mode | Trigger in YAML | `mode` field | Pair-flow |
-|---|---|---|---|
-| **A — external** | uses an external `ble_client:` block (`ble_client_id` set) | `"external"` | MAC is fixed in YAML, no pair-mode |
-| **B — standalone** | no `ble_client:` block, optional `mac_address:` | `"standalone"` | If no MAC and no NVS identity: `pair_capable=true`, HA must call `ble_pair_mode` to bond a brush |
+| `mode` field | Trigger in YAML | Pair-flow |
+|---|---|---|
+| `"external"` | uses an external `ble_client:` block (`ble_client_id` set) | MAC is fixed in YAML, no pair-mode |
+| `"standalone"` | no `ble_client:` block, optional `mac_address:` | If no MAC and no NVS identity: `pair_capable=true`, HA must call `ble_pair_mode` to bond a brush |
 
-A standalone bridge that has either a YAML MAC or a previously bonded brush
-(persisted in NVS) reports `pair_capable=false` — same as Mode A from HA's
-point of view.
+A `"standalone"` bridge that has either a YAML MAC or a previously bonded
+brush (persisted in NVS) reports `pair_capable=false` — same as `"external"`
+from HA's point of view.
 
-### Mode A — external `ble_client`
+> [!NOTE]
+> The `"external"` mode is kept for backwards compatibility with older configs
+> that wired up an external `ble_client:` block. New setups should use
+> `"standalone"`; see [ESP32 Bridge Setup](ESP32_BRIDGE.md) for the
+> user-facing **Auto-Discovery** (no MAC) and **Fixed MAC** flows, both of
+> which run in `"standalone"` mode.
 
-Use this when you want the classic ESPHome BLE-client behavior with a fixed
-MAC, or when migrating from older versions of this component.
+### `external` — external `ble_client`
+
+The classic ESPHome BLE-client wiring with a fixed MAC. Kept for backwards
+compatibility — offers no advantage over `standalone` with `mac_address:`.
 
 ```yaml
 ble_client:
   - id: sonicare_main
-    mac_address: "24:E5:AA:14:9B:86"
+    mac_address: "AA:BB:CC:DD:EE:FF"
     auto_connect: true
 
 philips_sonicare:
@@ -100,22 +117,22 @@ philips_sonicare:
     bridge_id: main          # optional, suffixes HA service names
 ```
 
-`ble_client_id` is required for Mode A. If omitted, the schema falls
-through to Mode B.
+`ble_client_id` is required for `external` mode. If omitted, the schema falls
+through to `standalone`.
 
-### Mode B — standalone, fixed MAC
+### `standalone` — fixed MAC
 
 You know your brush's MAC and don't want a pair-flow. The bridge connects
-the same way as Mode A but without the dummy `ble_client:` block.
+the same way as `external` mode but without the dummy `ble_client:` block.
 
 ```yaml
 philips_sonicare:
-  - mac_address: "24:E5:AA:14:9B:86"
+  - mac_address: "AA:BB:CC:DD:EE:FF"
     bridge_id: main
     auto_connect: true       # default true when mac_address is set
 ```
 
-### Mode B — standalone, pair-flow (recommended for fresh setups)
+### `standalone` — pair-flow (recommended for fresh setups)
 
 No MAC, no NVS identity yet. The bridge stays passive on boot and only
 scans for Sonicares when HA arms `ble_pair_mode` (e.g. via the integration's
@@ -160,8 +177,8 @@ philips_sonicare:
 | 10 | [`ble_scan`](#ble_scan) | `timeout_s` | 1.3.0 |
 | 11 | [`ble_pair_mac`](#ble_pair_mac) | `mac`, `timeout_s` | 1.3.0 |
 
-Services 8–11 are meaningful only in **Mode B**. Calling them on a Mode-A
-bridge emits a warning to the log and is otherwise a no-op.
+Services 8–11 are meaningful only in `standalone` mode. Calling them on an
+`external` bridge emits a warning to the log and is otherwise a no-op.
 
 ### `ble_read_char`
 
@@ -337,7 +354,7 @@ Remove the BLE bond and clear any persisted identity. Bridge ends up with
 | | |
 |---|---|
 | **Args** | — |
-| **Side-effect** | `esp_ble_remove_bond_device`, NVS identity wiped (Mode B), `uuid_scan_mode_` re-armed, BLE client cycled to drop the current connection. |
+| **Side-effect** | `esp_ble_remove_bond_device`, NVS identity wiped (`standalone` mode), `uuid_scan_mode_` re-armed, BLE client cycled to drop the current connection. |
 | **Reply** | `_ble_status` event with `status="unpaired"` |
 
 **Event fields:**
@@ -347,8 +364,8 @@ Remove the BLE bond and clear any persisted identity. Bridge ends up with
 | `status` | `"unpaired"` |
 | `previous_mac` | The MAC that was bonded |
 
-In Mode A, only the BLE bond is removed — the YAML MAC is unaffected and the
-bridge will attempt to re-pair on the next connection.
+In `external` mode, only the BLE bond is removed — the YAML MAC is unaffected
+and the bridge will attempt to re-pair on the next connection.
 
 ### `ble_scan`
 
@@ -359,7 +376,7 @@ Discovery-only — list all Sonicares in range without connecting.
 | | |
 |---|---|
 | **Args** | `timeout_s: string` (default 30, max 300) |
-| **Side-effect** | Worker observes UUID-matching adverts for `timeout_s` and emits one event per unique MAC. **Does not connect**. Mode B only. Refused while pair-mode is active. |
+| **Side-effect** | Worker observes UUID-matching adverts for `timeout_s` and emits one event per unique MAC. **Does not connect**. `standalone` mode only. Refused while pair-mode is active. |
 | **Replies** | One `scan_started`, then multiple `scan_result` (one per unique MAC observed), then one `scan_complete` |
 
 **`scan_started` fields:** `status="scan_started"`, `timeout_s`, `mac`, `bridge_id`
@@ -387,7 +404,7 @@ Targeted pairing — bond a specific MAC instead of the first UUID-match.
 | | |
 |---|---|
 | **Args** | `mac: string` (accepts `AA:BB:CC:DD:EE:FF`, `AABBCCDDEEFF`, or with dashes), `timeout_s: string` (default 60) |
-| **Side-effect** | Worker sets internal `target_mac_=normalized(mac)`; `parse_device` matches on that MAC instead of UUID. Otherwise reuses `ble_pair_mode`'s plumbing. Mode B only. |
+| **Side-effect** | Worker sets internal `target_mac_=normalized(mac)`; `parse_device` matches on that MAC instead of UUID. Otherwise reuses `ble_pair_mode`'s plumbing. `standalone` mode only. |
 | **Replies** | `pair_mode_started`, then one of `pair_complete` / `pair_timeout` |
 | **Validation** | Invalid MAC (≠ 12 hex chars after stripping separators) → fires `pair_timeout` with extra `error="invalid_mac"` field, no other side-effects |
 
@@ -399,18 +416,77 @@ Use cases this enables:
 
 ---
 
-## Status events without an explicit trigger
+## Events
 
-These fire on GAP/GATT lifecycle changes regardless of any service call:
+The bridge publishes three event types on the Home Assistant event bus. All
+can be watched live in **Developer Tools → Events** by entering the event
+name and clicking **Start Listening**.
 
-| `status` | Trigger | Extra fields |
-|---|---|---|
-| `connected` | `OPEN_EVT` succeeded | `mac` |
-| `disconnected` | `DISCONNECT_EVT` | `reason` (hex), `mac` |
-| `ready` | `SEARCH_CMPL_EVT` (services discovered) | `version`, `mac` |
-| `auth_failed` | 3× consecutive `AUTH_CMPL.success=false` | `fail_count`, `backoff_s`, `mac` |
-| `heartbeat` | every 15 s, unconditional | `ble_connected`, `version`, `uptime_s`, `mac` |
+| Event name | Used for |
+|---|---|
+| `esphome.philips_sonicare_ble_status` | Bridge lifecycle, info, pair-mode, scan, errors |
+| `esphome.philips_sonicare_ble_data` | GATT read replies + notifications |
+| `esphome.philips_sonicare_ble_services` | Output of [`ble_list_services`](#ble_list_services) |
+
+### `esphome.philips_sonicare_ble_data`
+
+GATT-side traffic — notifications, read results, and read errors.
+
+| Field        | When set                            | Example                                  |
+|--------------|-------------------------------------|------------------------------------------|
+| `mac`        | Always (the brush MAC)              | `AA:BB:CC:DD:EE:FF`                      |
+| `uuid`       | Characteristic UUID                 | `477ea600-a260-11e4-ae37-0002a5d54010`   |
+| `payload`    | Hex-encoded bytes (notify or read)  | `02`                                     |
+| `error`      | Read failure reason (mutually exclusive with `payload`) | `auth_required` |
+| `bridge_id`  | Multi-device setups — identifies which bridge fired the event | `prestige` |
+
+### `esphome.philips_sonicare_ble_status`
+
+Bridge lifecycle — heartbeats, info responses, pair-mode replies, scan
+replies, ready/connected/disconnected transitions. The exact field set
+depends on the value of `status`. Service-reply statuses are also documented
+on the originating service in [Services](#services).
+
+| `status`            | Meaning                                                     | Trigger / Reply to                              |
+|---------------------|-------------------------------------------------------------|-------------------------------------------------|
+| `heartbeat`         | Periodic keep-alive (every ~15 s)                           | Unconditional, every 15 s                       |
+| `info`              | Bridge + brush state snapshot                               | [`ble_get_info`](#ble_get_info) reply           |
+| `connected`         | BLE link came up (before service discovery completes)       | `OPEN_EVT` succeeded                            |
+| `ready`             | GATT discovery complete on the brush                        | `SEARCH_CMPL_EVT`                               |
+| `disconnected`      | BLE link dropped                                            | `DISCONNECT_EVT`                                |
+| `auth_failed`       | Repeated SMP failure → backoff                              | 3× consecutive `AUTH_CMPL.success=false`        |
+| `pair_mode_started` | Pair-mode armed                                             | [`ble_pair_mode`](#ble_pair_mode) (enable)      |
+| `pair_mode_stopped` | Pair-mode cancelled                                         | [`ble_pair_mode`](#ble_pair_mode) (disable)     |
+| `pair_complete`     | Pairing succeeded — identity persisted                      | [`ble_pair_mode`](#ble_pair_mode) / [`ble_pair_mac`](#ble_pair_mac) |
+| `pair_timeout`      | Pair-mode window expired without success                    | [`ble_pair_mode`](#ble_pair_mode) / [`ble_pair_mac`](#ble_pair_mac) |
+| `unpaired`          | Bond removed                                                | [`ble_unpair`](#ble_unpair) reply               |
+| `scan_started`      | Discovery scan armed                                        | [`ble_scan`](#ble_scan) (start)                 |
+| `scan_result`       | One advertised device seen                                  | [`ble_scan`](#ble_scan)                         |
+| `scan_complete`     | Discovery scan ended                                        | [`ble_scan`](#ble_scan)                         |
+
+Common fields on every `_ble_status` event: `bridge_id` (always),
+`mac` (when relevant), `version` + `uptime_s` (on `heartbeat`, `ready`, `info`).
+The per-service tables in [Services](#services) list the additional fields each
+status carries.
 
 After OTA, if the bridge is connected with services discovered but has no
 active subscriptions, it will re-fire `ready` once on the next heartbeat — so
 HA can re-subscribe even if it missed the original event during reboot.
+
+### `esphome.philips_sonicare_ble_services`
+
+One event per GATT service in the brush's database — see
+[`ble_list_services`](#ble_list_services) for the field breakdown.
+
+### Filtering by `bridge_id`
+
+In multi-bridge setups, every event carries a `bridge_id` field
+(`""` for single-bridge configs). To watch a single device, filter on
+`bridge_id == "<your_id>"` in your automation/script. The integration's
+`EspBridgeTransport` does this internally.
+
+### Heartbeat-driven restart detection
+
+The integration tracks `uptime_s` across heartbeats; a regression flags an ESP
+restart and triggers BLE re-subscription. So if you spot the bridge boot-time
+sensor jumping in HA, that is what the heartbeat told us.

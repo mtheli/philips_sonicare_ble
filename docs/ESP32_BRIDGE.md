@@ -18,39 +18,61 @@ for direct Bluetooth access from the HA host.
 
 | Board | Status |
 |-------|--------|
-| [M5Stack Atom Lite](https://docs.m5stack.com/en/core/ATOM%20Lite) (ESP32-PICO) | Confirmed working (used by maintainer) |
+| [M5Stack Atom Lite](https://docs.m5stack.com/en/core/ATOM%20Lite) (ESP32-PICO) | Confirmed (maintainer) |
+| [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R) (ESP32-S3) | Confirmed (maintainer) |
 | Generic ESP32-DevKit | Should work (same SoC) |
-| ESP32-S3 / ESP32-C3 | Should work — BLE stack is compatible |
+| ESP32-S3 DevKitC-1 | Should work — BLE stack is compatible |
+| ESP32-C3 / ESP32-C6 | Untested — BLE stack should be compatible |
 
 ## Prerequisites
 
 - **ESP32 board** — see [Tested Hardware](#tested-hardware) above
 - **ESPHome** — installed as Home Assistant add-on or standalone
 - **Philips Sonicare toothbrush** — see [Tested Models](../README.md#tested-models)
+- **No `bluetooth_proxy:` enabled** on this ESP — running both crashes
+  Bluedroid during service discovery; see
+  [ESP32 crashes/reboots when connecting](#esp32-crashesreboots-when-connecting)
+  in Troubleshooting for the patch you need if both have to coexist.
 
-## Step 1: Find Your Toothbrush's MAC Address
+## Setup overview
 
-The toothbrush advertises via BLE for ~20 seconds after being picked up from the
-charger or turned on/off. It advertises as "Philips Sonicare" with a MAC starting
-with `24:E5:AA:`.
+The bridge supports two configuration paths. Both run on the same standalone
+component — they only differ in how the brush gets associated with the bridge:
 
-**Option A — Home Assistant Bluetooth:**
-1. Go to **Settings > Devices & Services > Bluetooth**
-2. Look for a device named "Philips Sonicare"
-3. Note the MAC address (e.g. `24:E5:AA:14:9B:86`)
+- **Auto-Discovery** ⭐ — no MAC in YAML. The ESP scans for the
+  Sonicare service UUID and bonds with the brush you put into pair-mode via
+  the HA setup dialog. The bridge then resolves rotating BLE addresses (RPA)
+  back to the same brush automatically. Recommended for all new setups —
+  works for every supported model, including those with bonding.
+- **Fixed MAC** — set `mac_address:` directly in the `philips_sonicare:`
+  entry. The bridge connects to that MAC automatically on boot, no HA
+  pair-dialog needed. Useful when the brush's BLE address is stable
+  (no RPA rotation) and you want deterministic slot assignment from YAML.
 
-**Option B — nRF Connect (Android/iOS):**
-1. Open the [nRF Connect](https://www.nordicsemi.com/Products/Development-tools/nRF-Connect-for-mobile) app and scan for devices
-2. Filter for "Philips" — the toothbrush shows up with its MAC address
+<sub>⭐ marks the preferred path for new setups.</sub>
 
-**Option C — ESPHome logs:**
-1. Deploy any ESP32 with `esp32_ble_tracker` enabled
-2. Check logs for `Found device ... Name: 'Philips Sonicare'`
+> [!IMPORTANT]
+> The most recent Sonicares (e.g. Series 7100 / HX742X) use RPA — their
+> advertised MAC changes on every power cycle. Pinning a MAC for those models
+> will work until the brush rotates its address, after which the bridge can't
+> reconnect. Auto-Discovery handles RPA transparently via the bond's identity
+> resolving key, which is why it's the recommended default.
 
-## Step 2: Create the ESPHome Configuration
+The walkthrough below uses Auto-Discovery as the primary flow, with the Fixed
+MAC variant called out where the steps differ.
 
-Use the template [`esphome/esp32-generic.yaml`](../esphome/esp32-generic.yaml) as a
-starting point. Copy it to your ESPHome configuration directory and customize.
+> [!NOTE]
+> A third configuration via an external `ble_client:` block exists for
+> backwards compatibility with older configs.
+> See [Legacy: external `ble_client:`](#legacy-external-ble_client) at the
+> bottom — new setups should not use it; it offers no advantage over Fixed
+> MAC.
+
+## Step 1: Create the ESPHome Configuration
+
+Use the template [`esphome/atom-lite.yaml`](../esphome/atom-lite.yaml) (single brush)
+or [`esphome/atom-lite-dual.yaml`](../esphome/atom-lite-dual.yaml) (multi-bridge)
+as a starting point. Copy it to your ESPHome configuration directory and customize.
 
 If you already have an ESP32 running other components (e.g. `ble_adv_proxy`,
 `bluetooth_proxy`), you can add the Sonicare component to your existing config
@@ -58,19 +80,14 @@ instead of using the template.
 
 ### Required changes
 
-1. **Toothbrush MAC address** — replace `XX:XX:XX:XX:XX:XX` with your toothbrush's MAC:
-   ```yaml
-   ble_client:
-     - mac_address: "XX:XX:XX:XX:XX:XX"   # <-- your toothbrush's MAC
-   ```
-
-2. **Board type** — change `esp32dev` if needed:
+1. **Board type** — the template targets the M5Stack Atom Lite. Change to your
+   board if different:
    ```yaml
    esp32:
-     board: esp32dev   # or esp32-s3-devkitc-1, m5stack-atoms3, etc.
+     board: m5stack-atom   # or m5stack-atoms3, esp32dev, esp32-s3-devkitc-1, …
    ```
 
-3. **Secrets** — create or update your `secrets.yaml` with:
+2. **Secrets** — create or update your `secrets.yaml` with:
    ```yaml
    api_encryption_key: "<generate with `esphome wizard`>"
    ota_password: "<your OTA password>"
@@ -93,9 +110,13 @@ instead of using the template.
 - **external_components**: the component is loaded directly from this GitHub repository.
   The `refresh: 0s` setting ensures the latest code is fetched on every build
 
-### Minimal config snippet
+### Minimal config snippets
 
-If you're adding this to an existing ESPHome config, these are the blocks you need:
+If you're adding this to an existing ESPHome config, these are the blocks you
+need. The shared infrastructure (framework, api, ble) is identical — only the
+`philips_sonicare:` entry differs between the two paths.
+
+#### Shared infrastructure
 
 ```yaml
 esp32:
@@ -125,25 +146,56 @@ external_components:
       path: esphome/components
     components: [philips_sonicare]
     refresh: 0s
+```
 
-ble_client:
-  - mac_address: "XX:XX:XX:XX:XX:XX"
-    id: philips_sonicare_ble
-    auto_connect: true
+#### Auto-Discovery (preferred)
+
+No MAC in YAML — the brush is paired through the HA setup dialog and the
+identity is persisted to NVS:
+
+```yaml
+philips_sonicare:
+  - id: philips_sonicare_ble
+    connected:
+      name: "Sonicare Connected"
     on_connect:
       then:
         - logger.log: "Connected to Sonicare"
     on_disconnect:
       then:
         - logger.log: "Disconnected from Sonicare"
-
-philips_sonicare:
-  ble_client_id: philips_sonicare_ble
-  connected:
-    name: "Sonicare Connected"
 ```
 
-## Step 3: Flash the ESP32
+#### Fixed MAC
+
+Set `mac_address:` to pin the bridge to a specific brush. The bridge connects
+on boot without going through the HA pair-dialog:
+
+```yaml
+philips_sonicare:
+  - id: philips_sonicare_ble
+    mac_address: "XX:XX:XX:XX:XX:XX"   # <-- your toothbrush's MAC
+    connected:
+      name: "Sonicare Connected"
+    on_connect:
+      then:
+        - logger.log: "Connected to Sonicare"
+    on_disconnect:
+      then:
+        - logger.log: "Disconnected from Sonicare"
+```
+
+To find the MAC, the brush advertises as "Philips Sonicare" for ~20 seconds
+after being picked up from the charger or turned on/off:
+
+- **Home Assistant Bluetooth**: Settings → Devices & Services → Bluetooth →
+  look for "Philips Sonicare"
+- **nRF Connect** ([Android](https://play.google.com/store/apps/details?id=no.nordicsemi.android.mcp) / [iOS](https://apps.apple.com/app/nrf-connect-for-mobile/id1054362403)):
+  scan and filter for "Philips"
+- **ESPHome logs**: any ESP32 with `esp32_ble_tracker` enabled will print
+  `Found device … Name: 'Philips Sonicare'`
+
+## Step 2: Flash the ESP32
 
 1. Open the **ESPHome Dashboard** in Home Assistant
 2. Add a new device or upload your customized YAML
@@ -156,37 +208,113 @@ philips_sonicare:
 > Switching between Arduino and ESP-IDF framework requires a full clean build
 > ("Clean Build Files" in the ESPHome dashboard before flashing).
 
-## Step 4: Verify BLE Connection
+## Step 3: Verify the Bridge Boots
 
-After flashing, check the ESPHome device logs for a successful connection sequence.
-Make sure the toothbrush is awake (pick it up from the charger or press the button).
+After flashing, the ESP32 boots and starts scanning. The expected boot log
+depends on which configuration path you chose.
+
+**Auto-Discovery (no MAC, no stored bond)** — the bridge does **not** initiate
+any connection on its own; it waits for the HA setup flow to arm pair-mode:
 
 ```
-[D][esp32_ble_tracker:726]:   Name: 'Philips Sonicare'
-[I][esp32_ble_client:111]: [0] [24:E5:AA:xx:xx:xx] 0x01 Connecting
-[I][esp32_ble_client:326]: [0] [24:E5:AA:xx:xx:xx] Connection open
-[I][philips_sonicare:061]: Connected to Sonicare
-[I][esp32_ble_client:435]: [0] [24:E5:AA:xx:xx:xx] Service discovery complete
+[I][philips_sonicare.bridge:065]: Services registered (suffix: 'default')
+[I][philips_sonicare:072]: No identity in flash — UUID scan mode (waiting for pair-mode)
+[C][philips_sonicare.bridge:110]: Philips Sonicare Bridge v1.3.0
+[C][philips_sonicare.bridge:112]:   Bridge ID: default
+```
+
+The `No identity in flash — UUID scan mode` line confirms the bridge is up and
+waiting for pair-mode. (`suffix: 'default'` becomes the actual `bridge_id` you
+configured — `'kids'` / `'prestige'` etc. — for multi-bridge setups.)
+
+**Fixed MAC** — the bridge logs the configured MAC and starts connecting
+immediately:
+
+```
+[I][philips_sonicare.bridge:065]: Services registered (suffix: 'default')
+[I][philips_sonicare:063]: Using configured MAC address — MAC mode
+[C][philips_sonicare.bridge:110]: Philips Sonicare Bridge v1.3.0
+[C][philips_sonicare.bridge:112]:   Bridge ID: default
+```
+
+After a successful pair, subsequent boots show the brush reconnecting on its own:
+
+```
+[D][esp32_ble_client:207]: [1] [24:E5:AA:xx:xx:xx] Found device
+[I][esp32_ble_client:125]: [1] [24:E5:AA:xx:xx:xx] 0x00 Connecting
+[I][esp32_ble_client:570]: [1] [24:E5:AA:xx:xx:xx] auth complete addr: …
+[I][philips_sonicare:670]: Pairing successful — device bonded (auth_mode=…)
+[I][philips_sonicare:363]: Service discovery complete
 ```
 
 > [!NOTE]
 > Most Sonicare models (DiamondClean Smart HX992X) use **open GATT without
-> bonding** — no `auth success` line is expected. Some models (ExpertClean
-> HX962X, Prestige HX999X) require BLE pairing — you will see `auth success`
-> in the logs after a successful connection.
+> bonding** — no `auth success` line is expected. Models with bonding
+> (Prestige HX999X, ExpertClean HX962X, HX991M, HX742X Condor) emit
+> `auth success` after a successful pair-mode flow.
 
-The toothbrush only stays awake for ~20 seconds after waking up. Once connected
-with active subscriptions, the connection keeps the toothbrush awake indefinitely.
+## Step 4: Add the Integration in Home Assistant
 
-## Step 5: Add the Integration in Home Assistant
-
-1. Install the **Philips Sonicare** integration in Home Assistant (via [HACS](../README.md#installation) or manually)
+1. Install the **Philips Sonicare** integration in Home Assistant
+   (via [HACS](../README.md#installation) or manually)
 2. Go to **Settings > Devices & Services > + Add Integration** and search for **Philips Sonicare**
-3. Select **"ESP32 Bridge"** and pick your ESP32 device from the list
-4. The **Bridge Status** page shows bridge health: component version, BLE connection state, and toothbrush MAC address — verify everything looks good and click **Submit**
-5. Wake the toothbrush if it has gone back to sleep
-6. The integration reads the toothbrush capabilities and GATT services via the bridge
-7. Review the detected capabilities and click **Submit** to finish
+3. Select **"ESP32 Bridge"** → pick your ESP32 from the list
+4. If the ESP exposes multiple bridge slots (multi-device setup), pick the one
+   you want to bond
+
+What happens next depends on the configuration path:
+
+**Auto-Discovery** — the slot is empty (`pair_capable=true`), so the
+integration goes straight to **"Pair toothbrush with bridge"**:
+
+1. Switch on the brush you want to bond (press the power button)
+2. Hold it within ~1 m of the ESP
+3. Click **Start pairing** — the bridge scans for ~60 s and bonds with the
+   first Sonicare it finds
+
+> [!IMPORTANT]
+> If you have multiple toothbrushes nearby, only switch on the one you want to
+> bond — the bridge bonds to the first matching brush, period. The pair dialog
+> in HA reminds you of this.
+
+**Fixed MAC** — the slot already has an identity from YAML
+(`pair_capable=false`), so the pair dialog is skipped and the integration
+goes straight to capability detection. Make sure the brush is reachable
+(within range, not on the charger) on first setup so the bridge can complete
+GATT discovery; bonded models will run the SMP exchange on this first
+connection.
+
+After both paths, the integration reads the toothbrush capabilities and shows
+the **Connection via ESP32 Bridge** page (v1.3.0, BLE Connected, bond status,
+MAC, etc.). Click **Read capabilities** to finish setup.
+
+### Expected pair-mode logs
+
+A successful pair-mode run on the ESP looks like this:
+
+```
+[I][philips_sonicare:146]: Pair-mode enabled for 60s
+[I][philips_sonicare:213]: Found Sonicare via UUID at AA:BB:CC:DD:EE:FF (pair-mode, classic)
+[I][esp32_ble_client:125]: [1] [AA:BB:CC:DD:EE:FF] 0x00 Connecting
+[I][esp32_ble_client:343]: [1] [AA:BB:CC:DD:EE:FF] Connection open
+[I][philips_sonicare:301]: Connected to Sonicare (AA:BB:CC:DD:EE:FF, bridge=prestige)
+[I][esp32_ble_client:570]: [1] [AA:BB:CC:DD:EE:FF] auth complete addr: AA:BB:CC:DD:EE:FF
+[D][esp32_ble_client:575]: [1] [AA:BB:CC:DD:EE:FF] auth success type = 0 mode = 9
+[I][philips_sonicare:253]: Bonded — saving identity address, switching to MAC mode
+[I][philips_sonicare:670]: Pairing successful — device bonded (auth_mode=9)
+```
+
+The `(pair-mode, classic)` token identifies the brush family — `classic` for
+the per-feature service-based protocol (HX9XXX etc.), `condor` for the
+HX742X / Series 7100+ framed transport. After `Bonded — saving identity address`
+the bridge writes the bond to NVS and the brush will reconnect on its own
+across reboots (no further pair-mode needed).
+
+> [!NOTE]
+> Models with **open GATT** (DiamondClean Smart HX992X) skip the SMP / auth
+> dance — you'll see `Connected to Sonicare …` and `Service discovery complete`
+> but no `auth success` line. Bond persistence still works via the saved
+> identity, so reconnect on next boot is the same.
 
 ## Bridge vs. bluetooth_proxy
 
@@ -220,6 +348,16 @@ in the Bluedroid GATT cache during service discovery with
 to fix this. If you don't need `bluetooth_proxy`, disabling it also
 resolves the crash.
 
+### Pair-mode times out without finding the brush
+
+- The brush only advertises for ~20 seconds after waking up. Press the power
+  button or pick it up from the charger immediately before clicking
+  **Start pairing**, then keep it on
+- The brush is **not reachable** via BLE while on the charging stand
+- Make sure no phone has an active connection to the brush — close or uninstall
+  the Sonicare app
+- Distance: keep the brush within ~1 m of the ESP during pair-mode
+
 ### "No philips_sonicare services found"
 
 Make sure your ESPHome config includes `custom_services: true` and
@@ -233,14 +371,6 @@ since ESPHome 2025.7.0.
 - Check **Settings > Devices & Services > ESPHome** — your device should be listed there
 - If using a fresh ESPHome install, wait for the device to come online after flashing
 
-### Toothbrush not connecting
-
-- The toothbrush only advertises for ~20 seconds after waking up. Pick it up from
-  the charger or press the button, then check the ESP32 logs for `Connected to Sonicare`
-- The toothbrush supports only one BLE connection. Close or uninstall the Sonicare
-  phone app if the ESP32 can't connect
-- The toothbrush is **not reachable** via BLE while on the charging stand
-
 ### No data after OTA update
 
 After an OTA flash, the ESP32 reboots and reconnects to the toothbrush via BLE before
@@ -252,96 +382,82 @@ If data still doesn't flow:
 - Check ESPHome logs for `BLE connected, no subscriptions — re-firing ready`
 - Check HA logs for `ESP bridge rebooted — forcing re-setup`
 
-## Architecture
+## Service & event reference
 
-```
-┌─────────────┐   BLE    ┌─────────┐  WiFi/API  ┌─────────────────┐
-│ Toothbrush  │◄────────►│  ESP32  │◄──────────►│ Home Assistant   │
-│             │   open   │  Bridge │  ESPHome   │ Philips Sonicare │
-│             │   GATT   │         │  services  │ Integration      │
-└─────────────┘          └─────────┘            └─────────────────┘
-```
-
-- **ESP32 → HA**: fires `esphome.philips_sonicare_ble_data` events with characteristic
-  UUID and hex payload
-- **HA → ESP32**: calls ESPHome services (`ble_read_char`, `ble_subscribe`,
-  `ble_write_char`, `ble_unsubscribe`, `ble_get_info`) with service and characteristic UUIDs
-- **Heartbeat**: the bridge sends a `heartbeat` status event every 15 seconds with
-  BLE connection state, MAC address, and component version
-
----
-
-## Events
-
-The bridge publishes two event types on the Home Assistant event bus. Both can be
-watched live in **Developer Tools → Events** by entering the event name and clicking
-**Start Listening**.
-
-### `esphome.philips_sonicare_ble_data`
-
-GATT-side traffic — notifications, read results, and read errors.
-
-| Field        | When set                            | Example                                  |
-|--------------|-------------------------------------|------------------------------------------|
-| `mac`        | Always (the brush MAC)              | `24:E5:AA:14:9B:86`                      |
-| `uuid`       | Characteristic UUID                 | `477ea600-a260-11e4-ae37-0002a5d54010`   |
-| `payload`    | Hex-encoded bytes (notify or read)  | `02`                                     |
-| `error`      | Read failure reason (mutually exclusive with `payload`) | `auth_required` |
-| `bridge_id`  | Multi-device setups — identifies which bridge fired the event | `prestige` |
-
-### `esphome.philips_sonicare_ble_status`
-
-Bridge lifecycle — heartbeats, info responses, ready/connected/disconnected
-transitions. The exact field set depends on the value of `status`.
-
-| `status`        | Meaning                                                     | Additional fields                                |
-|-----------------|-------------------------------------------------------------|--------------------------------------------------|
-| `heartbeat`     | Periodic keep-alive (every ~15 s)                           | `version`, `uptime_s`, `ble_connected`, `mac`    |
-| `info`          | Response to a `ble_get_info` service call                   | `version`, `uptime_s`, `mac`, `identity_address`, `paired`, `ble_connected`, `mode`, `pair_capable`, `pair_mode_active`, `bridge_id` |
-| `ready`         | GATT discovery complete on the brush                        | `mac`, `bridge_id`, `version`, `uptime_s`        |
-| `connected`     | BLE link came up (before service discovery completes)       | `mac`, `bridge_id`                               |
-| `disconnected`  | BLE link dropped                                            | `mac`, `bridge_id`                               |
-| `pair_complete` | Pairing succeeded (Mode-B / Open-GATT)                      | `mac`, `bonding`, `model`, `ble_name`, `bridge_id` |
-| `pair_timeout`  | Pair-mode window expired without success                    | `bridge_id`                                      |
-| `scan_result`   | One advertised device seen during `ble_scan`                | `mac`, `name`, `rssi`, `bridge_id`               |
-
-**Filtering tip**: in multi-bridge setups, every event carries a `bridge_id` field
-(`""` for legacy single-bridge configs). To watch a single device, filter on
-`bridge_id == "<your_id>"` in your automation/script. The integration's
-`EspBridgeTransport` does this internally.
-
-**Heartbeat-driven restart detection**: the integration tracks `uptime_s`
-across heartbeats; a regression flags an ESP restart and triggers BLE
-re-subscription. So if you spot the bridge boot-time sensor jumping in HA,
-that is what the heartbeat told us.
+The bridge exposes its functionality to Home Assistant as a small set of
+ESPHome services (`ble_read_char`, `ble_subscribe`, `ble_pair_mode`, …) and
+fires events back (`esphome.philips_sonicare_ble_data`,
+`esphome.philips_sonicare_ble_status`, `esphome.philips_sonicare_ble_services`).
+For the architecture diagram, the full per-service signatures, and the event
+field reference, see **[ESP32_PROTOCOL.md](ESP32_PROTOCOL.md)**.
 
 ---
 
 ## Multi-Device Setup
 
-A single ESP32 can bridge **multiple** Sonicare toothbrushes. Each device needs its own `ble_client` and `philips_sonicare` entry with a unique `bridge_id`:
+A single ESP32 can bridge **multiple** Sonicare toothbrushes. Each gets its
+own `philips_sonicare:` entry with a unique `bridge_id`. Each slot can use
+either path independently — Auto-Discovery, Fixed MAC, or a mix:
+
+```yaml
+philips_sonicare:
+  - id: sonicare_prestige
+    bridge_id: prestige
+    # Auto-Discovery — paired via HA dialog
+
+  - id: sonicare_kids
+    bridge_id: kids
+    mac_address: "XX:XX:XX:XX:XX:XX"   # Fixed MAC — pinned from YAML
+```
+
+The `bridge_id` is **required** when using multiple instances — the ESP will
+refuse to compile without it. It serves as a suffix for service names
+(e.g., `ble_pair_mode_prestige`, `ble_read_char_prestige`) so HA can address
+each slot separately. The same label appears in the HA bridge picker.
+
+Each slot has its own bond storage in NVS, so the two brushes are completely
+independent — pair, unpair, or re-pair one without affecting the other.
+
+A full example is available in
+[`esphome/atom-lite-dual.yaml`](../esphome/atom-lite-dual.yaml).
+
+> [!NOTE]
+> Each toothbrush should only be connected via **one** path — either Direct BLE
+> or ESP Bridge, not both simultaneously.
+
+---
+
+<details>
+<summary><strong>Legacy: external <code>ble_client:</code></strong> (kept for backwards compatibility)</summary>
+
+Earlier versions of this component required an external `ble_client:` block
+that the `philips_sonicare:` entry then referenced via `ble_client_id:`. This
+configuration is still accepted so existing YAMLs keep working, but it offers
+no advantage over [Fixed MAC](#fixed-mac) above — both pin the brush by MAC
+and connect on boot — while requiring an extra block. **New setups should use
+Auto-Discovery or Fixed MAC.**
 
 ```yaml
 ble_client:
-  - mac_address: "AA:BB:CC:DD:EE:01"
-    id: sonicare_prestige
-    auto_connect: true
-
-  - mac_address: "AA:BB:CC:DD:EE:02"
-    id: sonicare_kids
+  - mac_address: "XX:XX:XX:XX:XX:XX"   # <-- your toothbrush's MAC
+    id: my_brush
     auto_connect: true
 
 philips_sonicare:
-  - ble_client_id: sonicare_prestige
-    bridge_id: prestige
-
-  - ble_client_id: sonicare_kids
-    bridge_id: kids
+  - ble_client_id: my_brush
+    connected:
+      name: "Sonicare Connected"
 ```
 
-The `bridge_id` is **required** when using multiple instances — the ESP will refuse to compile without it. It serves as a suffix for service names (e.g., `ble_read_char_prestige`) so HA can address each device separately.
-
-A full example is available in [`esphome/atom-lite-dual.yaml`](../esphome/atom-lite-dual.yaml).
+To migrate to Fixed MAC, drop the `ble_client:` block, replace
+`ble_client_id: my_brush` with `mac_address: "XX:XX:XX:XX:XX:XX"`, and
+re-flash. The bond persists across the migration since it lives on the
+ESP's NVS, not in the YAML.
 
 > [!NOTE]
-> Each toothbrush should only be connected via **one** path — either Direct BLE or ESP Bridge, not both simultaneously.
+> The `on_connect` / `on_disconnect` automations on the external `ble_client:`
+> fire on raw GAP-connect, before service discovery completes. Use the
+> equivalent triggers on the `philips_sonicare:` entry instead — they fire
+> after the bridge is `ready`, when reads and writes are actually safe.
+
+</details>

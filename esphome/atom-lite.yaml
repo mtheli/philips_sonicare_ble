@@ -52,18 +52,34 @@ esp32_ble_tracker:
     interval: 211ms
     window: 120ms
 
-# --- BLE Client ---
-# Replace the MAC address with your Sonicare's Bluetooth address.
-# You can find the MAC in the Philips app or via a BLE scanner.
+# --- Philips Sonicare Component (Mode B — no MAC required) ---
 #
-# BLE bonding is handled automatically by the component.  Models that
-# require bonding (ExpertClean, HX991M) are paired via SMP after service
-# discovery; models with open GATT (DiamondClean) work as before.
+# The component scans for the Sonicare service UUID, bonds with the brush
+# you put into pair-mode via the HA setup flow, and stores the bond identity
+# in NVS.  After bonding, the controller resolves rotating BLE addresses
+# (RPA) back to the same brush automatically — no MAC pinning needed.
+#
+# To pair:
+#   1. Flash this firmware
+#   2. In Home Assistant, add the Philips Sonicare integration → ESP32 Bridge
+#   3. Walk through "Pair toothbrush with bridge" — switch on the brush when
+#      prompted, the ESP scans, bonds, and finishes setup.
+#
+# BLE bonding is handled automatically. Models that require bonding (e.g.
+# Prestige 9900, ExpertClean, HX991M) are paired via SMP after service
+# discovery; models with open GATT (e.g. DiamondClean) work without pairing.
 
-ble_client:
-  - mac_address: "XX:XX:XX:XX:XX:XX"          # <-- Replace with your Sonicare's MAC
-    id: philips_sonicare_ble
-    auto_connect: true
+external_components:
+  - source:
+      type: git
+      url: https://github.com/mtheli/philips_sonicare_ble
+      ref: master
+      path: esphome/components
+    components: [philips_sonicare]
+    refresh: 0s
+
+philips_sonicare:
+  - id: philips_sonicare_ble
     on_connect:
       then:
         - logger.log: "Connected to Sonicare"
@@ -80,20 +96,6 @@ ble_client:
             red: 100%
             green: 0%
             blue: 0%
-
-# --- Philips Sonicare Component ---
-
-external_components:
-  - source:
-      type: git
-      url: https://github.com/mtheli/philips_sonicare_ble
-      ref: master
-      path: esphome/components
-    components: [philips_sonicare]
-    refresh: 0s
-
-philips_sonicare:
-  ble_client_id: philips_sonicare_ble
 
 # --- Hardware: M5Stack Atom Lite ---
 

@@ -52,12 +52,36 @@ esp32_ble_tracker:
     interval: 211ms
     window: 120ms
 
-# --- BLE Clients ---
+# --- Philips Sonicare Components (Mode B — no MAC required) ---
+#
+# Two independent bridge slots on the same ESP. Each scans for the
+# Sonicare service UUID and bonds with whichever brush is put into
+# pair-mode while that slot's pair-mode service is armed.  After
+# bonding, each slot resolves its bonded brush's rotating BLE address
+# (RPA) automatically — no MAC pinning needed.
+#
+# bridge_id ("prestige" / "kids" below) is the slot label that shows
+# up in the HA setup picker and on the per-bridge ESPHome services
+# (e.g. atom_lite_ble_pair_mode_prestige).
+#
+# To pair each brush:
+#   1. Flash this firmware
+#   2. In Home Assistant, add the Philips Sonicare integration → ESP32 Bridge
+#   3. Pick the slot (e.g. "prestige") and walk through the pair flow
+#   4. Repeat for the second slot ("kids") with the other brush
 
-ble_client:
-  - mac_address: "AA:BB:CC:DD:EE:01"     # Replace with your Prestige 9900 MAC
-    id: sonicare_prestige
-    auto_connect: true
+external_components:
+  - source:
+      type: git
+      url: https://github.com/mtheli/philips_sonicare_ble
+      ref: master
+      path: esphome/components
+    components: [philips_sonicare]
+    refresh: 0s
+
+philips_sonicare:
+  - id: sonicare_prestige
+    bridge_id: prestige
     on_connect:
       then:
         - logger.log: "Connected to Prestige 9900"
@@ -75,33 +99,14 @@ ble_client:
             green: 0%
             blue: 0%
 
-  - mac_address: "AA:BB:CC:DD:EE:02"     # Replace with your Kids MAC
-    id: sonicare_kids
-    auto_connect: true
+  - id: sonicare_kids
+    bridge_id: kids
     on_connect:
       then:
         - logger.log: "Connected to Kids"
     on_disconnect:
       then:
         - logger.log: "Disconnected from Kids"
-
-# --- Philips Sonicare Components ---
-
-external_components:
-  - source:
-      type: git
-      url: https://github.com/mtheli/philips_sonicare_ble
-      ref: master
-      path: esphome/components
-    components: [philips_sonicare]
-    refresh: 0s
-
-philips_sonicare:
-  - ble_client_id: sonicare_prestige
-    bridge_id: prestige
-
-  - ble_client_id: sonicare_kids
-    bridge_id: kids
 
 # --- Hardware: M5Stack Atom Lite ---
 
