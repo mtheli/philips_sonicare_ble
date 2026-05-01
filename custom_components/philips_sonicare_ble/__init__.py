@@ -1,6 +1,7 @@
 # custom_components/philips_sonicare/__init__.py
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -8,7 +9,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
 from homeassistant.helpers import device_registry as dr
 
 from .const import (
@@ -303,21 +304,51 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             )
             return
 
+        # Listen for the bridge's `unpaired` confirmation before returning.
+        # Bridge v1.3.2+ defers the event by ~2 s so the BLE stack can settle;
+        # we wait up to 4 s. If the event doesn't arrive the bridge may have
+        # wedged and need a manual reboot — log a warning, don't block the
+        # entry removal (HA deletes the entry regardless of what we return).
+        unpair_done = asyncio.Event()
+
+        @callback
+        def _on_status(event) -> None:
+            data = event.data
+            if data.get("status") != "unpaired":
+                return
+            if data.get("bridge_id", "") != bridge_id:
+                return
+            unpair_done.set()
+
+        unsub = hass.bus.async_listen(
+            "esphome.philips_sonicare_ble_status", _on_status
+        )
+
         try:
             await hass.services.async_call(
                 "esphome", svc_name, {}, blocking=True,
             )
-            _LOGGER.info(
-                "Removed bond on ESP bridge %s for %s",
-                esp_device_name,
-                entry.unique_id or entry.data.get(CONF_ADDRESS, "<unknown>"),
-            )
+            try:
+                await asyncio.wait_for(unpair_done.wait(), timeout=4.0)
+                _LOGGER.info(
+                    "Removed bond on ESP bridge %s for %s",
+                    esp_device_name,
+                    entry.unique_id or entry.data.get(CONF_ADDRESS, "<unknown>"),
+                )
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "ble_unpair on %s did not confirm within 4s — bridge may "
+                    "need a manual reboot to recover",
+                    esp_device_name,
+                )
         except Exception as err:  # noqa: BLE001 — removal must not fail
             _LOGGER.warning(
                 "ble_unpair on %s failed during entry removal: %s",
                 esp_device_name,
                 err,
             )
+        finally:
+            unsub()
         return
 
     # Direct BLE — release host-side BlueZ bond.
