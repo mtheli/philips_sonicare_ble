@@ -15,6 +15,8 @@ static uint32_t parse_timeout_s(const std::string &s, uint32_t fallback,
   char *endp = nullptr;
   unsigned long parsed = strtoul(s.c_str(), &endp, 10);
   if (endp == s.c_str() || *endp != '\0') {
+    // File-scope function — falls back to the static TAG since there's no
+    // SonicareBridge instance to read log_tag_ from here.
     ESP_LOGW(TAG, "Invalid %s '%s' — using %us",
              field, s.c_str(), (unsigned) fallback);
     return fallback;
@@ -60,9 +62,9 @@ void SonicareBridge::setup() {
                           this->svc_name_("ble_pair_mac"),
                           {"mac", "timeout_s"});
   if (this->bridge_id_.empty())
-    ESP_LOGI(TAG, "Services registered");
+    ESP_LOGI(this->log_tag_.c_str(), "Services registered");
   else
-    ESP_LOGI(TAG, "Services registered (suffix: '%s')", this->bridge_id_.c_str());
+    ESP_LOGI(this->log_tag_.c_str(), "Services registered (suffix: '%s')", this->bridge_id_.c_str());
 }
 
 void SonicareBridge::loop() {
@@ -95,7 +97,7 @@ void SonicareBridge::loop() {
   if (this->coord_->is_connected() &&
       this->coord_->are_services_discovered() &&
       this->coord_->subscription_count() == 0) {
-    ESP_LOGI(TAG, "BLE connected, no subscriptions — re-firing ready");
+    ESP_LOGI(this->log_tag_.c_str(), "BLE connected, no subscriptions — re-firing ready");
     this->fire_event(EVENT_STATUS,
                       {
                           {"status", "ready"},
@@ -107,9 +109,9 @@ void SonicareBridge::loop() {
 }
 
 void SonicareBridge::dump_config() {
-  ESP_LOGCONFIG(TAG, "Philips Sonicare Bridge v%s", PHILIPS_SONICARE_VERSION);
+  ESP_LOGCONFIG(this->log_tag_.c_str(), "Philips Sonicare Bridge v%s", PHILIPS_SONICARE_VERSION);
   if (!this->bridge_id_.empty())
-    ESP_LOGCONFIG(TAG, "  Bridge ID: %s", this->bridge_id_.c_str());
+    ESP_LOGCONFIG(this->log_tag_.c_str(), "  Bridge ID: %s", this->bridge_id_.c_str());
 }
 
 void SonicareBridge::fire_event(const std::string &event_type,
@@ -160,11 +162,11 @@ void SonicareBridge::on_set_throttle(std::string throttle_ms) {
   char *endp = nullptr;
   unsigned long ms = strtoul(throttle_ms.c_str(), &endp, 10);
   if (endp == throttle_ms.c_str() || *endp != '\0') {
-    ESP_LOGW(TAG, "Invalid throttle_ms value: '%s'", throttle_ms.c_str());
+    ESP_LOGW(this->log_tag_.c_str(), "Invalid throttle_ms value: '%s'", throttle_ms.c_str());
     return;
   }
   this->coord_->set_notify_throttle(static_cast<uint32_t>(ms));
-  ESP_LOGI(TAG, "Notification throttle set to %lu ms", ms);
+  ESP_LOGI(this->log_tag_.c_str(), "Notification throttle set to %lu ms", ms);
 }
 
 void SonicareBridge::on_get_info() {

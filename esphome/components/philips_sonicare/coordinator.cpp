@@ -20,6 +20,8 @@ static espbt::ESPBTUUID parse_uuid(const std::string &uuid_str) {
     char *endp = nullptr;
     unsigned long val = strtoul(uuid_str.c_str(), &endp, 16);
     if (endp == uuid_str.c_str() || *endp != '\0') {
+      // File-scope function — falls back to the static TAG since there's no
+      // SonicareCoordinator instance to read log_tag_ from here.
       ESP_LOGW(TAG, "Invalid hex UUID '%s' — falling back to raw", uuid_str.c_str());
       return espbt::ESPBTUUID::from_raw(uuid_str);
     }
@@ -77,13 +79,13 @@ void SonicareCoordinator::apply_smp_params_() {
                                   &init_key, sizeof(init_key));
   esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY,
                                   &rsp_key, sizeof(rsp_key));
-  ESP_LOGD(TAG, "SMP parameters applied (auth=0x%02X, io_cap=%d)", auth_req, io_cap);
+  ESP_LOGD(this->log_tag_.c_str(), "SMP parameters applied (auth=0x%02X, io_cap=%d)", auth_req, io_cap);
 }
 
 void SonicareCoordinator::on_loop(uint32_t now_ms) {
   // Auth failure backoff recovery
   if (this->backoff_until_ms_ != 0 && now_ms >= this->backoff_until_ms_) {
-    ESP_LOGI(TAG, "Auth backoff expired — re-enabling BLE");
+    ESP_LOGI(this->log_tag_.c_str(), "Auth backoff expired — re-enabling BLE");
     this->backoff_until_ms_ = 0;
     this->auth_fail_count_ = 0;
     if (this->set_enabled_cb_)
@@ -103,20 +105,20 @@ void SonicareCoordinator::on_loop(uint32_t now_ms) {
     // post_auth_no_probe so HA knows model/ble_name aren't filled and may
     // need a follow-up ble_get_info.
     if (had_auth && !this->identity_address_.empty()) {
-      ESP_LOGW(TAG, "Pair-mode timed out after AUTH_CMPL — emitting pair_complete anyway");
+      ESP_LOGW(this->log_tag_.c_str(), "Pair-mode timed out after AUTH_CMPL — emitting pair_complete anyway");
       this->emit_status_("pair_complete", {
           {"identity_address", this->identity_address_},
           {"bonding", "bonded"},
           {"note", "post_auth_no_probe"},
       });
     } else {
-      ESP_LOGW(TAG, "Pair-mode timed out without successful pairing");
+      ESP_LOGW(this->log_tag_.c_str(), "Pair-mode timed out without successful pairing");
       this->emit_status_("pair_timeout");
     }
   }
   // Scan-mode timeout: report aggregate count and disable.
   if (this->scan_mode_active_ && now_ms >= this->scan_mode_until_ms_) {
-    ESP_LOGI(TAG, "Scan-mode finished (%u unique MACs)",
+    ESP_LOGI(this->log_tag_.c_str(), "Scan-mode finished (%u unique MACs)",
              (unsigned) this->scan_seen_macs_.size());
     char count_str[8];
     snprintf(count_str, sizeof(count_str), "%u",
@@ -132,7 +134,7 @@ void SonicareCoordinator::on_loop(uint32_t now_ms) {
 
 void SonicareCoordinator::set_pair_mode(bool enable, uint32_t timeout_s) {
   if (this->mode_ != MODE_STANDALONE) {
-    ESP_LOGW(TAG, "ble_pair_mode requested on non-standalone bridge — ignored "
+    ESP_LOGW(this->log_tag_.c_str(), "ble_pair_mode requested on non-standalone bridge — ignored "
                   "(Mode A pairs via the configured ble_client MAC)");
     return;
   }
@@ -143,7 +145,7 @@ void SonicareCoordinator::set_pair_mode(bool enable, uint32_t timeout_s) {
       timeout_s = 600;  // hard cap — pair-mode shouldn't linger
     this->pair_mode_active_ = true;
     this->pair_mode_until_ms_ = millis() + timeout_s * 1000;
-    ESP_LOGI(TAG, "Pair-mode enabled for %us", (unsigned) timeout_s);
+    ESP_LOGI(this->log_tag_.c_str(), "Pair-mode enabled for %us", (unsigned) timeout_s);
     if (this->set_enabled_cb_)
       this->set_enabled_cb_(true);
     char timeout_str[8];
@@ -152,7 +154,7 @@ void SonicareCoordinator::set_pair_mode(bool enable, uint32_t timeout_s) {
   } else {
     if (!this->pair_mode_active_)
       return;
-    ESP_LOGI(TAG, "Pair-mode disabled by request");
+    ESP_LOGI(this->log_tag_.c_str(), "Pair-mode disabled by request");
     this->pair_mode_active_ = false;
     this->pair_mode_until_ms_ = 0;
     this->target_mac_.clear();
@@ -164,11 +166,11 @@ void SonicareCoordinator::set_pair_mode(bool enable, uint32_t timeout_s) {
 
 void SonicareCoordinator::set_scan_mode(uint32_t timeout_s) {
   if (this->mode_ != MODE_STANDALONE) {
-    ESP_LOGW(TAG, "ble_scan requested on non-standalone bridge — ignored");
+    ESP_LOGW(this->log_tag_.c_str(), "ble_scan requested on non-standalone bridge — ignored");
     return;
   }
   if (this->pair_mode_active_) {
-    ESP_LOGW(TAG, "ble_scan requested while pair-mode active — ignored");
+    ESP_LOGW(this->log_tag_.c_str(), "ble_scan requested while pair-mode active — ignored");
     return;
   }
   if (timeout_s == 0)
@@ -178,7 +180,7 @@ void SonicareCoordinator::set_scan_mode(uint32_t timeout_s) {
   this->scan_mode_active_ = true;
   this->scan_mode_until_ms_ = millis() + timeout_s * 1000;
   this->scan_seen_macs_.clear();
-  ESP_LOGI(TAG, "Scan-mode enabled for %us (discovery-only, no connect)",
+  ESP_LOGI(this->log_tag_.c_str(), "Scan-mode enabled for %us (discovery-only, no connect)",
            (unsigned) timeout_s);
   if (this->set_enabled_cb_)
     this->set_enabled_cb_(true);
@@ -213,7 +215,7 @@ void SonicareCoordinator::emit_scan_result(const std::string &mac,
 void SonicareCoordinator::set_pair_mac(const std::string &mac,
                                         uint32_t timeout_s) {
   if (this->mode_ != MODE_STANDALONE) {
-    ESP_LOGW(TAG, "ble_pair_mac requested on non-standalone bridge — ignored");
+    ESP_LOGW(this->log_tag_.c_str(), "ble_pair_mac requested on non-standalone bridge — ignored");
     return;
   }
   // Normalize MAC: strip dashes/colons, uppercase, then re-insert colons.
@@ -227,7 +229,7 @@ void SonicareCoordinator::set_pair_mac(const std::string &mac,
     normalized.push_back(c);
   }
   if (normalized.length() != 12) {
-    ESP_LOGW(TAG, "Invalid MAC '%s' (need 12 hex chars after stripping) — ignored",
+    ESP_LOGW(this->log_tag_.c_str(), "Invalid MAC '%s' (need 12 hex chars after stripping) — ignored",
              mac.c_str());
     this->emit_status_("pair_timeout", {{"error", "invalid_mac"}});
     return;
@@ -241,7 +243,7 @@ void SonicareCoordinator::set_pair_mac(const std::string &mac,
     colon_mac.push_back(normalized[i + 1]);
   }
   this->target_mac_ = colon_mac;
-  ESP_LOGI(TAG, "Pair-mode (targeted) armed for %s", colon_mac.c_str());
+  ESP_LOGI(this->log_tag_.c_str(), "Pair-mode (targeted) armed for %s", colon_mac.c_str());
   // Reuse pair-mode plumbing: this turns on enabled_, starts the timer, fires
   // pair_mode_started — but parse_device on the Worker will only match this
   // exact MAC because target_mac_ is set.
@@ -250,7 +252,7 @@ void SonicareCoordinator::set_pair_mac(const std::string &mac,
 
 void SonicareCoordinator::unpair() {
   std::string previous_mac = this->identity_address_;
-  ESP_LOGW(TAG, "Unpair requested — clearing bond and identity (was: %s)",
+  ESP_LOGW(this->log_tag_.c_str(), "Unpair requested — clearing bond and identity (was: %s)",
            previous_mac.empty() ? "<none>" : previous_mac.c_str());
   if (this->parent_ != nullptr) {
     auto *bda = this->parent_->get_remote_bda();
@@ -303,18 +305,14 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       if (param->open.status == ESP_GATT_OK) {
         this->auth_completed_ = false;
         this->connect_time_ms_ = millis();
-        const std::string &bid = this->bridge_ ? this->bridge_->get_bridge_id()
-                                                : std::string();
-        ESP_LOGI(TAG, "Connected to Sonicare (%s%s%s)",
-                 this->get_device_mac().c_str(),
-                 bid.empty() ? "" : ", bridge=",
-                 bid.empty() ? "" : bid.c_str());
+        ESP_LOGI(this->log_tag_.c_str(), "Connected to Sonicare (%s)",
+                 this->get_device_mac().c_str());
         this->connected_ = true;
         if (this->bridge_)
           this->bridge_->publish_connected(true);
         this->emit_status_("connected");
       } else {
-        ESP_LOGW(TAG, "Connection failed, status=%d", param->open.status);
+        ESP_LOGW(this->log_tag_.c_str(), "Connection failed, status=%d", param->open.status);
       }
       break;
     }
@@ -328,15 +326,15 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
         this->rapid_disconnect_count_ = 0;
       } else {
         this->rapid_disconnect_count_++;
-        ESP_LOGW(TAG, "Rapid disconnect without auth (%d/%d)",
+        ESP_LOGW(this->log_tag_.c_str(), "Rapid disconnect without auth (%d/%d)",
                  this->rapid_disconnect_count_, MAX_RAPID_DISCONNECTS);
         if (this->rapid_disconnect_count_ >= MAX_RAPID_DISCONNECTS) {
-          ESP_LOGW(TAG, "Removing stale bond for %s", this->get_device_mac().c_str());
+          ESP_LOGW(this->log_tag_.c_str(), "Removing stale bond for %s", this->get_device_mac().c_str());
           esp_ble_remove_bond_device(this->parent_->get_remote_bda());
           this->rapid_disconnect_count_ = 0;
         }
       }
-      ESP_LOGW(TAG, "Disconnected from Sonicare (reason=0x%02X). "
+      ESP_LOGW(this->log_tag_.c_str(), "Disconnected from Sonicare (reason=0x%02X). "
                "%d subscription(s) will be restored on reconnect.",
                param->disconnect.reason,
                this->desired_subscriptions_.size());
@@ -367,11 +365,11 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
     }
 
     case ESP_GATTC_SEARCH_CMPL_EVT: {
-      ESP_LOGI(TAG, "Service discovery complete");
+      ESP_LOGI(this->log_tag_.c_str(), "Service discovery complete");
       this->services_discovered_ = true;
       this->encryption_requested_ = false;
       if (!this->desired_subscriptions_.empty()) {
-        ESP_LOGI(TAG, "Restoring %d notification subscription(s)...",
+        ESP_LOGI(this->log_tag_.c_str(), "Restoring %d notification subscription(s)...",
                  this->desired_subscriptions_.size());
         this->resubscribe_all_();
       }
@@ -387,7 +385,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
               this->parent_->get_conn_id(),
               chr->handle, ESP_GATT_AUTH_REQ_NONE);
           if (status != ESP_GATT_OK) {
-            ESP_LOGD(TAG, "Failed to initiate device name read: %d", status);
+            ESP_LOGD(this->log_tag_.c_str(), "Failed to initiate device name read: %d", status);
             this->name_handle_ = 0;
           }
         }
@@ -406,7 +404,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
               this->parent_->get_conn_id(),
               chr->handle, ESP_GATT_AUTH_REQ_NONE);
           if (status != ESP_GATT_OK) {
-            ESP_LOGD(TAG, "Failed to initiate model number read: %d", status);
+            ESP_LOGD(this->log_tag_.c_str(), "Failed to initiate model number read: %d", status);
             this->model_handle_ = 0;
           }
         }
@@ -444,7 +442,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
               "e50ba3c0-af04-4564-92ad-fef019489de6");
           if (this->parent_->get_service(condor_svc) != nullptr &&
               this->pair_mode_active_ && !this->auth_completed_) {
-            ESP_LOGI(TAG,
+            ESP_LOGI(this->log_tag_.c_str(),
                      "Condor service detected — initiating SMP encryption");
             this->encryption_requested_ = true;
             this->apply_smp_params_();
@@ -465,7 +463,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       // 'connected', not waiting for 'ready'). resubscribe_all_ already
       // restored prior subscriptions; HA's intent supersedes via the queue.
       if (!this->pending_calls_.empty()) {
-        ESP_LOGI(TAG, "Draining %u queued call(s) deferred until discovery",
+        ESP_LOGI(this->log_tag_.c_str(), "Draining %u queued call(s) deferred until discovery",
                  (unsigned) this->pending_calls_.size());
         auto pending = std::move(this->pending_calls_);
         this->pending_calls_.clear();
@@ -482,9 +480,9 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
           this->remote_name_ = std::string(
               reinterpret_cast<const char *>(param->read.value),
               param->read.value_len);
-          ESP_LOGI(TAG, "Device name: %s", this->remote_name_.c_str());
+          ESP_LOGI(this->log_tag_.c_str(), "Device name: %s", this->remote_name_.c_str());
         } else {
-          ESP_LOGD(TAG, "Device name read failed, status=%d", param->read.status);
+          ESP_LOGD(this->log_tag_.c_str(), "Device name read failed, status=%d", param->read.status);
         }
         this->name_handle_ = 0;
         break;
@@ -499,9 +497,9 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
           while (!raw.empty() && (raw.back() == ' ' || raw.back() == '\0'))
             raw.pop_back();
           this->model_number_ = raw;
-          ESP_LOGI(TAG, "Model number: %s", this->model_number_.c_str());
+          ESP_LOGI(this->log_tag_.c_str(), "Model number: %s", this->model_number_.c_str());
         } else {
-          ESP_LOGD(TAG, "Model number read failed, status=%d", param->read.status);
+          ESP_LOGD(this->log_tag_.c_str(), "Model number read failed, status=%d", param->read.status);
         }
         this->model_handle_ = 0;
         break;
@@ -513,7 +511,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
           const char *state_names[] = {"Off", "Standby", "Running", "Charging", "Shutdown"};
           uint8_t state = (param->read.value_len > 0) ? param->read.value[0] : 0xFF;
           const char *state_name = (state <= 4) ? state_names[state] : "Unknown";
-          ESP_LOGI(TAG, "Pairing probe: open GATT (no pairing required) — handle state: %s (%d)",
+          ESP_LOGI(this->log_tag_.c_str(), "Pairing probe: open GATT (no pairing required) — handle state: %s (%d)",
                    state_name, state);
           // Probe success is the unified pair_complete trigger. By the time
           // the probe response arrives, GAP-Name and DeviceInfo-Model reads
@@ -549,14 +547,14 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
           }
         } else if (param->read.status == ESP_GATT_INSUF_AUTHENTICATION ||
                    param->read.status == ESP_GATT_INSUF_ENCRYPTION) {
-          ESP_LOGW(TAG, "Pairing probe: device requires BLE bonding (status=%d) — initiating pairing",
+          ESP_LOGW(this->log_tag_.c_str(), "Pairing probe: device requires BLE bonding (status=%d) — initiating pairing",
                    param->read.status);
           this->encryption_requested_ = true;
           this->apply_smp_params_();
           esp_ble_set_encryption(this->parent_->get_remote_bda(),
                                   ESP_BLE_SEC_ENCRYPT_MITM);
         } else {
-          ESP_LOGD(TAG, "Pairing probe failed, status=%d", param->read.status);
+          ESP_LOGD(this->log_tag_.c_str(), "Pairing probe failed, status=%d", param->read.status);
         }
         this->probe_handle_ = 0;
         break;
@@ -568,7 +566,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
         if ((param->read.status == ESP_GATT_INSUF_AUTHENTICATION ||
              param->read.status == ESP_GATT_INSUF_ENCRYPTION) &&
             !this->encryption_requested_) {
-          ESP_LOGI(TAG, "Read requires authentication (status=%d) — initiating encryption, will retry on AUTH_CMPL",
+          ESP_LOGI(this->log_tag_.c_str(), "Read requires authentication (status=%d) — initiating encryption, will retry on AUTH_CMPL",
                    param->read.status);
           this->encryption_requested_ = true;
           this->retry_read_after_auth_ = true;
@@ -578,7 +576,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
                                   ESP_BLE_SEC_ENCRYPT_MITM);
           break;
         }
-        ESP_LOGW(TAG, "Read failed for %s, status=%d",
+        ESP_LOGW(this->log_tag_.c_str(), "Read failed for %s, status=%d",
                  this->pending_char_uuid_.c_str(), param->read.status);
         this->emit_data_(this->pending_char_uuid_, "", "read_failed");
         this->pending_handle_ = 0;
@@ -589,7 +587,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
         std::string hex_payload =
             format_hex(param->read.value, param->read.value_len);
 
-        ESP_LOGI(TAG, "Read %s: %s (%d bytes)",
+        ESP_LOGI(this->log_tag_.c_str(), "Read %s: %s (%d bytes)",
                  this->pending_char_uuid_.c_str(),
                  hex_payload.c_str(), param->read.value_len);
 
@@ -602,9 +600,9 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
 
     case ESP_GATTC_WRITE_CHAR_EVT: {
       if (param->write.status == ESP_GATT_OK) {
-        ESP_LOGI(TAG, "Write confirmed for handle 0x%04X", param->write.handle);
+        ESP_LOGI(this->log_tag_.c_str(), "Write confirmed for handle 0x%04X", param->write.handle);
       } else {
-        ESP_LOGW(TAG, "Write FAILED for handle 0x%04X, status=%d",
+        ESP_LOGW(this->log_tag_.c_str(), "Write FAILED for handle 0x%04X, status=%d",
                  param->write.handle, param->write.status);
       }
       break;
@@ -612,7 +610,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
 
     case ESP_GATTC_REG_FOR_NOTIFY_EVT: {
       if (param->reg_for_notify.status == ESP_GATT_OK) {
-        ESP_LOGI(TAG, "Notify registered for handle 0x%04X",
+        ESP_LOGI(this->log_tag_.c_str(), "Notify registered for handle 0x%04X",
                  param->reg_for_notify.handle);
 
         auto it = this->cccd_map_.find(param->reg_for_notify.handle);
@@ -636,11 +634,11 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
               (uint8_t *) &cccd_val,
               ESP_GATT_WRITE_TYPE_RSP,
               ESP_GATT_AUTH_REQ_NONE);
-          ESP_LOGI(TAG, "CCCD written for handle 0x%04X (descr 0x%04X, value 0x%04X)",
+          ESP_LOGI(this->log_tag_.c_str(), "CCCD written for handle 0x%04X (descr 0x%04X, value 0x%04X)",
                    param->reg_for_notify.handle, it->second, cccd_val);
         }
       } else {
-        ESP_LOGW(TAG, "Notify registration failed, status=%d",
+        ESP_LOGW(this->log_tag_.c_str(), "Notify registration failed, status=%d",
                  param->reg_for_notify.status);
       }
       break;
@@ -663,7 +661,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       std::string hex_payload =
           format_hex(param->notify.value, param->notify.value_len);
 
-      ESP_LOGD(TAG, "%s %s: %s (%d bytes)",
+      ESP_LOGD(this->log_tag_.c_str(), "%s %s: %s (%d bytes)",
                param->notify.is_notify ? "Notify" : "Indicate",
                it->second.c_str(),
                hex_payload.c_str(), param->notify.value_len);
@@ -683,7 +681,7 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
     return;
   switch (event) {
     case ESP_GAP_BLE_NC_REQ_EVT: {
-      ESP_LOGI(TAG, "Numeric Comparison request — auto-confirming (passkey %06lu)",
+      ESP_LOGI(this->log_tag_.c_str(), "Numeric Comparison request — auto-confirming (passkey %06lu)",
                (unsigned long) param->ble_security.key_notif.passkey);
       esp_ble_confirm_reply(param->ble_security.key_notif.bd_addr, true);
       break;
@@ -699,7 +697,7 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
         break;
 
       if (auth.success) {
-        ESP_LOGI(TAG,
+        ESP_LOGI(this->log_tag_.c_str(),
                  "Pairing successful — device bonded "
                  "(%02X:%02X:%02X:%02X:%02X:%02X, auth_mode=%d)",
                  auth.bd_addr[0], auth.bd_addr[1], auth.bd_addr[2],
@@ -731,7 +729,7 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
           });
         }
         if (this->retry_read_after_auth_ && !this->pending_char_uuid_.empty()) {
-          ESP_LOGI(TAG, "Retrying read of %s after successful auth",
+          ESP_LOGI(this->log_tag_.c_str(), "Retrying read of %s after successful auth",
                    this->pending_char_uuid_.c_str());
           this->retry_read_after_auth_ = false;
           this->encryption_requested_ = false;  // allow re-arm if retry also fails
@@ -740,7 +738,7 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
           this->read_characteristic(svc, chr);
         }
       } else {
-        ESP_LOGW(TAG, "Authentication FAILED (reason=0x%X)", auth.fail_reason);
+        ESP_LOGW(this->log_tag_.c_str(), "Authentication FAILED (reason=0x%X)", auth.fail_reason);
         if (this->retry_read_after_auth_ && !this->pending_char_uuid_.empty()) {
           this->emit_data_(this->pending_char_uuid_, "", "auth_failed");
           this->retry_read_after_auth_ = false;
@@ -753,14 +751,14 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
         // pair-mode. Reset the fail counter and let parse_device pick up the
         // next advert; the pair_mode_until_ms_ timer is the real bound.
         if (this->pair_mode_active_) {
-          ESP_LOGI(TAG, "Auth-fail in pair-mode — bond wiped, scanning for next advert");
+          ESP_LOGI(this->log_tag_.c_str(), "Auth-fail in pair-mode — bond wiped, scanning for next advert");
           this->auth_fail_count_ = 0;
           this->encryption_requested_ = false;
           break;
         }
         this->auth_fail_count_++;
         if (this->auth_fail_count_ >= MAX_AUTH_FAILURES) {
-          ESP_LOGE(TAG, "Too many auth failures (%d) — backing off for %lus",
+          ESP_LOGE(this->log_tag_.c_str(), "Too many auth failures (%d) — backing off for %lus",
                    this->auth_fail_count_, AUTH_BACKOFF_MS / 1000);
           this->backoff_until_ms_ = millis() + AUTH_BACKOFF_MS;
           if (this->set_enabled_cb_)
@@ -786,17 +784,17 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
 void SonicareCoordinator::read_characteristic(const std::string &service_uuid,
                                                 const std::string &char_uuid) {
   if (!this->connected_) {
-    ESP_LOGW(TAG, "Cannot read: not connected");
+    ESP_LOGW(this->log_tag_.c_str(), "Cannot read: not connected");
     this->emit_data_(char_uuid, "", "not_connected");
     return;
   }
   if (!this->services_discovered_) {
     if (this->pending_calls_.size() >= MAX_PENDING_CALLS) {
-      ESP_LOGW(TAG, "Pending queue full — dropping read for %s", char_uuid.c_str());
+      ESP_LOGW(this->log_tag_.c_str(), "Pending queue full — dropping read for %s", char_uuid.c_str());
       this->emit_data_(char_uuid, "", "queue_full");
       return;
     }
-    ESP_LOGD(TAG, "Queueing read of %s until service discovery completes",
+    ESP_LOGD(this->log_tag_.c_str(), "Queueing read of %s until service discovery completes",
              char_uuid.c_str());
     this->pending_calls_.push_back(
         [this, service_uuid, char_uuid]() { this->read_characteristic(service_uuid, char_uuid); });
@@ -808,7 +806,7 @@ void SonicareCoordinator::read_characteristic(const std::string &service_uuid,
 
   auto *chr = this->parent_->get_characteristic(svc, chr_uuid_obj);
   if (chr == nullptr) {
-    ESP_LOGW(TAG, "Characteristic %s not found in service %s",
+    ESP_LOGW(this->log_tag_.c_str(), "Characteristic %s not found in service %s",
              char_uuid.c_str(), service_uuid.c_str());
     this->emit_data_(char_uuid, "", "not_found");
     return;
@@ -818,7 +816,7 @@ void SonicareCoordinator::read_characteristic(const std::string &service_uuid,
   this->pending_char_uuid_ = char_uuid;
   this->pending_service_uuid_ = service_uuid;
 
-  ESP_LOGI(TAG, "Reading %s (handle 0x%04X)...",
+  ESP_LOGI(this->log_tag_.c_str(), "Reading %s (handle 0x%04X)...",
            char_uuid.c_str(), chr->handle);
 
   auto status = esp_ble_gattc_read_char(
@@ -828,7 +826,7 @@ void SonicareCoordinator::read_characteristic(const std::string &service_uuid,
       ESP_GATT_AUTH_REQ_NONE);
 
   if (status != ESP_OK) {
-    ESP_LOGW(TAG, "Read request failed: %d", status);
+    ESP_LOGW(this->log_tag_.c_str(), "Read request failed: %d", status);
     this->pending_handle_ = 0;
     char err_str[16];
     snprintf(err_str, sizeof(err_str), "gatt_err_%d", status);
@@ -839,15 +837,15 @@ void SonicareCoordinator::read_characteristic(const std::string &service_uuid,
 void SonicareCoordinator::subscribe(const std::string &service_uuid,
                                       const std::string &char_uuid) {
   if (!this->connected_) {
-    ESP_LOGW(TAG, "Cannot subscribe: not connected");
+    ESP_LOGW(this->log_tag_.c_str(), "Cannot subscribe: not connected");
     return;
   }
   if (!this->services_discovered_) {
     if (this->pending_calls_.size() >= MAX_PENDING_CALLS) {
-      ESP_LOGW(TAG, "Pending queue full — dropping subscribe for %s", char_uuid.c_str());
+      ESP_LOGW(this->log_tag_.c_str(), "Pending queue full — dropping subscribe for %s", char_uuid.c_str());
       return;
     }
-    ESP_LOGD(TAG, "Queueing subscribe of %s until service discovery completes",
+    ESP_LOGD(this->log_tag_.c_str(), "Queueing subscribe of %s until service discovery completes",
              char_uuid.c_str());
     this->pending_calls_.push_back(
         [this, service_uuid, char_uuid]() { this->subscribe(service_uuid, char_uuid); });
@@ -859,14 +857,14 @@ void SonicareCoordinator::subscribe(const std::string &service_uuid,
 
   auto *chr = this->parent_->get_characteristic(svc, chr_uuid_obj);
   if (chr == nullptr) {
-    ESP_LOGW(TAG, "Characteristic %s not found in service %s",
+    ESP_LOGW(this->log_tag_.c_str(), "Characteristic %s not found in service %s",
              char_uuid.c_str(), service_uuid.c_str());
     return;
   }
 
   // Check if already subscribed (e.g., restored after reconnect)
   if (this->notify_map_.count(chr->handle)) {
-    ESP_LOGD(TAG, "Already subscribed to %s (handle 0x%04X), skipping",
+    ESP_LOGD(this->log_tag_.c_str(), "Already subscribed to %s (handle 0x%04X), skipping",
              char_uuid.c_str(), chr->handle);
     return;
   }
@@ -890,7 +888,7 @@ void SonicareCoordinator::subscribe(const std::string &service_uuid,
         std::make_pair(service_uuid, char_uuid));
   }
 
-  ESP_LOGI(TAG, "Subscribing to %s (handle 0x%04X, cccd 0x%04X)...",
+  ESP_LOGI(this->log_tag_.c_str(), "Subscribing to %s (handle 0x%04X, cccd 0x%04X)...",
            char_uuid.c_str(), chr->handle, cccd_handle);
 
   auto status = esp_ble_gattc_register_for_notify(
@@ -899,7 +897,7 @@ void SonicareCoordinator::subscribe(const std::string &service_uuid,
       chr->handle);
 
   if (status != ESP_OK) {
-    ESP_LOGW(TAG, "Subscribe failed: %d", status);
+    ESP_LOGW(this->log_tag_.c_str(), "Subscribe failed: %d", status);
     this->notify_map_.erase(chr->handle);
     this->cccd_map_.erase(chr->handle);
   }
@@ -908,15 +906,15 @@ void SonicareCoordinator::subscribe(const std::string &service_uuid,
 void SonicareCoordinator::unsubscribe(const std::string &service_uuid,
                                         const std::string &char_uuid) {
   if (!this->connected_) {
-    ESP_LOGW(TAG, "Cannot unsubscribe: not connected");
+    ESP_LOGW(this->log_tag_.c_str(), "Cannot unsubscribe: not connected");
     return;
   }
   if (!this->services_discovered_) {
     if (this->pending_calls_.size() >= MAX_PENDING_CALLS) {
-      ESP_LOGW(TAG, "Pending queue full — dropping unsubscribe for %s", char_uuid.c_str());
+      ESP_LOGW(this->log_tag_.c_str(), "Pending queue full — dropping unsubscribe for %s", char_uuid.c_str());
       return;
     }
-    ESP_LOGD(TAG, "Queueing unsubscribe of %s until service discovery completes",
+    ESP_LOGD(this->log_tag_.c_str(), "Queueing unsubscribe of %s until service discovery completes",
              char_uuid.c_str());
     this->pending_calls_.push_back(
         [this, service_uuid, char_uuid]() { this->unsubscribe(service_uuid, char_uuid); });
@@ -928,7 +926,7 @@ void SonicareCoordinator::unsubscribe(const std::string &service_uuid,
 
   auto *chr = this->parent_->get_characteristic(svc, chr_uuid_obj);
   if (chr == nullptr) {
-    ESP_LOGW(TAG, "Characteristic %s not found in service %s",
+    ESP_LOGW(this->log_tag_.c_str(), "Characteristic %s not found in service %s",
              char_uuid.c_str(), service_uuid.c_str());
     return;
   }
@@ -942,7 +940,7 @@ void SonicareCoordinator::unsubscribe(const std::string &service_uuid,
     }
   }
 
-  ESP_LOGI(TAG, "Unsubscribing from %s (handle 0x%04X)...",
+  ESP_LOGI(this->log_tag_.c_str(), "Unsubscribing from %s (handle 0x%04X)...",
            char_uuid.c_str(), chr->handle);
 
   esp_ble_gattc_unregister_for_notify(
@@ -957,15 +955,15 @@ void SonicareCoordinator::write_characteristic(const std::string &service_uuid,
                                                  const std::string &char_uuid,
                                                  const std::string &hex_data) {
   if (!this->connected_) {
-    ESP_LOGW(TAG, "Cannot write: not connected");
+    ESP_LOGW(this->log_tag_.c_str(), "Cannot write: not connected");
     return;
   }
   if (!this->services_discovered_) {
     if (this->pending_calls_.size() >= MAX_PENDING_CALLS) {
-      ESP_LOGW(TAG, "Pending queue full — dropping write for %s", char_uuid.c_str());
+      ESP_LOGW(this->log_tag_.c_str(), "Pending queue full — dropping write for %s", char_uuid.c_str());
       return;
     }
-    ESP_LOGD(TAG, "Queueing write of %s until service discovery completes",
+    ESP_LOGD(this->log_tag_.c_str(), "Queueing write of %s until service discovery completes",
              char_uuid.c_str());
     this->pending_calls_.push_back(
         [this, service_uuid, char_uuid, hex_data]() {
@@ -979,7 +977,7 @@ void SonicareCoordinator::write_characteristic(const std::string &service_uuid,
 
   auto *chr = this->parent_->get_characteristic(svc, chr_uuid_obj);
   if (chr == nullptr) {
-    ESP_LOGW(TAG, "Characteristic %s not found in service %s",
+    ESP_LOGW(this->log_tag_.c_str(), "Characteristic %s not found in service %s",
              char_uuid.c_str(), service_uuid.c_str());
     return;
   }
@@ -987,11 +985,11 @@ void SonicareCoordinator::write_characteristic(const std::string &service_uuid,
   std::vector<uint8_t> bytes;
   size_t count = hex_data.length() / 2;
   if (count == 0 || !parse_hex(hex_data, bytes, count)) {
-    ESP_LOGW(TAG, "Invalid hex data: %s", hex_data.c_str());
+    ESP_LOGW(this->log_tag_.c_str(), "Invalid hex data: %s", hex_data.c_str());
     return;
   }
 
-  ESP_LOGI(TAG, "Writing %s (handle 0x%04X): %s (%d bytes)",
+  ESP_LOGI(this->log_tag_.c_str(), "Writing %s (handle 0x%04X): %s (%d bytes)",
            char_uuid.c_str(), chr->handle,
            hex_data.c_str(), bytes.size());
 
@@ -1005,13 +1003,13 @@ void SonicareCoordinator::write_characteristic(const std::string &service_uuid,
       ESP_GATT_AUTH_REQ_NONE);
 
   if (status != ESP_OK) {
-    ESP_LOGW(TAG, "Write request failed: %d", status);
+    ESP_LOGW(this->log_tag_.c_str(), "Write request failed: %d", status);
   }
 }
 
 void SonicareCoordinator::list_services() {
   if (this->parent_ == nullptr || !this->services_discovered_) {
-    ESP_LOGW(TAG, "list_services: not connected or service discovery incomplete");
+    ESP_LOGW(this->log_tag_.c_str(), "list_services: not connected or service discovery incomplete");
     return;
   }
 
@@ -1026,7 +1024,7 @@ void SonicareCoordinator::list_services() {
                                 ESP_GATT_ILLEGAL_HANDLE,
                                 &svc_count);
 
-  ESP_LOGI(TAG, "Listing %u service(s) on %s", svc_count, mac.c_str());
+  ESP_LOGI(this->log_tag_.c_str(), "Listing %u service(s) on %s", svc_count, mac.c_str());
 
   // One event per service to keep payload size below the API frame limit.
   // HA-side aggregates by collecting all events with matching mac until
@@ -1048,7 +1046,7 @@ void SonicareCoordinator::list_services() {
   auto *services = (esp_gattc_service_elem_t *) malloc(
       svc_count * sizeof(esp_gattc_service_elem_t));
   if (services == nullptr) {
-    ESP_LOGE(TAG, "list_services: malloc failed");
+    ESP_LOGE(this->log_tag_.c_str(), "list_services: malloc failed");
     return;
   }
 
@@ -1056,7 +1054,7 @@ void SonicareCoordinator::list_services() {
   esp_err_t err = esp_ble_gattc_get_service(gattc_if, conn_id, nullptr,
                                               services, &actual, 0);
   if (err != ESP_OK) {
-    ESP_LOGW(TAG, "esp_ble_gattc_get_service failed: %d", err);
+    ESP_LOGW(this->log_tag_.c_str(), "esp_ble_gattc_get_service failed: %d", err);
     free(services);
     return;
   }
@@ -1105,7 +1103,7 @@ void SonicareCoordinator::list_services() {
               chars_str += "/" + p;
           }
         } else {
-          ESP_LOGW(TAG, "esp_ble_gattc_get_all_char failed: %d", cerr);
+          ESP_LOGW(this->log_tag_.c_str(), "esp_ble_gattc_get_all_char failed: %d", cerr);
         }
         free(chars);
       }
@@ -1114,7 +1112,7 @@ void SonicareCoordinator::list_services() {
     char idx_buf[8];
     snprintf(idx_buf, sizeof(idx_buf), "%u", (unsigned) i);
 
-    ESP_LOGI(TAG, "  [%u] %s → %s", i, svc_uuid_str.c_str(),
+    ESP_LOGI(this->log_tag_.c_str(), "  [%u] %s → %s", i, svc_uuid_str.c_str(),
              chars_str.empty() ? "(no chars)" : chars_str.c_str());
 
     this->emit_(EVENT_SERVICES, {
@@ -1187,10 +1185,8 @@ std::map<std::string, std::string> SonicareCoordinator::collect_info_data() {
     info["model"] = this->model_number_;
   }
 
-  const std::string &bid = this->bridge_ ? this->bridge_->get_bridge_id()
-                                          : std::string();
-  ESP_LOGI(TAG, "Info[%s]: v%s uptime=%ss heap=%s subs=%s name=%s model=%s",
-           bid.empty() ? "default" : bid.c_str(),
+  ESP_LOGI(this->log_tag_.c_str(),
+           "Info: v%s uptime=%ss heap=%s subs=%s name=%s model=%s",
            PHILIPS_SONICARE_VERSION, uptime_str, heap_str, subs_str,
            this->remote_name_.empty() ? "(none)" : this->remote_name_.c_str(),
            this->model_number_.empty() ? "(none)" : this->model_number_.c_str());
@@ -1217,14 +1213,14 @@ uint16_t SonicareCoordinator::find_cccd_handle_(uint16_t char_handle) {
       &count);
 
   if (status == ESP_GATT_OK && count > 0) {
-    ESP_LOGD(TAG, "CCCD found via ESP-IDF API: handle 0x%04X for char 0x%04X",
+    ESP_LOGD(this->log_tag_.c_str(), "CCCD found via ESP-IDF API: handle 0x%04X for char 0x%04X",
              result.handle, char_handle);
     return result.handle;
   }
 
   // Fallback: handle + 1 (standard BLE layout)
   uint16_t fallback = char_handle + 1;
-  ESP_LOGW(TAG, "CCCD not found via API for char 0x%04X, using fallback 0x%04X",
+  ESP_LOGW(this->log_tag_.c_str(), "CCCD not found via API for char 0x%04X, using fallback 0x%04X",
            char_handle, fallback);
   return fallback;
 }
@@ -1239,7 +1235,7 @@ void SonicareCoordinator::resubscribe_all_() {
 
     auto *chr = this->parent_->get_characteristic(svc, chr_uuid);
     if (chr == nullptr) {
-      ESP_LOGW(TAG, "Resubscribe: characteristic %s not found, skipping",
+      ESP_LOGW(this->log_tag_.c_str(), "Resubscribe: characteristic %s not found, skipping",
                chr_uuid_str.c_str());
       continue;
     }
@@ -1255,10 +1251,10 @@ void SonicareCoordinator::resubscribe_all_() {
         chr->handle);
 
     if (status == ESP_OK) {
-      ESP_LOGI(TAG, "Resubscribe: %s (handle 0x%04X, cccd 0x%04X)",
+      ESP_LOGI(this->log_tag_.c_str(), "Resubscribe: %s (handle 0x%04X, cccd 0x%04X)",
                chr_uuid_str.c_str(), chr->handle, cccd_handle);
     } else {
-      ESP_LOGW(TAG, "Resubscribe failed for %s: %d",
+      ESP_LOGW(this->log_tag_.c_str(), "Resubscribe failed for %s: %d",
                chr_uuid_str.c_str(), status);
       this->notify_map_.erase(chr->handle);
       this->cccd_map_.erase(chr->handle);

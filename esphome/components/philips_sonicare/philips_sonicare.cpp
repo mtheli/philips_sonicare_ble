@@ -24,7 +24,7 @@ static const espbt::ESPBTUUID CONDOR_SERVICE_UUID =
 
 void PhilipsSonicare::setup() {
   if (this->coord_ == nullptr) {
-    ESP_LOGE(TAG, "Coordinator not wired — Worker disabled");
+    ESP_LOGE(this->log_tag_.c_str(), "Coordinator not wired — Worker disabled");
     this->mark_failed();
     return;
   }
@@ -49,7 +49,7 @@ void PhilipsSonicare::loop() {
 }
 
 void PhilipsSonicare::dump_config() {
-  ESP_LOGCONFIG(TAG, "Philips Sonicare worker v%s", PHILIPS_SONICARE_VERSION);
+  ESP_LOGCONFIG(this->log_tag_.c_str(), "Philips Sonicare worker v%s", PHILIPS_SONICARE_VERSION);
 }
 
 #endif  // USE_BLE_CLIENT
@@ -60,16 +60,16 @@ void PhilipsSonicareStandalone::setup() {
   // Restore identity address (if any) before tracker logic kicks in
   this->pref_ = global_preferences->make_preference<uint64_t>(this->pref_ns_);
   if (this->address_ != 0) {
-    ESP_LOGI(TAG, "Using configured MAC address — MAC mode");
+    ESP_LOGI(this->log_tag_.c_str(), "Using configured MAC address — MAC mode");
     this->uuid_scan_mode_ = false;
   } else {
     uint64_t stored = 0;
     if (this->pref_.load(&stored) && stored != 0) {
-      ESP_LOGI(TAG, "Loaded identity address from flash — MAC mode");
+      ESP_LOGI(this->log_tag_.c_str(), "Loaded identity address from flash — MAC mode");
       this->set_address(stored);
       this->uuid_scan_mode_ = false;
     } else {
-      ESP_LOGI(TAG, "No identity in flash — UUID scan mode (waiting for pair-mode)");
+      ESP_LOGI(this->log_tag_.c_str(), "No identity in flash — UUID scan mode (waiting for pair-mode)");
     }
   }
 
@@ -97,13 +97,13 @@ void PhilipsSonicareStandalone::setup() {
       this->uuid_scan_mode_ = true;
       this->set_address(0);
       if (prev != 0) {
-        ESP_LOGW(TAG,
+        ESP_LOGW(this->log_tag_.c_str(),
                  "Identity cleared (was %02X:%02X:%02X:%02X:%02X:%02X) — back to UUID scan mode",
                  (uint8_t)(prev >> 40), (uint8_t)(prev >> 32),
                  (uint8_t)(prev >> 24), (uint8_t)(prev >> 16),
                  (uint8_t)(prev >> 8),  (uint8_t)(prev));
       } else {
-        ESP_LOGW(TAG, "Identity cleared — back to UUID scan mode");
+        ESP_LOGW(this->log_tag_.c_str(), "Identity cleared — back to UUID scan mode");
       }
     });
     // Open-GATT pair complete: Coordinator detected success without SMP.
@@ -112,7 +112,7 @@ void PhilipsSonicareStandalone::setup() {
     this->coord_->set_save_identity_cb([this]() {
       auto *bda = this->get_remote_bda();
       uint64_t identity = esp32_ble::ble_addr_to_uint64(bda);
-      ESP_LOGI(TAG, "Open-GATT pair complete — saving identity %02X:%02X:%02X:%02X:%02X:%02X",
+      ESP_LOGI(this->log_tag_.c_str(), "Open-GATT pair complete — saving identity %02X:%02X:%02X:%02X:%02X:%02X",
                bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
       this->pref_.save(&identity);
       this->set_address(identity);
@@ -148,10 +148,10 @@ void PhilipsSonicareStandalone::set_enabled(bool enabled) {
   if (enabled == this->enabled_)
     return;
   if (!enabled && this->state() != espbt::ClientState::IDLE) {
-    ESP_LOGI(TAG, "Disabling BLE client.");
+    ESP_LOGI(this->log_tag_.c_str(), "Disabling BLE client.");
     auto err = esp_ble_gattc_close(this->gattc_if_, this->conn_id_);
     if (err != ESP_OK) {
-      ESP_LOGW(TAG, "esp_ble_gattc_close error, status=%d", err);
+      ESP_LOGW(this->log_tag_.c_str(), "esp_ble_gattc_close error, status=%d", err);
     }
   }
   this->enabled_ = enabled;
@@ -215,11 +215,11 @@ bool PhilipsSonicareStandalone::parse_device(const espbt::ESPBTDevice &device) {
     // (the brush may not advertise its service UUID in some adverts).
     if (device.address_str() != target)
       return false;
-    ESP_LOGI(TAG, "Pair-mode targeted match: %s", target.c_str());
+    ESP_LOGI(this->log_tag_.c_str(), "Pair-mode targeted match: %s", target.c_str());
   } else {
     if (matched_service.empty())
       return false;
-    ESP_LOGI(TAG, "Found Sonicare via UUID at %s (pair-mode, %s)",
+    ESP_LOGI(this->log_tag_.c_str(), "Found Sonicare via UUID at %s (pair-mode, %s)",
              device.address_str().c_str(), matched_service.c_str());
   }
 
@@ -260,7 +260,7 @@ void PhilipsSonicareStandalone::gap_event_handler(esp_gap_ble_cb_event_t event,
     uint64_t identity = esp32_ble::ble_addr_to_uint64(
         param->ble_security.auth_cmpl.bd_addr);
     const auto *bda = param->ble_security.auth_cmpl.bd_addr;
-    ESP_LOGI(TAG,
+    ESP_LOGI(this->log_tag_.c_str(),
              "Bonded — saving identity %02X:%02X:%02X:%02X:%02X:%02X, "
              "switching to MAC mode",
              bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);

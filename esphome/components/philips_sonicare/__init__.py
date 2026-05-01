@@ -118,14 +118,20 @@ async def to_code(config):
             "bridge_id is required when using multiple philips_sonicare instances."
         )
 
+    # Per-instance log tag — every ESP_LOG call routes through it so multi-bridge
+    # log streams are unambiguous and `logger:` can filter per bridge.
+    log_tag = f"philips_sonicare.{bridge_id}" if bridge_id else "philips_sonicare"
+
     # Coordinator (plain C++ object — owns BLE/GATT logic, no Component lifecycle)
     coord_var = cg.new_Pvariable(config[CONF_COORD_GENERATED_ID])
     cg.add(coord_var.set_notify_throttle(config[CONF_NOTIFY_THROTTLE]))
+    cg.add(coord_var.set_log_tag(log_tag))
 
     # Bridge (SonicareBridge) — HA service registration, event firing, sensors
     bridge_var = cg.new_Pvariable(config[CONF_BRIDGE_GENERATED_ID])
     await cg.register_component(bridge_var, config)
     cg.add(bridge_var.set_bridge_id(bridge_id))
+    cg.add(bridge_var.set_log_tag(log_tag))
     cg.add(bridge_var.set_coordinator(coord_var))
     cg.add(coord_var.set_bridge(bridge_var))
 
@@ -138,6 +144,7 @@ async def to_code(config):
         var = cg.new_Pvariable(config[CONF_ID])
         await cg.register_component(var, config)
         cg.add(var.set_coordinator(coord_var))
+        cg.add(var.set_log_tag(log_tag))
         await ble_client.register_ble_node(var, config)
     else:
         # Mode B: PhilipsSonicareStandalone — extends BLEClientBase directly,
@@ -145,6 +152,7 @@ async def to_code(config):
         var = cg.new_Pvariable(config[CONF_ID])
         await cg.register_component(var, config)
         cg.add(var.set_coordinator(coord_var))
+        cg.add(var.set_log_tag(log_tag))
 
         pref_ns = zlib.crc32(config[CONF_ID].id.encode())
         cg.add(var.set_pref_namespace(pref_ns))

@@ -41,9 +41,12 @@ class PhilipsSonicare : public ble_client::BLEClientNode, public Component {
   }
 
   void set_coordinator(SonicareCoordinator *coord) { this->coord_ = coord; }
+  // Per-instance log tag, set in to_code() — see SonicareBridge::set_log_tag.
+  void set_log_tag(const std::string &tag) { this->log_tag_ = tag; }
 
  protected:
   SonicareCoordinator *coord_{nullptr};
+  std::string log_tag_;  // fallback to file-scope TAG until set
 };
 #endif  // USE_BLE_CLIENT
 
@@ -65,9 +68,12 @@ class PhilipsSonicareStandalone : public esp32_ble_client::BLEClientBase {
   void set_coordinator(SonicareCoordinator *coord) { this->coord_ = coord; }
   void set_pref_namespace(uint32_t ns) { this->pref_ns_ = ns; }
   void set_enabled(bool enabled);
+  // Per-instance log tag, set in to_code() — see SonicareBridge::set_log_tag.
+  void set_log_tag(const std::string &tag) { this->log_tag_ = tag; }
 
  protected:
   SonicareCoordinator *coord_{nullptr};
+  std::string log_tag_;  // fallback to file-scope TAG until set
   bool uuid_scan_mode_{true};
   bool enabled_{true};
   uint32_t pref_ns_{0};

@@ -20,7 +20,7 @@ namespace philips_sonicare {
 class SonicareBridge;  // forward — defined in bridge.h
 
 // HA event names — used by both Worker and Bridge
-static const char *const PHILIPS_SONICARE_VERSION = "1.3.0";
+static const char *const PHILIPS_SONICARE_VERSION = "1.3.1";
 static const char *const EVENT_STATUS = "esphome.philips_sonicare_ble_status";
 static const char *const EVENT_DATA = "esphome.philips_sonicare_ble_data";
 static const char *const EVENT_SERVICES = "esphome.philips_sonicare_ble_services";
@@ -52,6 +52,11 @@ class SonicareCoordinator {
     this->on_disconnect_cb_ = std::move(cb);
   }
   void set_notify_throttle(uint32_t ms) { this->notify_throttle_ms_ = ms; }
+  // Per-instance log tag, set in to_code(): "philips_sonicare" (single-bridge)
+  // or "philips_sonicare.<bridge_id>" (multi-bridge). Used by all ESP_LOG calls
+  // in this class so each bridge's lines are distinguishable in the log stream
+  // and the logger: filter can target a single bridge by suffix.
+  void set_log_tag(const std::string &tag) { this->log_tag_ = tag; }
   // Mode + bound MAC are reported in collect_info_data / heartbeat so HA can
   // detect whether this Bridge supports the new pair-mode flow.
   void set_mode(const std::string &mode) { this->mode_ = mode; }
@@ -126,6 +131,7 @@ class SonicareCoordinator {
  protected:
   esp32_ble_client::BLEClientBase *parent_{nullptr};
   SonicareBridge *bridge_{nullptr};
+  std::string log_tag_;  // see set_log_tag() — fallback to file-scope TAG until set
   std::function<void(bool)> set_enabled_cb_;
   std::function<void(const std::string &, const std::string &)> on_ready_cb_;
   std::function<void(const std::string &, const std::string &)> on_disconnect_cb_;

@@ -26,6 +26,11 @@ class SonicareBridge : public Component, public api::CustomAPIDevice {
 
   void set_coordinator(SonicareCoordinator *coord) { this->coord_ = coord; }
   void set_bridge_id(const std::string &id) { this->bridge_id_ = id; }
+  // Per-instance log tag, set in to_code(): "philips_sonicare" (single-bridge)
+  // or "philips_sonicare.<bridge_id>" (multi-bridge). Used by all ESP_LOG calls
+  // in this class so each bridge's lines are distinguishable in the log stream
+  // and the logger: filter can target a single bridge by suffix.
+  void set_log_tag(const std::string &tag) { this->log_tag_ = tag; }
   void set_connected_sensor(binary_sensor::BinarySensor *s) {
     this->connected_sensor_ = s;
   }
@@ -40,6 +45,7 @@ class SonicareBridge : public Component, public api::CustomAPIDevice {
  protected:
   SonicareCoordinator *coord_{nullptr};
   std::string bridge_id_;
+  std::string log_tag_;  // see set_log_tag() — fallback to file-scope TAG until set
   binary_sensor::BinarySensor *connected_sensor_{nullptr};
   uint32_t last_heartbeat_ms_{0};
   static const uint32_t HEARTBEAT_INTERVAL_MS = 15000;

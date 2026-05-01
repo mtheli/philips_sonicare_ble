@@ -217,24 +217,24 @@ depends on which configuration path you chose.
 any connection on its own; it waits for the HA setup flow to arm pair-mode:
 
 ```
-[I][philips_sonicare.bridge:065]: Services registered (suffix: 'default')
+[I][philips_sonicare:065]: Services registered
 [I][philips_sonicare:072]: No identity in flash — UUID scan mode (waiting for pair-mode)
-[C][philips_sonicare.bridge:110]: Philips Sonicare Bridge v1.3.0
-[C][philips_sonicare.bridge:112]:   Bridge ID: default
+[C][philips_sonicare:110]: Philips Sonicare Bridge v1.3.0
 ```
 
 The `No identity in flash — UUID scan mode` line confirms the bridge is up and
-waiting for pair-mode. (`suffix: 'default'` becomes the actual `bridge_id` you
-configured — `'kids'` / `'prestige'` etc. — for multi-bridge setups.)
+waiting for pair-mode. In multi-bridge setups, the log tag becomes
+`philips_sonicare.<bridge_id>` (e.g. `philips_sonicare.kids`,
+`philips_sonicare.prestige`) so each bridge's lines are identifiable in the
+stream and `logger:` filters can target a single bridge by suffix.
 
 **Fixed MAC** — the bridge logs the configured MAC and starts connecting
 immediately:
 
 ```
-[I][philips_sonicare.bridge:065]: Services registered (suffix: 'default')
+[I][philips_sonicare:065]: Services registered
 [I][philips_sonicare:063]: Using configured MAC address — MAC mode
-[C][philips_sonicare.bridge:110]: Philips Sonicare Bridge v1.3.0
-[C][philips_sonicare.bridge:112]:   Bridge ID: default
+[C][philips_sonicare:110]: Philips Sonicare Bridge v1.3.0
 ```
 
 After a successful pair, subsequent boots show the brush reconnecting on its own:
@@ -297,7 +297,7 @@ A successful pair-mode run on the ESP looks like this:
 [I][philips_sonicare:213]: Found Sonicare via UUID at AA:BB:CC:DD:EE:FF (pair-mode, classic)
 [I][esp32_ble_client:125]: [1] [AA:BB:CC:DD:EE:FF] 0x00 Connecting
 [I][esp32_ble_client:343]: [1] [AA:BB:CC:DD:EE:FF] Connection open
-[I][philips_sonicare:301]: Connected to Sonicare (AA:BB:CC:DD:EE:FF, bridge=prestige)
+[I][philips_sonicare:301]: Connected to Sonicare (AA:BB:CC:DD:EE:FF)
 [I][esp32_ble_client:570]: [1] [AA:BB:CC:DD:EE:FF] auth complete addr: AA:BB:CC:DD:EE:FF
 [D][esp32_ble_client:575]: [1] [AA:BB:CC:DD:EE:FF] auth success type = 0 mode = 9
 [I][philips_sonicare:253]: Bonded — saving identity address, switching to MAC mode
