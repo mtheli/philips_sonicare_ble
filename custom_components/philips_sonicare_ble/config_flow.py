@@ -295,14 +295,31 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             # discovered and no bond exists yet — mirrors the ESP bridge's
             # esp_ble_set_encryption() trigger on Condor detection.
             if SVC_CONDOR.lower() in gatt_services:
-                from .dbus_pairing import async_is_device_paired
+                from .dbus_pairing import (
+                    PairingError,
+                    async_is_device_paired,
+                    async_pair_via_existing_client,
+                )
                 if not await async_is_device_paired(address):
                     _LOGGER.info(
                         "%s: Condor service present without a bond — "
-                        "requesting auto-pair before continuing",
+                        "pairing on the existing probe connection",
                         address,
                     )
-                    raise NotPairedException("Condor brush requires bonding")
+                    try:
+                        await async_pair_via_existing_client(client, address)
+                        # let BlueZ settle SMP/encryption before reads
+                        await asyncio.sleep(0.5)
+                    except PairingError as err:
+                        _LOGGER.warning(
+                            "%s: in-place pairing failed (%s) — "
+                            "falling back to disconnect+reconnect pair",
+                            address,
+                            err,
+                        )
+                        raise NotPairedException(
+                            "Condor brush requires bonding"
+                        ) from err
 
             for char_uuid, key in (
                 (CHAR_BATTERY_LEVEL, "battery"),

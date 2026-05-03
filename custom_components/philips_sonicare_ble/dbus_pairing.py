@@ -168,6 +168,93 @@ async def async_remove_device(mac: str) -> bool:
             bus.disconnect()
 
 
+async def async_pair_via_existing_client(client, mac: str) -> None:
+    """Pair on an already-connected BleakClient — keeps the ACL link.
+
+    Used for devices that rotate their advertisement address (RPA) and
+    can't survive a probe-disconnect → BlueZ re-connect cycle: BlueZ
+    tries the now-stale address and times out with "Page Timeout".
+
+    Bleak's ``client.pair()`` calls ``Device1.Pair()`` on the existing
+    device path (and sets ``Trusted=True`` first), so BlueZ runs SMP
+    on the live ACL — no LL re-connect, no race window for the RPA
+    to rotate.
+
+    Caller must keep ``client`` connected for the duration. The agent
+    must be registered before any encrypted GATT access (e.g. an
+    explicit ``client.pair()``); registering it here covers that.
+
+    Raises PairingError on failure. On success the device is bonded
+    and the connection remains usable for further reads.
+    """
+    bus: MessageBus | None = None
+    agent_registered = False
+
+    try:
+        bus = MessageBus(bus_type=BusType.SYSTEM)
+        await bus.connect()
+
+        agent = _AutoConfirmAgent()
+        bus.export(AGENT_PATH, agent)
+
+        bluez_intro = await bus.introspect("org.bluez", "/org/bluez")
+        bluez_proxy = bus.get_proxy_object(
+            "org.bluez", "/org/bluez", bluez_intro
+        )
+        agent_mgr = bluez_proxy.get_interface("org.bluez.AgentManager1")
+
+        try:
+            await agent_mgr.call_register_agent(AGENT_PATH, AGENT_CAPABILITY)
+            agent_registered = True
+        except DBusError as err:
+            # AlreadyExists → another flow already has our agent registered;
+            # safe to proceed (default agent will still hit our handler).
+            if "AlreadyExists" not in str(err):
+                raise PairingError(
+                    f"Could not register pairing agent: {err}"
+                ) from err
+            agent_registered = True
+
+        try:
+            await agent_mgr.call_request_default_agent(AGENT_PATH)
+        except DBusError as err:
+            _LOGGER.debug("RequestDefaultAgent failed: %s (continuing)", err)
+
+        _LOGGER.info("Pairing %s on existing connection ...", mac)
+        try:
+            await asyncio.wait_for(client.pair(), timeout=PAIR_TIMEOUT)
+        except asyncio.TimeoutError:
+            raise PairingError(
+                f"In-place pairing timed out after {PAIR_TIMEOUT}s"
+            ) from None
+        except Exception as err:  # noqa: BLE001
+            raise PairingError(f"In-place pairing failed: {err}") from err
+
+        _LOGGER.info("In-place pairing successful for %s", mac)
+
+    finally:
+        if bus and bus.connected:
+            if agent_registered:
+                try:
+                    bluez_intro2 = await bus.introspect(
+                        "org.bluez", "/org/bluez"
+                    )
+                    bluez_proxy2 = bus.get_proxy_object(
+                        "org.bluez", "/org/bluez", bluez_intro2
+                    )
+                    agent_mgr2 = bluez_proxy2.get_interface(
+                        "org.bluez.AgentManager1"
+                    )
+                    await agent_mgr2.call_unregister_agent(AGENT_PATH)
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                bus.unexport(AGENT_PATH)
+            except Exception:  # noqa: BLE001
+                pass
+            bus.disconnect()
+
+
 async def async_pair_and_trust(mac: str) -> None:
     """Pair and trust a BLE device via BlueZ D-Bus.
 
