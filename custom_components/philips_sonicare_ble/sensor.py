@@ -37,7 +37,23 @@ from .const import (
     number_of_sectors_for_model,
     current_sector,
 )
+from .condor_adapter import CONDOR_BRUSHING_MODES
 from .entity import PhilipsSonicareEntity, PhilipsBrushHeadEntity, PhilipsConnectionEntity
+
+# Union of every brushing-mode label the integration may receive. Classic
+# (Prestige) and Condor (HX742X+) share the 0..5 ordinal but use different
+# labels for modes 1, 2 and 4 (e.g. ``white_plus`` vs ``white``). The
+# read-only sensor accepts both label sets so SensorDeviceClass.ENUM
+# validation passes regardless of which protocol drives the device.
+ALL_BRUSHING_MODE_LABELS: list[str] = list(
+    dict.fromkeys(
+        list(BRUSHING_MODES.values()) + list(CONDOR_BRUSHING_MODES.values())
+    )
+)
+BRUSHING_MODE_VALUE_BY_LABEL: dict[str, int] = {
+    **{v: k for k, v in BRUSHING_MODES.items()},
+    **{v: k for k, v in CONDOR_BRUSHING_MODES.items()},
+}
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -188,11 +204,11 @@ class SonicareHandleStateSensor(PhilipsSonicareEntity, SensorEntity):
 # Brushing Mode
 # ---------------------------------------------------------------------------
 class SonicareBrushingModeSensor(PhilipsSonicareEntity, SensorEntity):
-    """Brushing mode sensor (clean, white+, gum_health, deep_clean+)."""
+    """Brushing mode sensor — accepts both Classic and Condor labels."""
 
     _attr_translation_key = "brushing_mode"
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = list(BRUSHING_MODES.values())
+    _attr_options = ALL_BRUSHING_MODE_LABELS
     _data_key = "brushing_mode"
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
@@ -203,9 +219,10 @@ class SonicareBrushingModeSensor(PhilipsSonicareEntity, SensorEntity):
         if self.coordinator.data is None:
             self.coordinator.data = {}
         self.coordinator.data["brushing_mode"] = state
-        reverse = {v: k for k, v in BRUSHING_MODES.items()}
-        if state in reverse:
-            self.coordinator.data["brushing_mode_value"] = reverse[state]
+        if state in BRUSHING_MODE_VALUE_BY_LABEL:
+            self.coordinator.data["brushing_mode_value"] = (
+                BRUSHING_MODE_VALUE_BY_LABEL[state]
+            )
 
     @property
     def native_value(self) -> str | None:

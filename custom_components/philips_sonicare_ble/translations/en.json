@@ -132,8 +132,11 @@
         "state": {
           "clean": "Clean",
           "white_plus": "White+",
+          "white": "White",
           "gum_health": "Gum Health",
+          "gum_care": "Gum Care",
           "deep_clean_plus": "Deep Clean+",
+          "deep_clean": "Deep Clean",
           "sensitive": "Sensitive",
           "tongue_care": "Tongue Care"
         }
