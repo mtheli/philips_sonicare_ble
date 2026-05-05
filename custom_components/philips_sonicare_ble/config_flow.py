@@ -1378,10 +1378,23 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     "", self._esp_device_name, self._esp_bridge_id,
                 )
 
-                sonicare_mac = capabilities.get("sonicare_mac")
-                if sonicare_mac:
+                # Prefer the NVS-persisted identity over the live
+                # remote_bda. Equal for static-address brushes, but only
+                # identity stays valid when the brush is idle and only
+                # identity is RPA-stable on Condor.
+                def _valid_addr(raw: str) -> str:
+                    cleaned = (raw or "").upper()
+                    return cleaned if cleaned and cleaned != "00:00:00:00:00:00" else ""
+
+                identity = _valid_addr(
+                    (self._bridge_info or {}).get("identity_address", "")
+                )
+                sonicare_mac = capabilities.get("sonicare_mac", "")
+                canonical_addr = identity or _valid_addr(sonicare_mac)
+
+                if canonical_addr:
                     await self.async_set_unique_id(
-                        sonicare_mac.upper(), raise_on_progress=False
+                        canonical_addr, raise_on_progress=False
                     )
                 else:
                     await self.async_set_unique_id(f"esp_{self._esp_device_name}")
@@ -1395,7 +1408,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     capabilities["pairing"] = "open_gatt"
 
                 self._fetched_data = capabilities
-                self._address = sonicare_mac
+                self._address = canonical_addr or None
                 model = capabilities.get("model")
                 self._name = model if model else self._esp_device_name
                 self._transport_type = TRANSPORT_ESP_BRIDGE
