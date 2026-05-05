@@ -157,6 +157,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._live_task: asyncio.Task | None = None
         self._live_setup_done = False
         self._full_read_done = False
+        self._last_adapter_type: str | None = None
         self._unsub_adv_debug = None
         self._dbus_bus: MessageBus | None = None
         self._wake_event = asyncio.Event()
@@ -779,6 +780,102 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         finally:
             self._brushhead_read_pending = False
 
+    @property
+    def adapter_type(self) -> str:
+        """Classify the active BLE transport.
+
+        Returned values:
+
+        - ``esp_bridge`` — our custom ESPHome component (proactive
+          ``esp_ble_set_encryption()`` on bonded devices)
+        - ``direct_ble`` — host BlueZ adapter via bleak (BlueZ encrypts
+          proactively when a bond exists)
+        - ``stock_proxy`` — stock ESPHome ``bluetooth_proxy`` reached
+          via the habluetooth wrapper (Bluedroid lazy encryption)
+        - ``unknown`` — not connected, or backend type not recognised
+
+        The distinction matters for setup-time SMP behaviour (Issue #6,
+        doff-1): only ``stock_proxy`` needs the eager probe-read before
+        the subscribe burst.
+        """
+        if self._is_esp_bridge:
+            return "esp_bridge"
+        if self._last_adapter_type is not None and not self.transport.is_connected:
+            return self._last_adapter_type
+        client = getattr(self.transport, "_client", None)
+        backend = getattr(client, "_backend", None) if client else None
+        if backend is None:
+            return self._last_adapter_type or "unknown"
+        mod = type(backend).__module__ or ""
+        if "bluezdbus" in mod:
+            self._last_adapter_type = "direct_ble"
+        elif "esphome" in mod:
+            self._last_adapter_type = "stock_proxy"
+        else:
+            return self._last_adapter_type or "unknown"
+        return self._last_adapter_type
+
+    def _scanner_needs_eager_smp(self) -> bool:
+        """True when the active transport is a stock ``bluetooth_proxy``."""
+        return self.adapter_type == "stock_proxy"
+
+    async def _eager_smp_probe(self) -> None:
+        """Poll-read ``CHAR_HANDLE_STATE`` until it succeeds, signalling
+        that SMP has finished and the link is encrypted.
+
+        The first attempt triggers SMP on lazy-encrypt stacks (Bluedroid
+        in stock ``bluetooth_proxy``). Each subsequent attempt costs
+        one ATT round-trip (~50–100 ms) and either fails again with
+        Insufficient-auth (SMP still in flight) or succeeds (SMP done).
+
+        Returning only after a successful read means the regular read
+        burst that follows runs against an already-encrypted link, so
+        none of the user-facing chars need to retry — and the subscribe
+        burst after that is unconditionally safe.
+
+        Capped at a 3 s deadline so a genuinely broken bond doesn't
+        hang setup; if we time out we proceed anyway (the ``_setup``
+        path's existing per-char failures still apply).
+        """
+        if not self.transport.is_connected:
+            return
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
+        deadline = t0 + 3.0
+        poll_interval = 0.2
+        attempt = 0
+        while True:
+            attempt += 1
+            if not self.transport.is_connected:
+                _LOGGER.debug(
+                    "%s: SMP probe aborted — transport disconnected after "
+                    "%d attempt(s)",
+                    self.address, attempt,
+                )
+                return
+            value = await self.transport.read_char(CHAR_HANDLE_STATE)
+            elapsed_ms = (loop.time() - t0) * 1000
+            if value is not None:
+                _LOGGER.info(
+                    "%s: SMP ready after %d probe(s) in %.0f ms — "
+                    "link is encrypted",
+                    self.address, attempt, elapsed_ms,
+                )
+                return
+            if loop.time() >= deadline:
+                err_text = (
+                    self.transport.pop_read_error(CHAR_HANDLE_STATE)
+                    or "no response"
+                )
+                _LOGGER.warning(
+                    "%s: SMP probe didn't succeed within 3 s after %d "
+                    "attempt(s) (last error: %s) — proceeding anyway, "
+                    "subscribes may fail",
+                    self.address, attempt, err_text,
+                )
+                return
+            await asyncio.sleep(poll_interval)
+
     async def _setup_classic_session(self) -> int:
         """Classic protocol setup: batch reads then CCCD notifications.
 
@@ -787,6 +884,20 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         subset. Returns the count of successful subscriptions so the
         caller can fail the session if the device answered nothing.
         """
+        if self._scanner_needs_eager_smp():
+            _LOGGER.info(
+                "%s: stock bluetooth_proxy detected — polling SMP probe "
+                "until link is encrypted",
+                self.address,
+            )
+            await self._eager_smp_probe()
+        else:
+            _LOGGER.debug(
+                "%s: transport handles encryption proactively — skipping "
+                "eager SMP probe",
+                self.address,
+            )
+
         read_chars = (
             self._poll_chars
             if not self._full_read_done
