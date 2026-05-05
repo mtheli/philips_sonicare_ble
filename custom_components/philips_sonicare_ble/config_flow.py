@@ -555,8 +555,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         """Why a service is absent on this device, if we can explain it."""
         if family == "condor" and uuid_lower in _CLASSIC_SERVICE_UUIDS:
             return "via Condor protocol"
-        if uuid_lower == SVC_CONDOR.lower():
-            return "for HX7100+ models"
         if family == "mode_b":
             return "not on this model"
         return ""
@@ -588,6 +586,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             name = SERVICE_NAMES.get(uuid)
             if not name:
                 continue
+            # Condor only exists on HX7100+ — hide the row entirely for
+            # other families instead of showing a permanent ❌.
+            if uuid == SVC_CONDOR.lower() and family != "condor":
+                continue
             feature = SERVICE_FEATURES.get(uuid, "")
             if uuid in fetched_lower:
                 found_rows.append(_row("✅", name, feature))
@@ -614,8 +616,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         footer_for = {
             "not on this model":
                 "❌ entries are not available on this model.",
-            "for HX7100+ models":
-                "Condor protocol is exclusive to HX7100+ (Series 7100+).",
             "via Condor protocol":
                 "Classic feature services are replaced by the Condor "
                 "protocol on this model.",
