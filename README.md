@@ -63,7 +63,7 @@ See [Configuration](#configuration) for setup instructions.
 Any BLE-enabled Philips Sonicare toothbrush using either the standard or the newer Series 7100+ protocol should work (Sonicare For Kids, ExpertClean, DiamondClean Smart, DiamondClean 9000, DiamondClean Prestige, Series 7100, and more). The integration auto-discovers compatible devices via BLE and selects the right protocol automatically. If you have a different model — happy to hear your test results!
 
 > [!NOTE]
-> Some models (ExpertClean, HX991M, DiamondClean Prestige) require **BLE bonding**. The integration detects this automatically and pairs the device during setup. Models like DiamondClean Smart and Sonicare For Kids use open GATT and connect without pairing.
+> Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100) require **BLE bonding**. The integration detects this automatically and pairs the device during setup. Models like DiamondClean Smart and Sonicare For Kids use open GATT and connect without pairing. Series 7100 brushes additionally use a **rolling private address (RPA)** that changes every few minutes — bonding is what allows the host to follow the brush across address rotations.
 
 ---
 
@@ -138,7 +138,12 @@ These sensors are only available while actively brushing and stream live data fr
 | **Firmware** | Sensor | Installed firmware version. |
 | **Last Seen** | Sensor | Timestamp of last successful data read. |
 | **RSSI** | Sensor | BLE signal strength in dBm (Direct BLE only). |
+| **Adapter** | Sensor | Name/path of the BLE adapter currently carrying the link (e.g. `hci0`, ESP device name + bridge slot). |
+| **Adapter Type** | Sensor | Transport classification: *Direct Bluetooth* / *ESP Bridge* / *Bluetooth Proxy*. |
 | **Bridge Version** | Sensor | ESP bridge firmware version (ESP Bridge only). |
+| **Bridge Last Boot** | Sensor | Timestamp the ESP bridge last booted — useful for detecting unattended reboots (ESP Bridge only). |
+| **ESP Bridge** | Binary | Whether the ESP bridge is reachable and sending heartbeats (ESP Bridge only). |
+| **BLE Connected** | Binary | Whether the GATT link to the toothbrush is currently up. |
 
 ---
 
@@ -146,7 +151,7 @@ These sensors are only available while actively brushing and stream live data fr
 
 * A compatible Philips Sonicare toothbrush (see [Tested Models](#tested-models) above).
 * **Either** a Home Assistant instance with the **Bluetooth integration** enabled and a working Bluetooth adapter, **or** an ESP32 running the [BLE Bridge component](docs/ESP32_BRIDGE.md).
-* **Pairing depends on the model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X), DiamondClean Prestige (HX999X), and HX991M require BLE pairing. The integration handles both cases automatically. Simply close any Sonicare phone app to free the BLE connection.
+* **Pairing depends on the model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X), DiamondClean Prestige (HX999X), HX991M, and Series 7100 (HX742X) require BLE pairing. The integration handles both cases automatically. Series 7100 brushes additionally use a rolling private address (RPA) that changes every few minutes — bonding lets the host follow the brush across address rotations. Simply close any Sonicare phone app to free the BLE connection.
 
 > [!NOTE]
 > The toothbrush only advertises via BLE for a short time after being picked up from the charger or turned on/off. It enters deep sleep after approximately 20 seconds of inactivity. While on the charging stand, it is **not reachable** via BLE.
@@ -178,9 +183,11 @@ The integration supports three connection methods:
 
 | | Method | Best for |
 | :--- | :--- | :--- |
-| **[Option A](#option-a-direct-bluetooth)** | **Direct Bluetooth** | HA host within Bluetooth range of the toothbrush (typically 5–10 m / 15–30 ft) |
-| **[Option B](#option-b-esp32-ble-bridge)** | **ESP32 BLE Bridge** ★ | **Recommended for out-of-range setups.** Multiple devices, live data streaming, full notification throttling |
+| **[Option A](#option-a-direct-bluetooth)** ⭐ | **Direct Bluetooth** | HA host within Bluetooth range of the toothbrush (typically 5–10 m / 15–30 ft) |
+| **[Option B](#option-b-esp32-ble-bridge)** ⭐ | **ESP32 BLE Bridge** | **Recommended for out-of-range setups.** Multiple devices, live data streaming, full notification throttling |
 | **[Option C](#option-c-bluetooth-proxy)** | **Bluetooth Proxy** | Single Sonicare, existing `bluetooth_proxy` — **not recommended, see warning below** |
+
+⭐ = recommended path
 
 > [!IMPORTANT]
 > Both proxy/bridge paths on ESP32 are affected by an [ESP-IDF bug](https://github.com/esphome/esphome/issues/15783) that crashes GATT service discovery. A [compile-time workaround](docs/KNOWN_ISSUES.md#workaround) is available and required until ESP-IDF v5.5.5 ships (expected mid-May 2026).
@@ -194,7 +201,7 @@ The integration supports three connection methods:
 4.  The confirmation dialog shows the current brush status and detected services. Make sure the toothbrush is **turned on** (status shows "Active") before clicking **Submit**.
 
 > [!TIP]
-> Some models (ExpertClean, HX991M) require BLE bonding -- the integration detects this automatically and pairs the device during setup via D-Bus. If auto-pairing is not available (e.g. HAOS without D-Bus), manual pairing instructions are shown. Simply close the Sonicare phone app to free the BLE connection.
+> Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100) require BLE bonding -- the integration detects this automatically and pairs the device during setup via D-Bus. If auto-pairing is not available (e.g. HAOS without D-Bus), manual pairing instructions are shown. Series 7100 brushes also rotate their advertised BLE address (RPA) every few minutes, so an unbonded brush appears under different MACs on each scan; bonding pins it to a stable identity. Simply close the Sonicare phone app to free the BLE connection.
 
 ### Option B: ESP32 BLE Bridge
 
@@ -243,7 +250,7 @@ The Sonicare toothbrush has unique BLE behavior compared to other Philips device
 
 * **Slow advertising** -- the toothbrush sends BLE advertisements only every 10-30 seconds (most BLE devices: every 100-500ms).
 * **Short wake window** -- after turning off, the toothbrush stays connectable for only ~20 seconds before entering deep sleep.
-* **Pairing varies by model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X), DiamondClean Prestige (HX999X), and HX991M require BLE pairing. The integration handles both cases automatically.
+* **Pairing varies by model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X), DiamondClean Prestige (HX999X), HX991M, and Series 7100 (HX742X) require BLE pairing. The integration handles both cases automatically. Series 7100 brushes also use rolling private addresses (RPA) that change every few minutes — bonding pins them to a stable identity that survives the rotations.
 
 The integration handles this with:
 
