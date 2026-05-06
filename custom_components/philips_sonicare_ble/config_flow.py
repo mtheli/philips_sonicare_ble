@@ -108,7 +108,7 @@ SERVICE_NAMES: dict[str, str] = {
     SVC_DIAGNOSTIC.lower(): "Diagnostic",
     SVC_EXTENDED.lower(): "Extended / Settings",
     SVC_BYTESTREAM.lower(): "ByteStreaming",
-    SVC_CONDOR.lower(): "Condor (Series 7100+)",
+    SVC_CONDOR.lower(): "Condor (HX742X / Series 7100)",
 }
 
 # What each service enables in HA — shown as the "Provides" column.
@@ -123,7 +123,7 @@ SERVICE_FEATURES: dict[str, str] = {
     SVC_DIAGNOSTIC.lower(): "Error log",
     SVC_EXTENDED.lower(): "Adaptive intensity, feedback toggles",
     SVC_BYTESTREAM.lower(): "Streaming data channel",
-    SVC_CONDOR.lower(): "Newer protocol (HX7100+)",
+    SVC_CONDOR.lower(): "Newer transport protocol (HX742X)",
 }
 
 # Classic services that the Condor protocol replaces with its single
@@ -286,7 +286,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             if gatt_services:
                 result["services"] = gatt_services
 
-            # Condor brushes (HX742X / Series 7100+) require BLE bonding
+            # Condor brushes (HX742X / Series 7100) require BLE bonding
             # before the e50b… handshake's first CCCD write is accepted.
             # The probe below only touches Device-Info chars which are
             # open-read on these devices, so the bond requirement wouldn't
@@ -586,7 +586,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             name = SERVICE_NAMES.get(uuid)
             if not name:
                 continue
-            # Condor only exists on HX7100+ — hide the row entirely for
+            # Condor only exists on HX742X (Series 7100) — hide the row entirely for
             # other families instead of showing a permanent ❌.
             if uuid == SVC_CONDOR.lower() and family != "condor":
                 continue

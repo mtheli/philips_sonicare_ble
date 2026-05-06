@@ -49,6 +49,7 @@ See [Configuration](#configuration) for setup instructions.
 | HX9120 | *not yet tested* | *not yet tested* | — |
 | **ExpertClean** | | | |
 | [HX962V](https://www.usa.philips.com/c-m-pe/dental-professionals/products/tooth-brushes/expertclean) | — | :white_check_mark: | Community ([#1](https://github.com/mtheli/philips_sonicare_ble/issues/1)) |
+| HX960V (ExpertClean 7300) | :white_check_mark: | :white_check_mark: | Maintainer |
 | **DiamondClean Smart** | | | |
 | [HX992X](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app) | :white_check_mark: | :white_check_mark: | Maintainer |
 | **DiamondClean 9000** | | | |
@@ -60,7 +61,7 @@ See [Configuration](#configuration) for setup instructions.
 | **Series 7100** | | | |
 | [HX742X](https://www.usa.philips.com/c-p/HX7423_43/sonicare-7100) | :white_check_mark: | *not yet tested* | Community ([#4](https://github.com/mtheli/philips_sonicare_ble/issues/4)) |
 
-Any BLE-enabled Philips Sonicare toothbrush using either the standard or the newer Series 7100+ protocol should work (Sonicare For Kids, ExpertClean, DiamondClean Smart, DiamondClean 9000, DiamondClean Prestige, Series 7100, and more). The integration auto-discovers compatible devices via BLE and selects the right protocol automatically. If you have a different model — happy to hear your test results!
+Any BLE-enabled Philips Sonicare toothbrush using either the standard protocol or the newer Condor protocol (HX742X / Series 7100) should work (Sonicare For Kids, ExpertClean, DiamondClean Smart, DiamondClean 9000, DiamondClean Prestige, Series 7100, and more). The integration auto-discovers compatible devices via BLE and selects the right protocol automatically. If you have a different model — happy to hear your test results!
 
 > [!NOTE]
 > Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100) require **BLE bonding**. The integration detects this automatically and pairs the device during setup. Models like DiamondClean Smart and Sonicare For Kids use open GATT and connect without pairing. Series 7100 brushes additionally use a **rolling private address (RPA)** that changes every few minutes — bonding is what allows the host to follow the brush across address rotations.

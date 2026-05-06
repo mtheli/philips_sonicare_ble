@@ -306,7 +306,7 @@ A successful pair-mode run on the ESP looks like this:
 
 The `(pair-mode, classic)` token identifies the brush family — `classic` for
 the per-feature service-based protocol (HX9XXX etc.), `condor` for the
-HX742X / Series 7100+ framed transport. After `Bonded — saving identity address`
+HX742X / Series 7100 framed transport. After `Bonded — saving identity address`
 the bridge writes the bond to NVS and the brush will reconnect on its own
 across reboots (no further pair-mode needed).
 

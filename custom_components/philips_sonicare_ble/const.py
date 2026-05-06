@@ -31,7 +31,7 @@ SVC_BRUSHHEAD = "477ea600-a260-11e4-ae37-0002a5d50006"
 SVC_DIAGNOSTIC = "477ea600-a260-11e4-ae37-0002a5d50007"
 SVC_EXTENDED = "477ea600-a260-11e4-ae37-0002a5d50008"
 SVC_BYTESTREAM = "a651fff1-4074-4131-bce9-56d4261bc7b1"
-# Condor — newer-protocol transport service (HX742X / Series 7100 and later).
+# Condor — newer-protocol transport service (HX742X / Series 7100 family).
 # All named properties travel over framed messages on this one service;
 # Classic-style per-property chars are absent on these devices.
 SVC_CONDOR = "e50ba3c0-af04-4564-92ad-fef019489de6"
@@ -415,7 +415,7 @@ CHAR_SERVICE_MAP: dict[str, str] = {
     # Extended Service (0x0008)
     CHAR_EXTENDED_UNKNOWN_4410: SVC_EXTENDED,
     CHAR_SETTINGS: SVC_EXTENDED,
-    # Condor protocol transport (e50b…) — newer models (HX742X and later)
+    # Condor protocol transport (e50b…) — HX742X / Series 7100 family
     CHAR_RX: SVC_CONDOR,
     CHAR_RX_ACK: SVC_CONDOR,
     CHAR_TX: SVC_CONDOR,
