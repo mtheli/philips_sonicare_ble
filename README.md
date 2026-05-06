@@ -48,7 +48,7 @@ See [Configuration](#configuration) for setup instructions.
 | **FlexCare Platinum Connected** | | | |
 | HX9120 | *not yet tested* | *not yet tested* | — |
 | **ExpertClean** | | | |
-| [HX962V](https://www.usa.philips.com/c-m-pe/dental-professionals/products/tooth-brushes/expertclean) | — | :white_check_mark: | Community ([#1](https://github.com/mtheli/philips_sonicare_ble/issues/1)) |
+| [HX962V](https://www.usa.philips.com/c-m-pe/dental-professionals/products/tooth-brushes/expertclean) | — | :white_check_mark: | Community ([#1](https://github.com/mtheli/philips_sonicare_ble/issues/1)) (ExpertClean 7500) |
 | HX960V (ExpertClean 7300) | :white_check_mark: | :white_check_mark: | Maintainer |
 | **DiamondClean Smart** | | | |
 | [HX992X](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app) | :white_check_mark: | :white_check_mark: | Maintainer |
