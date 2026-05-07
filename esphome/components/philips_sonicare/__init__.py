@@ -140,6 +140,11 @@ async def to_code(config):
         cg.add(bridge_var.set_connected_sensor(sens))
 
     if CONF_BLE_CLIENT_ID in config:
+        # ESPHome's ble_client component does not emit USE_BLE_CLIENT itself,
+        # so the Mode A class in philips_sonicare.h needs us to set it when
+        # the user's YAML has wired up Mode A (the schema's cv.use_id
+        # already guarantees a `ble_client:` block exists at this point).
+        cg.add_define("USE_BLE_CLIENT")
         # Mode A: PhilipsSonicare worker as BLEClientNode of an external ble_client
         var = cg.new_Pvariable(config[CONF_ID])
         await cg.register_component(var, config)
