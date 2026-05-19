@@ -738,19 +738,39 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       }
 
       if (param->read.status != ESP_GATT_OK) {
-        // Insufficient Authentication / Encryption → initiate pairing
-        // and retry the read after successful auth (don't report error yet)
-        if ((param->read.status == ESP_GATT_INSUF_AUTHENTICATION ||
-             param->read.status == ESP_GATT_INSUF_ENCRYPTION) &&
-            !this->encryption_requested_) {
-          ESP_LOGI(this->log_tag_.c_str(), "Read requires authentication (status=%d) — initiating encryption, will retry on AUTH_CMPL",
-                   param->read.status);
-          this->encryption_requested_ = true;
-          this->retry_read_after_auth_ = true;
+        // Insufficient Authentication / Encryption: re-key the link, then
+        // retry. Two sub-paths:
+        //   - No encryption requested yet → start it and use the
+        //     ``retry_read_after_auth_`` slot to retry the original read on
+        //     AUTH_CMPL.
+        //   - Encryption already in flight (parallel reads racing the SMP
+        //     handshake): hand the read back to read_characteristic, which
+        //     re-queues it via the pending_handle_ gate so AUTH_CMPL can
+        //     drain it. Each read must be rescued individually because
+        //     retry_read_after_auth_ only tracks a single in-flight read.
+        if (param->read.status == ESP_GATT_INSUF_AUTHENTICATION ||
+            param->read.status == ESP_GATT_INSUF_ENCRYPTION) {
+          if (!this->encryption_requested_) {
+            ESP_LOGI(this->log_tag_.c_str(),
+                     "Read requires authentication (status=%d) — initiating "
+                     "encryption, will retry on AUTH_CMPL",
+                     param->read.status);
+            this->encryption_requested_ = true;
+            this->retry_read_after_auth_ = true;
+            this->apply_smp_params_();
+            esp_ble_set_encryption(this->parent_->get_remote_bda(),
+                                    ESP_BLE_SEC_ENCRYPT_MITM);
+          } else {
+            ESP_LOGD(this->log_tag_.c_str(),
+                     "Read of %s raced SMP — requeuing for AUTH_CMPL",
+                     this->pending_char_uuid_.c_str());
+            // read_characteristic auto-queues while pending_handle_ != 0,
+            // so call it before clearing the handle. It also handles the
+            // MAX_PENDING_CALLS overflow and queue_full emit for us.
+            this->read_characteristic(this->pending_service_uuid_,
+                                      this->pending_char_uuid_);
+          }
           this->pending_handle_ = 0;
-          this->apply_smp_params_();
-          esp_ble_set_encryption(this->parent_->get_remote_bda(),
-                                  ESP_BLE_SEC_ENCRYPT_MITM);
           break;
         }
         ESP_LOGW(this->log_tag_.c_str(), "Read failed for %s, status=%d",

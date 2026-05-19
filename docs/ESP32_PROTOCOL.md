@@ -189,7 +189,7 @@ Read a GATT characteristic on the bonded brush.
 | | |
 |---|---|
 | **Args** | `service_uuid: string`, `char_uuid: string` |
-| **Side-effect** | Issues an `esp_ble_gattc_read_char`. On `INSUF_AUTH/ENCR` it transparently triggers SMP and retries the read once `AUTH_CMPL` succeeds (auto-retry behavior added in 1.3.0). |
+| **Side-effect** | Issues an `esp_ble_gattc_read_char`. On `INSUF_AUTH/ENCR` it transparently triggers SMP and retries the read once `AUTH_CMPL` succeeds (auto-retry behavior added in 1.3.0). Concurrent reads that race the SMP handshake — common when HA fires its initial poll over `read_chars` — are requeued via the bridge's pending-calls queue and drained on `AUTH_CMPL` (added in <!-- BRIDGE_VERSION -->1.5.0). |
 | **Reply** | `_ble_data` event |
 
 **`_ble_data` (success):**
