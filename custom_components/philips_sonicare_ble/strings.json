@@ -6,7 +6,7 @@
     }
   },
   "config": {
-    "flow_title": "Philips Sonicare ({name})",
+    "flow_title": "{name}",
     "step": {
       "bluetooth_confirm": {
         "title": "Confirm Philips Sonicare",

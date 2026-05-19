@@ -923,7 +923,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         _LOGGER.info("Zeroconf: found Sonicare bridge on ESP device '%s'", device_name)
         self._name = device_name.replace("_", "-")
-        self.context["title_placeholders"] = {"name": self._name}
+        self.context["title_placeholders"] = {"name": f"ESP32 Bridge ({self._name})"}
 
         if len(bridge_ids) > 1:
             return await self.async_step_esp_select_device()
@@ -941,7 +941,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._address = discovery_info.address
         self._name = discovery_info.name or "Philips Sonicare"
 
-        self.context["title_placeholders"] = {"name": self._name}
+        mac_suffix = discovery_info.address.replace(":", "")[-4:].upper()
+        self.context["title_placeholders"] = {
+            "name": f"Bluetooth ({self._name} · …{mac_suffix})"
+        }
         return await self.async_step_bluetooth_confirm()
 
     async def _find_esp_bridge_for_mac(
