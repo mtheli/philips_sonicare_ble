@@ -941,9 +941,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._address = discovery_info.address
         self._name = discovery_info.name or "Philips Sonicare"
 
-        mac_suffix = discovery_info.address.replace(":", "")[-4:].upper()
         self.context["title_placeholders"] = {
-            "name": f"Bluetooth ({self._name} · …{mac_suffix})"
+            "name": f"Bluetooth ({discovery_info.address})"
         }
         return await self.async_step_bluetooth_confirm()
 
