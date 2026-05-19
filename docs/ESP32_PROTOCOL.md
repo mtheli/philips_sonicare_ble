@@ -305,6 +305,8 @@ during config flow.
 | `mac` | string | Currently used remote MAC (may be RPA pre-bond) |
 | `ble_name` | string (optional) | GAP 0x2A00 |
 | `model` | string (optional) | DeviceInfo 0x2A24 |
+| `friendly_name` | string | YAML `friendly_name:` for this slot, empty if unset. HA uses it as the default device name in the setup form. |
+| `area` | string | YAML `area:` for this slot, empty if unset. HA uses it as `DeviceInfo.suggested_area` on first install. |
 | `uptime_s`, `free_heap`, `subscriptions`, `notify_throttle_ms`, `version`, `bridge_id` | misc | Diagnostic |
 
 #### Identity sources
