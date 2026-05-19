@@ -745,13 +745,18 @@ class EspBridgeTransport(SonicareTransport):
     async def read_chars(self, char_uuids: list[str]) -> dict[str, bytes | None]:
         if not self._setup_done:
             await self.connect()
-        results: dict[str, bytes | None] = {}
-        for uuid in char_uuids:
-            if not self.is_connected:
-                results[uuid] = None
-                continue
-            results[uuid] = await self.read_char(uuid)
-        return results
+        if not char_uuids:
+            return {}
+        if not self.is_connected:
+            return {u: None for u in char_uuids}
+
+        # Fire all reads at once — the bridge serialises GATT ops via its
+        # pending-calls queue (drained one at a time on each read completion),
+        # so we get back-to-back BLE reads without HA-loop overhead between
+        # them. read_char never raises (returns None on failure) so a bare
+        # gather is safe.
+        results = await asyncio.gather(*(self.read_char(u) for u in char_uuids))
+        return dict(zip(char_uuids, results))
 
     async def write_char(self, char_uuid: str, data: bytes) -> None:
         if not self._setup_done:

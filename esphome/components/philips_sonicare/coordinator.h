@@ -210,10 +210,12 @@ class SonicareCoordinator {
   uint32_t notify_throttle_ms_{500};
   std::map<uint16_t, uint32_t> last_notify_ms_;
 
-  // HA service calls that arrived between OPEN_EVT and SEARCH_CMPL_EVT.
-  // Drained in order after service discovery completes.
+  // HA service calls that arrived between OPEN_EVT and SEARCH_CMPL_EVT, or
+  // were deferred because another GATT read was already in flight. Drained
+  // one at a time so concurrent reads don't clobber pending_handle_.
   std::deque<std::function<void()>> pending_calls_;
   static const size_t MAX_PENDING_CALLS = 64;
+  void drain_next_pending_call_();
 
   // Encryption: only request after INSUF_AUTH on read (not unconditionally)
   bool encryption_requested_{false};

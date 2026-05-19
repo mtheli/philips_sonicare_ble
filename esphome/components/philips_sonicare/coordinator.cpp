@@ -757,6 +757,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
                  this->pending_char_uuid_.c_str(), param->read.status);
         this->emit_data_(this->pending_char_uuid_, "", "read_failed");
         this->pending_handle_ = 0;
+        this->drain_next_pending_call_();
         break;
       }
 
@@ -771,6 +772,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
         this->emit_data_(this->pending_char_uuid_, hex_payload);
 
         this->pending_handle_ = 0;
+        this->drain_next_pending_call_();
       }
       break;
     }
@@ -956,6 +958,9 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
           this->retry_read_after_auth_ = false;
           this->pending_char_uuid_.clear();
           this->pending_service_uuid_.clear();
+          // Don't leave queued reads stranded — they'll likely fail too
+          // (same encrypted link) but at least HA's futures resolve.
+          this->drain_next_pending_call_();
         }
         esp_ble_remove_bond_device(auth.bd_addr);
         // Pair-mode: user just asked to bond. Don't enter the auth-backoff
@@ -993,6 +998,15 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
   }
 }
 
+void SonicareCoordinator::drain_next_pending_call_() {
+  if (this->pending_calls_.empty())
+    return;
+  auto next = std::move(this->pending_calls_.front());
+  this->pending_calls_.pop_front();
+  next();
+}
+
+
 void SonicareCoordinator::read_characteristic(const std::string &service_uuid,
                                                 const std::string &char_uuid) {
   if (!this->connected_) {
@@ -1000,14 +1014,18 @@ void SonicareCoordinator::read_characteristic(const std::string &service_uuid,
     this->emit_data_(char_uuid, "", "not_connected");
     return;
   }
-  if (!this->services_discovered_) {
+  // Defer when either (a) service discovery hasn't completed, or (b) another
+  // read is in flight — ``pending_handle_`` is a single slot and concurrent
+  // reads would clobber each other's response routing.
+  if (!this->services_discovered_ || this->pending_handle_ != 0) {
     if (this->pending_calls_.size() >= MAX_PENDING_CALLS) {
       ESP_LOGW(this->log_tag_.c_str(), "Pending queue full — dropping read for %s", char_uuid.c_str());
       this->emit_data_(char_uuid, "", "queue_full");
       return;
     }
-    ESP_LOGD(this->log_tag_.c_str(), "Queueing read of %s until service discovery completes",
-             char_uuid.c_str());
+    ESP_LOGD(this->log_tag_.c_str(), "Queueing read of %s (%s)",
+             char_uuid.c_str(),
+             this->services_discovered_ ? "another read in flight" : "awaiting service discovery");
     this->pending_calls_.push_back(
         [this, service_uuid, char_uuid]() { this->read_characteristic(service_uuid, char_uuid); });
     return;
