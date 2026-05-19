@@ -56,7 +56,22 @@ script is harmless to leave in place — it becomes a no-op against patched
 source.
 
 **If you only run this bridge and no `bluetooth_proxy:`, the patch is not
-required.**
+required** — unless you also opt into the persisted GATT cache (next
+section), which depends on the same NULL guards.
+
+## Persisted GATT cache (optional)
+
+Adding `CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"` under `sdkconfig_options`
+persists the discovered GATT table to NVS keyed by the bonded peer's
+identity. With it, the first connect to a bonded brush still does a
+full ~4 s service discovery; subsequent reconnects hit the cached
+service table in tens of ms. On a brush you reconnect to often this is
+the biggest single contributor to reconnect latency.
+
+The cache-save path crashes on the same NULL deref as the proxy bug, so
+this flag depends on the patch above. To opt in, uncomment the
+`CONFIG_BT_GATTC_CACHE_NVS_FLASH` line in your YAML (and the patch
+wiring at the top of `esphome:` if not already enabled).
 
 ## Requirements
 

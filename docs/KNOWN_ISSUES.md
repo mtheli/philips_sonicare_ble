@@ -14,6 +14,11 @@ proxy path works. See [Option C: Bluetooth Proxy](../README.md#option-c-bluetoot
 in the main README for scope and limitations of the proxy path compared to
 the dedicated [ESP32 BLE Bridge](ESP32_BRIDGE.md).
 
+The same patch also unlocks an optional bridge performance setting
+([`CONFIG_BT_GATTC_CACHE_NVS_FLASH`](ESP32_BRIDGE.md#persisted-gatt-cache-optional))
+that depends on the same NULL guards. The flag is off in a stock build
+and only relevant if you enable it explicitly.
+
 ### Symptoms
 
 - ESP32 reboots every ~20 seconds in a loop
