@@ -515,6 +515,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       this->pending_service_uuid_.clear();
       this->retry_read_after_auth_ = false;
       this->encryption_requested_ = false;
+      this->consecutive_auth_completes_ = 0;
       this->name_handle_ = 0;
       this->notify_map_.clear();
       this->cccd_map_.clear();
@@ -794,6 +795,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
         this->emit_data_(this->pending_char_uuid_, hex_payload);
 
         this->pending_handle_ = 0;
+        this->consecutive_auth_completes_ = 0;
         this->drain_next_pending_call_();
       }
       break;
@@ -927,6 +929,24 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
         this->auth_completed_ = true;
         this->rapid_disconnect_count_ = 0;
         this->auth_fail_count_ = 0;
+
+        // Wedge detector: if AUTH_CMPL keeps succeeding without any read
+        // landing between them, SMP is looping (encryption applied, reads
+        // still return INSUF_AUTH). Drop the link so the next reconnect
+        // starts clean. Counter resets on a successful read.
+        if (++this->consecutive_auth_completes_ >
+            MAX_CONSECUTIVE_AUTH_COMPLETES) {
+          ESP_LOGW(this->log_tag_.c_str(),
+                   "SMP-success/read-INSUF_AUTH loop detected (%u) — "
+                   "forcing disconnect",
+                   this->consecutive_auth_completes_);
+          this->retry_read_after_auth_ = false;
+          this->pending_char_uuid_.clear();
+          this->pending_service_uuid_.clear();
+          this->pending_calls_.clear();
+          esp_ble_gap_disconnect(auth.bd_addr);
+          break;
+        }
         // Fresh bond just landed in NVS — re-read so subsequent writes use
         // AUTH_REQ_NO_MITM. identity_address_ may still be empty on a brand-
         // new pair (set a few lines below); the second refresh after assignment
@@ -988,14 +1008,23 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
         }
       } else {
         ESP_LOGW(this->log_tag_.c_str(), "Authentication FAILED (reason=0x%X)", auth.fail_reason);
+        // Queued reads can't make progress after auth failure: draining one
+        // would just re-fire it, hit INSUF_AUTH against the now-unencrypted
+        // link, and either re-queue (encryption_requested_ still true) or
+        // start a fresh SMP attempt against the wiped bond. Clear instead;
+        // HA's per-read futures time out at 5 s, matching the auth-backoff
+        // path's HA-side behavior.
+        if (!this->pending_calls_.empty()) {
+          ESP_LOGD(this->log_tag_.c_str(),
+                   "AUTH_CMPL failure: discarding %u queued read(s)",
+                   (unsigned) this->pending_calls_.size());
+          this->pending_calls_.clear();
+        }
         if (this->retry_read_after_auth_ && !this->pending_char_uuid_.empty()) {
           this->emit_data_(this->pending_char_uuid_, "", "auth_failed");
           this->retry_read_after_auth_ = false;
           this->pending_char_uuid_.clear();
           this->pending_service_uuid_.clear();
-          // Don't leave queued reads stranded — they'll likely fail too
-          // (same encrypted link) but at least HA's futures resolve.
-          this->drain_next_pending_call_();
         }
         esp_ble_remove_bond_device(auth.bd_addr);
         // Pair-mode: user just asked to bond. Don't enter the auth-backoff

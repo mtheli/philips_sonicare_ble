@@ -243,6 +243,14 @@ class SonicareCoordinator {
   static const uint8_t MAX_AUTH_FAILURES = 3;
   static const uint32_t AUTH_BACKOFF_MS = 60000;  // 60 seconds
 
+  // Bounds the rare "SMP succeeds but reads still return INSUF_AUTH" wedge.
+  // Each AUTH_CMPL success increments; a successful read resets. If the
+  // counter exceeds the threshold the link is stuck pumping SMP without
+  // ever delivering a read — force a disconnect so the next reconnect can
+  // recover from a clean slate.
+  uint8_t consecutive_auth_completes_{0};
+  static const uint8_t MAX_CONSECUTIVE_AUTH_COMPLETES = 3;
+
   // Helpers
   void resubscribe_all_();
   void apply_smp_params_();
