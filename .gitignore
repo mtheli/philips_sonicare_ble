@@ -7,6 +7,9 @@ dist/
 build/
 .venv/
 
+# ESPHome local build cache (per-config, can balloon to 100s of MB per node)
+.esphome/
+
 # Local-only planning / notes
 TODO.md
 NOTES.md

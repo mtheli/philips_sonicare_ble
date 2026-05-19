@@ -97,9 +97,12 @@ def _internal_set_defaults(config):
     return config
 
 
+_INTERNAL_VALIDATOR = cv.All(_INTERNAL_SCHEMA, _internal_set_defaults)
+
+
 def _validate_config(config):
     # Route to the appropriate schema based on the user's keys before any
-    # schema runs. Previously this used cv.Any(_EXTERNAL_SCHEMA, cv.All(_INTERNAL_SCHEMA, ...)),
+    # schema runs. Previously this used cv.Any(_EXTERNAL_SCHEMA, _INTERNAL_VALIDATOR),
     # but nested schemas with deferred-ID generation (e.g. binary_sensor_schema
     # inside `connected:`) pollute cv.Any's backtracking — when Mode A's
     # validation attempt fires the deferred declare_id, Mode B can no longer
@@ -110,7 +113,7 @@ def _validate_config(config):
     # once against a fresh config dict.
     if CONF_BLE_CLIENT_ID in config:
         return _EXTERNAL_SCHEMA(config)
-    return cv.All(_INTERNAL_SCHEMA, _internal_set_defaults)(config)
+    return _INTERNAL_VALIDATOR(config)
 
 
 CONFIG_SCHEMA = _validate_config

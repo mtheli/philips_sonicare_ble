@@ -1,5 +1,28 @@
 # ESP Bridge Changelog
 
+## v1.4.3 — 2026-05-19
+
+- **Python-component fix, no firmware change.** Reflash optional — the
+  fix ships via `external_components` on the next ESPHome rebuild.
+
+- Contributed by @jjsmackay via PR #14: Mode B (Auto-Discovery) configs
+  that include the `connected:` binary sensor failed validation with
+  `'ble_client_id' is a required option`, even though the config has no
+  `ble_client_id` and clearly targets Mode B. The deferred ID generation
+  inside `binary_sensor.binary_sensor_schema()` fired during Mode A's
+  validation attempt and polluted `cv.Any`'s backtracking, so Mode B
+  could no longer be entered.
+
+  Fix replaces `cv.Any(_EXTERNAL_SCHEMA, ...)` with an explicit
+  key-based dispatcher (`_validate_config`) that routes by the presence
+  of `ble_client_id` in the raw config — no backtracking, no
+  deferred-lookup pollution. `to_code` and `_internal_set_defaults` are
+  untouched, Mode A behaviour is byte-identical.
+
+  HA-side `MIN_BRIDGE_VERSION` stays at `"1.4.0"` — the bump from
+  `1.4.2` is a tracking marker only, no Bridge feature became
+  conditional on it.
+
 ## v1.4.2 — 2026-05-11
 
 - Fixes Condor-protocol (HX742X / Series 7100) via the ESP bridge — the
