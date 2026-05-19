@@ -67,9 +67,6 @@ _BASE_SCHEMA = cv.Schema(
 ).extend(cv.COMPONENT_SCHEMA)
 
 # Mode A: external ble_client (backward compatible) — Worker is PhilipsSonicare.
-# `ble_client_id` is Required (not GenerateID) so cv.Any can cleanly route a
-# config without it to _INTERNAL_SCHEMA. With GenerateID + use_id the deferred
-# lookup fires after schema match and bypasses cv.Any's fallback.
 _EXTERNAL_SCHEMA = _BASE_SCHEMA.extend(
     {
         cv.GenerateID(): cv.declare_id(PhilipsSonicare),
@@ -100,10 +97,23 @@ def _internal_set_defaults(config):
     return config
 
 
-CONFIG_SCHEMA = cv.Any(
-    _EXTERNAL_SCHEMA,
-    cv.All(_INTERNAL_SCHEMA, _internal_set_defaults),
-)
+def _validate_config(config):
+    # Route to the appropriate schema based on the user's keys before any
+    # schema runs. Previously this used cv.Any(_EXTERNAL_SCHEMA, cv.All(_INTERNAL_SCHEMA, ...)),
+    # but nested schemas with deferred-ID generation (e.g. binary_sensor_schema
+    # inside `connected:`) pollute cv.Any's backtracking — when Mode A's
+    # validation attempt fires the deferred declare_id, Mode B can no longer
+    # be entered cleanly and cv.Any reports Mode A's error verbatim.
+    #
+    # Explicit routing avoids backtracking entirely: presence of `ble_client_id`
+    # selects Mode A, absence selects Mode B. Each schema then runs exactly
+    # once against a fresh config dict.
+    if CONF_BLE_CLIENT_ID in config:
+        return _EXTERNAL_SCHEMA(config)
+    return cv.All(_INTERNAL_SCHEMA, _internal_set_defaults)(config)
+
+
+CONFIG_SCHEMA = _validate_config
 
 _instance_count = 0
 
