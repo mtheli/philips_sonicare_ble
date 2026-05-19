@@ -579,10 +579,16 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       }
       // Pairing probe.
       //
-      // Classic (Sonicare service 477ea600-…): read Handle State (0x4010).
-      // The read either succeeds (open-GATT brushes like HX6340 Kids) or
-      // returns INSUF_AUTHENTICATION (bonded brushes like HX9992) which
-      // we use as the SMP trigger.
+      // Classic (Sonicare service 477ea600-…) bonded peer: skip the probe
+      // read entirely and trigger SMP encryption directly. The Sonicare
+      // re-keys the link on every fresh GATT connection even though both
+      // sides hold the bond — without eager encryption, HA's post-ready
+      // initial-poll reads race the SMP handshake and get dropped (only
+      // one of them gets retried via retry_read_after_auth_).
+      //
+      // Classic open-GATT peer (HX6340 Kids etc.) OR not-yet-bonded peer:
+      // still do the probe read. A success means open-GATT (no encryption
+      // needed); INSUF_AUTH triggers the existing pairing flow.
       //
       // Condor (newer protocol, e50ba3c0-…): no equivalent read-probe
       // char exists on V4 (HX742X) — Protocol Config (e50b0005) is
@@ -599,7 +605,11 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
         auto handle_state = espbt::ESPBTUUID::from_raw(
             "477ea600-a260-11e4-ae37-0002a5d54010");
         auto *chr = this->parent_->get_characteristic(sonicare_svc, handle_state);
-        if (chr) {
+        if (chr && this->peer_is_bonded_ && !this->encryption_requested_) {
+          ESP_LOGI(this->log_tag_.c_str(),
+                   "Bonded Classic peer — eagerly initiating SMP encryption");
+          this->request_encryption_(ESP_BLE_SEC_ENCRYPT);
+        } else if (chr) {
           this->probe_handle_ = chr->handle;
           esp_ble_gattc_read_char(
               this->parent_->get_gattc_if(),
@@ -612,10 +622,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
               this->pair_mode_active_ && !this->auth_completed_) {
             ESP_LOGI(this->log_tag_.c_str(),
                      "Condor service detected — initiating SMP encryption");
-            this->encryption_requested_ = true;
-            this->apply_smp_params_();
-            esp_ble_set_encryption(this->parent_->get_remote_bda(),
-                                    ESP_BLE_SEC_ENCRYPT);
+            this->request_encryption_(ESP_BLE_SEC_ENCRYPT);
           }
         }
       }
@@ -726,10 +733,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
                    param->read.status == ESP_GATT_INSUF_ENCRYPTION) {
           ESP_LOGW(this->log_tag_.c_str(), "Pairing probe: device requires BLE bonding (status=%d) — initiating pairing",
                    param->read.status);
-          this->encryption_requested_ = true;
-          this->apply_smp_params_();
-          esp_ble_set_encryption(this->parent_->get_remote_bda(),
-                                  ESP_BLE_SEC_ENCRYPT_MITM);
+          this->request_encryption_(ESP_BLE_SEC_ENCRYPT_MITM);
         } else {
           ESP_LOGD(this->log_tag_.c_str(), "Pairing probe failed, status=%d", param->read.status);
         }
@@ -744,7 +748,8 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
         //     ``retry_read_after_auth_`` slot to retry the original read on
         //     AUTH_CMPL.
         //   - Encryption already in flight (parallel reads racing the SMP
-        //     handshake): hand the read back to read_characteristic, which
+        //     handshake — common when eager encryption was kicked off in
+        //     SEARCH_CMPL): hand the read back to read_characteristic, which
         //     re-queues it via the pending_handle_ gate so AUTH_CMPL can
         //     drain it. Each read must be rescued individually because
         //     retry_read_after_auth_ only tracks a single in-flight read.
@@ -755,11 +760,8 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
                      "Read requires authentication (status=%d) — initiating "
                      "encryption, will retry on AUTH_CMPL",
                      param->read.status);
-            this->encryption_requested_ = true;
             this->retry_read_after_auth_ = true;
-            this->apply_smp_params_();
-            esp_ble_set_encryption(this->parent_->get_remote_bda(),
-                                    ESP_BLE_SEC_ENCRYPT_MITM);
+            this->request_encryption_(ESP_BLE_SEC_ENCRYPT_MITM);
           } else {
             ESP_LOGD(this->log_tag_.c_str(),
                      "Read of %s raced SMP — requeuing for AUTH_CMPL",
@@ -970,6 +972,19 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
           std::string svc = this->pending_service_uuid_;
           std::string chr = this->pending_char_uuid_;
           this->read_characteristic(svc, chr);
+        } else {
+          // No single in-flight read was sitting on retry_read_after_auth_
+          // (eager-encryption path on a bonded peer), but reads might have
+          // raced the SMP handshake and landed in pending_calls_ via the
+          // INSUF_AUTH requeue branch in READ_CHAR_EVT. Clear the encryption
+          // flag so future faults can re-arm SMP, and drain whatever's queued.
+          this->encryption_requested_ = false;
+          if (!this->pending_calls_.empty()) {
+            ESP_LOGD(this->log_tag_.c_str(),
+                     "AUTH_CMPL: draining %u read(s) that raced SMP",
+                     (unsigned) this->pending_calls_.size());
+            this->drain_next_pending_call_();
+          }
         }
       } else {
         ESP_LOGW(this->log_tag_.c_str(), "Authentication FAILED (reason=0x%X)", auth.fail_reason);
@@ -1026,6 +1041,11 @@ void SonicareCoordinator::drain_next_pending_call_() {
   next();
 }
 
+void SonicareCoordinator::request_encryption_(esp_ble_sec_act_t sec_act) {
+  this->encryption_requested_ = true;
+  this->apply_smp_params_();
+  esp_ble_set_encryption(this->parent_->get_remote_bda(), sec_act);
+}
 
 void SonicareCoordinator::read_characteristic(const std::string &service_uuid,
                                                 const std::string &char_uuid) {

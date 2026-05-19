@@ -219,6 +219,7 @@ class SonicareCoordinator {
 
   // Encryption: only request after INSUF_AUTH on read (not unconditionally)
   bool encryption_requested_{false};
+  void request_encryption_(esp_ble_sec_act_t sec_act);
 
   // True when the peer identity is in the ESP-IDF bond NVS. Used by
   // write_characteristic to decide auth_req: bonded → AUTH_REQ_NO_MITM

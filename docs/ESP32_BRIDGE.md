@@ -338,7 +338,10 @@ drawbacks:
 
 This dedicated Bridge component manages the GATT connection directly on
 the ESP32 with its own pairing stack, notification throttle, and
-per-device subscription state — avoiding all three issues.
+per-device subscription state — avoiding all three issues. Reconnects
+on a bonded brush also eagerly initiate SMP encryption (rather than
+discovering the need via a probe read), so the handshake overlaps with
+the post-SDP read pass instead of serialising behind it.
 
 ### Persisted GATT cache (optional)
 
