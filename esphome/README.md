@@ -47,6 +47,12 @@ first added through the HA UI. Editing them in YAML afterward does not
 rename existing devices or move them between areas — use Settings →
 Devices in Home Assistant for that.
 
+One caveat for `area:` — the integration also re-applies the YAML area on
+setup if the device's area is currently *unset*. So if you manually clear
+the device's area in HA and reload the integration, the YAML default will
+fill it in again. To opt out permanently, remove the `area:` line from
+the slot.
+
 ## Bluedroid NULL-check patch (`bluedroid_null_fix.py`)
 
 > [!IMPORTANT]
