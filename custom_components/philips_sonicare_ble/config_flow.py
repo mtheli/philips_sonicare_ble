@@ -34,6 +34,8 @@ from .const import (
     CONF_TRANSPORT_TYPE,
     CONF_ESP_DEVICE_NAME,
     CONF_ESP_BRIDGE_ID,
+    CONF_DEVICE_NAME,
+    CONF_AREA,
     CONF_NOTIFY_THROTTLE,
     CONF_SENSOR_PRESSURE,
     CONF_SENSOR_TEMPERATURE,
@@ -1317,7 +1319,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     @staticmethod
     def _format_bridge_label(bridge_id: str, info: dict[str, str]) -> str:
         """Human-readable label for a bridge entry in the picker."""
-        name = bridge_id or "default"
+        friendly = (info.get("friendly_name") or "").strip()
+        name = friendly or bridge_id or "default"
         if info.get("pair_capable") == "true":
             return name
 
@@ -1366,6 +1369,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "pair_capable": raw.get("pair_capable", "false"),
                 "pair_mode_active": raw.get("pair_mode_active", "false"),
                 "identity_address": raw.get("identity_address", ""),
+                # YAML-supplied per-slot defaults (empty on older bridges →
+                # HA falls back to the MAC-suffix default name and no area).
+                "friendly_name": raw.get("friendly_name", ""),
+                "area": raw.get("area", ""),
             }
         except TransportError:
             _LOGGER.error("ESP bridge not reachable: %s", self._esp_device_name)
@@ -1442,6 +1449,14 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     capabilities["pairing"] = "bonded"
                 elif paired_str == "false":
                     capabilities["pairing"] = "open_gatt"
+
+                # Carry YAML-supplied per-slot defaults through to the
+                # show_capabilities step so the form can use them.
+                info = self._bridge_info or {}
+                if info.get("friendly_name"):
+                    capabilities.setdefault("friendly_name", info["friendly_name"])
+                if info.get("area"):
+                    capabilities.setdefault("area", info["area"])
 
                 self._fetched_data = capabilities
                 self._address = canonical_addr or None
@@ -1677,18 +1692,51 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     # ------------------------------------------------------------------
     # Capabilities dialog (shared by BLE and ESP)
     # ------------------------------------------------------------------
+    def _build_default_name(self) -> str:
+        """Generate a unique-by-default device name for the new entry.
+
+        Priority for the disambiguating suffix:
+          1. YAML `friendly_name:` — wins outright when set (returns it
+             verbatim, no model/suffix wrapping).
+          2. ESP `bridge_id` — the human label the user already chose for
+             this slot (e.g. "prestige"). Preferred over MAC because it
+             carries meaning.
+          3. Last-4 of MAC — fallback for Direct BLE, or ESP installs
+             with no bridge_id set.
+        """
+        if self._fetched_data:
+            yaml_name = (self._fetched_data.get("friendly_name") or "").strip()
+            if yaml_name:
+                return yaml_name
+        model = self._fetched_data.get("model") if self._fetched_data else None
+        if self._esp_bridge_id:
+            suffix = self._esp_bridge_id
+        elif self._address:
+            suffix = self._address.replace(":", "")[-4:].upper()
+        else:
+            suffix = ""
+        base = f"Sonicare {model}" if model else "Sonicare"
+        return f"{base} ({suffix})" if suffix else base
+
     async def async_step_show_capabilities(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Show detected device info and services, then create entry."""
+        default_name = self._build_default_name()
+
         if user_input is not None:
             services = self._fetched_data.get("services", [])
-            title = self._fetched_data.get("model", self._name) or self._name
+            device_name = (user_input.get(CONF_DEVICE_NAME) or "").strip() or default_name
 
             entry_data: dict[str, Any] = {
                 CONF_SERVICES: services,
                 "model": self._fetched_data.get("model", ""),
+                CONF_DEVICE_NAME: device_name,
             }
+
+            area = (self._fetched_data.get("area") or "").strip()
+            if area:
+                entry_data[CONF_AREA] = area
 
             if self._transport_type == TRANSPORT_ESP_BRIDGE:
                 entry_data[CONF_TRANSPORT_TYPE] = TRANSPORT_ESP_BRIDGE
@@ -1702,7 +1750,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 entry_data[CONF_TRANSPORT_TYPE] = TRANSPORT_BLEAK
 
             return self.async_create_entry(
-                title=f"Philips Sonicare ({title})",
+                title=f"Philips Sonicare ({device_name})",
                 data=entry_data,
             )
 
@@ -1721,7 +1769,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="show_capabilities",
-            data_schema=vol.Schema({}),
+            data_schema=vol.Schema({
+                vol.Required(CONF_DEVICE_NAME, default=default_name): str,
+            }),
             description_placeholders={
                 "name": str(self._name),
                 "connection_status": connection_status,

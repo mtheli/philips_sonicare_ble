@@ -67,7 +67,13 @@
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",
         "description": "{connection_status}\n\n**Device Information**\n\n{device_info}\n\n**Detected Services**\n\n{services}",
-        "submit": "Set up"
+        "submit": "Set up",
+        "data": {
+          "device_name": "Name"
+        },
+        "data_description": {
+          "device_name": "How this toothbrush appears in Home Assistant. Pick something that distinguishes it from any other brushes you have (e.g., \"Master Bath\", \"Jane's\")."
+        }
       },
       "not_paired": {
         "title": "BLE Pairing Required",
@@ -186,7 +192,7 @@
       "brushhead_ring_id": { "name": "NFC Ring ID" },
       "brushhead_nfc_version": { "name": "NFC Version" },
       "brushhead_type": {
-        "name": "Brush Head Type",
+        "name": "Type",
         "state": {
           "adaptive_clean": "Adaptive Clean",
           "adaptive_white": "Adaptive White",

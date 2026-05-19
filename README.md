@@ -199,7 +199,7 @@ The integration supports three connection methods:
 2.  Navigate to **Settings > Devices & Services**.
 3.  The toothbrush should appear under **Discovered** -- click **Configure**.
     - If not discovered automatically, click **+ Add Integration**, search for "**Philips Sonicare**", and enter the MAC address manually.
-4.  The confirmation dialog shows the current brush status and detected services. Make sure the toothbrush is **turned on** (status shows "Active") before clicking **Submit**.
+4.  The confirmation dialog shows the current brush status and detected services, and a **Name** field pre-filled with a model + MAC-suffix default (e.g. `Sonicare HX9352 (3456)`). Edit it now if you have several brushes of the same model — you can also rename later via Settings → Devices. Make sure the toothbrush is **turned on** (status shows "Active") before clicking **Submit**.
 
 > [!TIP]
 > Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100) require BLE bonding -- the integration detects this automatically and pairs the device during setup via D-Bus. If auto-pairing is not available (e.g. HAOS without D-Bus), manual pairing instructions are shown. Series 7100 brushes also rotate their advertised BLE address (RPA) every few minutes, so an unbonded brush appears under different MACs on each scan; bonding pins it to a stable identity. Simply close the Sonicare phone app to free the BLE connection.
@@ -214,6 +214,9 @@ This is **not** a standard ESPHome Bluetooth Proxy -- it is a dedicated componen
 > This option requires basic [ESPHome](https://esphome.io/) knowledge (flashing firmware, editing YAML configs). If you're new to ESPHome, check out [Getting Started with ESPHome](https://esphome.io/guides/getting_started_hassio) first.
 
 For the complete setup guide, see **[ESP32 Bridge Setup Guide](docs/ESP32_BRIDGE.md)**.
+
+> [!TIP]
+> Each ESP bridge slot accepts optional `friendly_name:` and `area:` fields that pre-fill the HA setup form and auto-assign the brush to an HA area on first install — convenient for multi-brush setups. See [Per-slot defaults](esphome/README.md#per-slot-defaults-friendly_name-and-area).
 
 ### Option C: Bluetooth Proxy
 
