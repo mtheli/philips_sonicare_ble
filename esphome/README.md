@@ -24,6 +24,35 @@ multi-device setups) see [`docs/ESP32_BRIDGE.md`](../docs/ESP32_BRIDGE.md).
 | [`bluedroid_null_fix.py`](bluedroid_null_fix.py) | Compile-time patch — see next section. |
 | [`CHANGELOG.md`](CHANGELOG.md) | Version history for the external component. |
 
+## Per-slot defaults: `friendly_name` and `area`
+
+Each `philips_sonicare:` slot accepts two optional fields that pre-fill the
+Home Assistant setup form for that brush:
+
+```yaml
+philips_sonicare:
+  - id: sonicare_prestige
+    bridge_id: prestige
+    friendly_name: "Master Bath"
+    area: "Master Bathroom"
+```
+
+- `friendly_name` becomes the default in the HA "Name" prompt during setup.
+  It also appears as the slot label in the multi-brush picker, so you can
+  tell which slot is which before installing.
+- `area` auto-assigns the new device to that HA area on first install.
+
+Both fields are **one-shot defaults**: they only apply when the brush is
+first added through the HA UI. Editing them in YAML afterward does not
+rename existing devices or move them between areas — use Settings →
+Devices in Home Assistant for that.
+
+One caveat for `area:` — the integration also re-applies the YAML area on
+setup if the device's area is currently *unset*. So if you manually clear
+the device's area in HA and reload the integration, the YAML default will
+fill it in again. To opt out permanently, remove the `area:` line from
+the slot.
+
 ## Bluedroid NULL-check patch (`bluedroid_null_fix.py`)
 
 > [!IMPORTANT]

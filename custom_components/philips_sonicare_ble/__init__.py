@@ -10,11 +10,12 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import area_registry as ar, device_registry as dr
 
 from .const import (
     DOMAIN,
     CONF_ADDRESS,
+    CONF_AREA,
     CONF_TRANSPORT_TYPE,
     TRANSPORT_ESP_BRIDGE,
     CONF_ESP_DEVICE_NAME,
@@ -88,6 +89,33 @@ def _async_link_via_esp_device(hass: HomeAssistant, entry: ConfigEntry) -> None:
         _LOGGER.info("Linked Bridge sub-device to ESP '%s'", esp_device_name)
 
 
+def _async_apply_yaml_area(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Fill the device's area_id from CONF_AREA when unset.
+
+    DeviceInfo.suggested_area only applies at device-creation time, so
+    upgrading an existing install with a new YAML ``area:`` value won't
+    move the device on its own. We fill the gap here — but only when
+    area_id is currently None, to avoid overwriting a user's manual
+    assignment.
+    """
+    area_name = entry.data.get(CONF_AREA)
+    if not area_name:
+        return
+
+    device_id = entry.data.get(CONF_ADDRESS) or entry.data.get(CONF_ESP_DEVICE_NAME)
+    if not device_id:
+        return
+
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, device_id)})
+    if device is None or device.area_id is not None:
+        return
+
+    area = ar.async_get(hass).async_get_or_create(area_name)
+    dev_reg.async_update_device(device.id, area_id=area.id)
+    _LOGGER.info("Applied YAML area '%s' to Sonicare device", area_name)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Philips Sonicare from a config entry."""
     address = entry.data.get("address", "")
@@ -115,6 +143,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Link device to ESP bridge in device registry
     if transport_type == TRANSPORT_ESP_BRIDGE:
         _async_link_via_esp_device(hass, entry)
+
+    _async_apply_yaml_area(hass, entry)
 
     # Start polling/live monitoring after platforms are registered
     await coordinator.async_start()

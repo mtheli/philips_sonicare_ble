@@ -80,6 +80,11 @@ external_components:
 
 philips_sonicare:
   - id: philips_sonicare_ble
+    # Optional: pre-fill the HA setup form. `friendly_name` becomes the
+    # default device name; `area` auto-assigns the brush to an HA area on
+    # first install. One-shot defaults — edit names in HA after that.
+    # friendly_name: "My Sonicare"
+    # area: "Bathroom"
     on_connect:
       then:
         - logger.log: "Connected to Sonicare"

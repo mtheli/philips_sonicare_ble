@@ -82,6 +82,12 @@ external_components:
 philips_sonicare:
   - id: sonicare_prestige
     bridge_id: prestige
+    # Optional: pre-fill the HA setup form with a friendly name and
+    # auto-assign the brush to an HA area on first install. Both are
+    # one-shot defaults — once the brush is added, edits here do NOT
+    # propagate. Rename via Settings → Devices in HA after that.
+    friendly_name: "Master Bath"
+    area: "Master Bathroom"
     on_connect:
       then:
         - logger.log: "Connected to Prestige 9900"

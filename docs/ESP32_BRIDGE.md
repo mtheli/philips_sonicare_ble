@@ -403,17 +403,27 @@ either path independently — Auto-Discovery, Fixed MAC, or a mix:
 philips_sonicare:
   - id: sonicare_prestige
     bridge_id: prestige
+    friendly_name: "Master Bath"        # pre-fills HA setup name
+    area: "Master Bathroom"             # auto-assigns HA area on install
     # Auto-Discovery — paired via HA dialog
 
   - id: sonicare_kids
     bridge_id: kids
+    friendly_name: "Kids"
+    area: "Kids Bathroom"
     mac_address: "XX:XX:XX:XX:XX:XX"   # Fixed MAC — pinned from YAML
 ```
 
 The `bridge_id` is **required** when using multiple instances — the ESP will
 refuse to compile without it. It serves as a suffix for service names
 (e.g., `ble_pair_mode_prestige`, `ble_read_char_prestige`) so HA can address
-each slot separately. The same label appears in the HA bridge picker.
+each slot separately. The same label appears in the HA bridge picker (unless
+`friendly_name` is set, in which case that wins).
+
+`friendly_name` and `area` are optional one-shot setup defaults: they
+pre-fill the HA name prompt and area picker the first time the brush is
+added. Edits after install don't propagate — rename via HA's device-rename
+UI after that.
 
 Each slot has its own bond storage in NVS, so the two brushes are completely
 independent — pair, unpair, or re-pair one without affecting the other.

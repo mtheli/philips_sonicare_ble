@@ -185,6 +185,8 @@ void SonicareBridge::on_get_info() {
   info["status"] = "info";
   info["version"] = PHILIPS_SONICARE_VERSION;
   info["bridge_id"] = this->bridge_id_;
+  info["friendly_name"] = this->friendly_name_;
+  info["area"] = this->area_;
   this->fire_event(EVENT_STATUS, info);
 }
 

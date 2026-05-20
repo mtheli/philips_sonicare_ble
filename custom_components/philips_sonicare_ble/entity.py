@@ -12,7 +12,15 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 
 from .coordinator import PhilipsSonicareCoordinator
-from .const import DOMAIN, CONF_ADDRESS, CONF_TRANSPORT_TYPE, TRANSPORT_ESP_BRIDGE, CONF_ESP_DEVICE_NAME
+from .const import (
+    DOMAIN,
+    CONF_ADDRESS,
+    CONF_TRANSPORT_TYPE,
+    TRANSPORT_ESP_BRIDGE,
+    CONF_ESP_DEVICE_NAME,
+    CONF_DEVICE_NAME,
+    CONF_AREA,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,15 +46,21 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator], Resto
             entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
         )
 
-        # Build device name from coordinator data
-        model = coordinator.data.get("model_number") if coordinator.data else None
-        name = f"Philips Sonicare {model}" if model else "Philips Sonicare"
+        stored_name = entry.data.get(CONF_DEVICE_NAME)
+        if stored_name:
+            name = stored_name
+        else:
+            # Pre-feature entries — synthesize the old "Philips Sonicare {model}"
+            # label so existing installs aren't renamed.
+            model = coordinator.data.get("model_number") if coordinator.data else None
+            name = f"Philips Sonicare {model}" if model else "Philips Sonicare"
 
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
             connections={(dr.CONNECTION_BLUETOOTH, self._device_id)},
             manufacturer="Philips",
             name=name,
+            suggested_area=entry.data.get(CONF_AREA) or None,
         )
 
     async def async_added_to_hass(self) -> None:
@@ -134,11 +148,11 @@ class PhilipsBrushHeadEntity(PhilipsSonicareEntity):
         entry: ConfigEntry,
     ) -> None:
         super().__init__(coordinator, entry)
-        # Override device_info to register on the brush head sub-device
+        parent_name = self._attr_device_info.get("name") or "Philips Sonicare"
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, f"{self._device_id}_brushhead")},
             manufacturer="Philips",
-            name="Brush Head",
+            name=f"{parent_name} Brush Head",
             via_device=(DOMAIN, self._device_id),
         )
 

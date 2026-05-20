@@ -24,6 +24,8 @@ CONF_COORD_GENERATED_ID = "coord_generated_id"
 CONF_CONNECTED_SENSOR = "connected"
 CONF_NOTIFY_THROTTLE = "notify_throttle_ms"
 CONF_BRIDGE_ID = "bridge_id"
+CONF_FRIENDLY_NAME = "friendly_name"
+CONF_AREA = "area"
 
 philips_sonicare_ns = cg.esphome_ns.namespace("philips_sonicare")
 PhilipsSonicare = philips_sonicare_ns.class_(
@@ -53,6 +55,8 @@ _BASE_SCHEMA = cv.Schema(
         cv.GenerateID(CONF_BRIDGE_GENERATED_ID): cv.declare_id(SonicareBridge),
         cv.GenerateID(CONF_COORD_GENERATED_ID): cv.declare_id(SonicareCoordinator),
         cv.Optional(CONF_BRIDGE_ID, default=""): cv.string,
+        cv.Optional(CONF_FRIENDLY_NAME, default=""): cv.string,
+        cv.Optional(CONF_AREA, default=""): cv.string,
         cv.Optional(CONF_NOTIFY_THROTTLE, default=500): cv.positive_int,
         cv.Optional(CONF_CONNECTED_SENSOR): binary_sensor.binary_sensor_schema(
             device_class="connectivity",
@@ -144,6 +148,8 @@ async def to_code(config):
     bridge_var = cg.new_Pvariable(config[CONF_BRIDGE_GENERATED_ID])
     await cg.register_component(bridge_var, config)
     cg.add(bridge_var.set_bridge_id(bridge_id))
+    cg.add(bridge_var.set_friendly_name(config[CONF_FRIENDLY_NAME]))
+    cg.add(bridge_var.set_area(config[CONF_AREA]))
     cg.add(bridge_var.set_log_tag(log_tag))
     cg.add(bridge_var.set_coordinator(coord_var))
     cg.add(coord_var.set_bridge(bridge_var))
