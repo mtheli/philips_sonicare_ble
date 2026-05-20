@@ -337,6 +337,21 @@ This dedicated Bridge component manages the GATT connection directly on
 the ESP32 with its own pairing stack, notification throttle, and
 per-device subscription state — avoiding all three issues.
 
+### Persisted GATT cache (optional)
+
+Setting `CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"` under `esp32.framework.sdkconfig_options`
+persists the discovered GATT table to NVS keyed by the bonded peer's
+identity. The first connect after a flash or unpair still runs the full
+~4 s SDP; subsequent reconnects to the same brush hit the cache in tens
+of ms and skip discovery entirely. On a brush you reconnect to often,
+this is the biggest single contributor to reconnect latency.
+
+The cache-save path in ESP-IDF 5.5's Bluedroid has the same NULL deref
+as the `bluetooth_proxy` coexistence bug, so this flag depends on the
+[Bluedroid NULL-check patch](../esphome/README.md#bluedroid-null-check-patch-bluedroid_null_fixpy).
+Disable the flag if you'd rather skip the patch — the bridge still
+works, just runs the full SDP on every wake.
+
 ## Troubleshooting
 
 ### ESP32 crashes/reboots when connecting

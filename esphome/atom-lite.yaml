@@ -1,8 +1,14 @@
 esphome:
   name: atom-lite
   friendly_name: "Atom Lite BLE Bridge"
-  # Uncomment to enable bluetooth_proxy (requires bluedroid_null_fix.py
-  # in your ESPHome config directory — see bottom of this file):
+  # Optional: bluedroid_null_fix.py cherry-picks the NULL pointer guards
+  # from ESP-IDF commit d4f3517 into the build. Uncomment the
+  # platformio_options block below if you opt into either:
+  #   - CONFIG_BT_GATTC_CACHE_NVS_FLASH (see sdkconfig_options below)
+  #   - bluetooth_proxy: (see end of file)
+  # Both crash on ESP-IDF 5.5's bluedroid GATT cache path without the
+  # patch. Place the script next to this YAML in your ESPHome config dir.
+  #
   # platformio_options:
   #   extra_scripts:
   #     - pre:/config/esphome/bluedroid_null_fix.py
@@ -17,6 +23,13 @@ esp32:
     sdkconfig_options:
       CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"    # default 40; Sonicare has ~45 attributes
       CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"     # default 5; we subscribe to 11 chars
+      # Optional: persist discovered GATT DB to NVS keyed by bonded peer
+      # identity. First connect still does a full ~4s SDP; subsequent
+      # reconnects to the same brush hit the cache in tens of ms. Requires
+      # the bluedroid_null_fix.py pre-script (uncomment platformio_options
+      # at the top of this file) — without it the cache-save path crashes
+      # inside bta_gattc_cache_save on ESP-IDF 5.5.
+      # CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"
 
 logger:
   level: DEBUG
@@ -125,14 +138,11 @@ binary_sensor:
       inverted: true
 
 # --- Bluetooth Proxy (optional) ---
-# bluetooth_proxy requires a workaround for ESP-IDF bug
-# https://github.com/esphome/esphome/issues/15783
-#
-# To enable, uncomment bluetooth_proxy below AND add the pre-build
-# patch to esphome: platformio_options (see top of this file).
-# The patch fixes a NULL pointer crash in the Bluedroid BLE stack
-# that occurs during GATT service discovery when bluetooth_proxy
-# registers multiple GATT client interfaces.
+# Uncomment to relay BLE for other devices through this ESP. Requires the
+# bluedroid_null_fix.py patch (uncomment platformio_options at the top of
+# this file) to dodge ESP-IDF bug
+# https://github.com/esphome/esphome/issues/15783 — without the patch,
+# every GATT service discovery crashes the chip.
 #
 # bluetooth_proxy:
 #   active: true
