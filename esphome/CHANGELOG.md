@@ -1,5 +1,28 @@
 # ESP Bridge Changelog
 
+## v1.5.0 — 2026-05-20
+
+- **Per-slot `friendly_name:` and `area:` fields** for each `philips_sonicare:`
+  slot. Both ship in the `ble_get_info` payload alongside `bridge_id` etc.
+  Contributed by @jjsmackay via PR #16.
+
+  - `friendly_name` pre-fills the HA "Name" prompt during setup and serves
+    as the slot label in the multi-brush picker, so users can tell which
+    slot is which physical brush before installing.
+  - `area` auto-assigns the new device to that HA area on first install
+    via `DeviceInfo.suggested_area`, with a setup-time backfill that
+    fills the area if currently unset (never overwrites manual area).
+
+  Both fields are one-shot defaults — YAML edits after install do not
+  rename existing devices or move them between areas. Backward-compatible
+  payload: bridges that omit the fields emit empty strings; older HA
+  integrations ignore unknown payload keys. No `MIN_BRIDGE_VERSION` bump
+  required to keep older bridges working, but the feature only takes
+  effect after reflashing to v1.5.0+.
+
+  See [esphome/README.md#per-slot-defaults](README.md#per-slot-defaults-friendly_name-and-area)
+  for usage.
+
 ## v1.4.3 — 2026-05-19
 
 - **Python-component fix, no firmware change.** Reflash optional — the

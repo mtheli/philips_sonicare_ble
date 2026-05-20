@@ -173,14 +173,14 @@ class PhilipsConnectionEntity(PhilipsSonicareEntity):
         entry: ConfigEntry,
     ) -> None:
         super().__init__(coordinator, entry)
-        bridge_id = entry.data.get("esp_bridge_id", "")
-        suffix = f" ({bridge_id})" if bridge_id else ""
-        device_name = f"Connection{suffix}"
+        parent_name = self._attr_device_info.get("name") or "Philips Sonicare"
+        device_name = f"{parent_name} Connection"
         manufacturer = "Espressif" if self._is_esp_bridge else "Home Assistant"
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, f"{self._device_id}_bridge")},
             manufacturer=manufacturer,
             name=device_name,
+            via_device=(DOMAIN, self._device_id),
         )
 
     @property

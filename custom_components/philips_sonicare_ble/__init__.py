@@ -96,7 +96,8 @@ def _async_apply_yaml_area(hass: HomeAssistant, entry: ConfigEntry) -> None:
     upgrading an existing install with a new YAML ``area:`` value won't
     move the device on its own. We fill the gap here — but only when
     area_id is currently None, to avoid overwriting a user's manual
-    assignment.
+    assignment. Sub-devices (Connection, Brush Head) inherit the same
+    area so the whole device group stays grouped in the HA UI.
     """
     area_name = entry.data.get(CONF_AREA)
     if not area_name:
@@ -108,12 +109,28 @@ def _async_apply_yaml_area(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     dev_reg = dr.async_get(hass)
     device = dev_reg.async_get_device(identifiers={(DOMAIN, device_id)})
-    if device is None or device.area_id is not None:
+    if device is None:
         return
 
     area = ar.async_get(hass).async_get_or_create(area_name)
-    dev_reg.async_update_device(device.id, area_id=area.id)
-    _LOGGER.info("Applied YAML area '%s' to Sonicare device", area_name)
+
+    if device.area_id is None:
+        dev_reg.async_update_device(device.id, area_id=area.id)
+        _LOGGER.info("Applied YAML area '%s' to Sonicare device", area_name)
+
+    # Sub-devices belong to the same config_entry; the ESP host device lives
+    # in its own esphome entry and won't appear here. The Connection sub-device
+    # has its ``via_device_id`` rewired to the ESP host (see
+    # ``_async_link_via_esp_device``), so we deliberately don't filter on it.
+    for sub_device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+        if sub_device.id == device.id:
+            continue
+        if sub_device.area_id is not None:
+            continue
+        dev_reg.async_update_device(sub_device.id, area_id=area.id)
+        _LOGGER.info(
+            "Applied YAML area '%s' to sub-device '%s'", area_name, sub_device.name
+        )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

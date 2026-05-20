@@ -556,9 +556,13 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             if raw_fw:
                 firmware = raw_fw.decode("utf-8", errors="replace").strip()
 
-            connection_path = esp_device_name
-            if esp_bridge_id:
+            friendly = self._resolve_friendly_name(esp_device_name, esp_bridge_id)
+            if friendly:
+                connection_path = friendly
+            elif esp_bridge_id:
                 connection_path = f"{esp_device_name} / {esp_bridge_id}"
+            else:
+                connection_path = esp_device_name
             return {
                 "services": found_services,
                 "sonicare_mac": transport.detected_mac,
@@ -601,53 +605,66 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     def _get_service_status_text(
         cls, fetched_uuids: list[str], model: str = ""
     ) -> str:
-        """Format found and missing services as an HTML table (no header).
+        """Format found and missing services as a 2-column HTML table.
 
-        Cells stay terse — the *why* of a missing service collapses into
-        a footer below the table so that long reason strings don't wrap
-        cells across multiple lines.
+        Left column: ✅ available services. Right column: ❌ services not
+        present on this model. Service-name only — descriptions are
+        omitted to keep the dialog compact (Service-Name is sprechend
+        genug, and the dialog now fits the viewport without scroll).
+        The *why* of missing services collapses into a footer.
         """
         fetched_lower = {s.lower() for s in fetched_uuids} - _STANDARD_BLE_SERVICES
         family = cls._detect_family(fetched_lower, model)
 
-        def _row(icon: str, name: str, provides: str) -> str:
-            return (
-                f"<tr><td>{icon}</td><td>{name}</td>"
-                f"<td>{provides}</td></tr>"
-            )
-
-        found_rows: list[str] = []
-        missing_rows: list[str] = []
+        found: list[str] = []
+        missing: list[str] = []
         used_reasons: set[str] = set()
 
         for uuid in sorted(_EXPECTED_SERVICES):
             name = SERVICE_NAMES.get(uuid)
             if not name:
                 continue
-            # Condor only exists on HX742X (Series 7100) — hide the row entirely for
-            # other families instead of showing a permanent ❌.
             if uuid == SVC_CONDOR.lower() and family != "condor":
                 continue
-            feature = SERVICE_FEATURES.get(uuid, "")
             if uuid in fetched_lower:
-                found_rows.append(_row("✅", name, feature))
+                found.append(name)
             else:
                 reason = cls._missing_reason(uuid, family)
                 if reason:
                     used_reasons.add(reason)
-                missing_rows.append(_row("❌", name, feature))
+                missing.append(name)
 
         known_all = _EXPECTED_SERVICES | {SVC_BYTESTREAM.lower()}
         for uuid in sorted(fetched_lower - _EXPECTED_SERVICES):
             name = SERVICE_NAMES.get(uuid)
             if not name or uuid not in known_all:
-                # Drop services we can't name or describe — visual noise.
                 continue
-            found_rows.append(_row("✅", name, SERVICE_FEATURES.get(uuid, "")))
+            found.append(name)
 
-        rows = found_rows + missing_rows
-        if not rows:
+        if not found and not missing:
             return "No services detected"
+
+        # Layout: ✅ left column, ❌ right column when both groups are non-empty.
+        # When only one group is present (e.g. premium model with all services
+        # supported), split it evenly across both columns instead of leaving a
+        # blank column.
+        if found and missing:
+            left_items = [f"✅ {n}" for n in found]
+            right_items = [f"❌ {n}" for n in missing]
+        elif found:
+            mid = (len(found) + 1) // 2
+            left_items = [f"✅ {n}" for n in found[:mid]]
+            right_items = [f"✅ {n}" for n in found[mid:]]
+        else:
+            mid = (len(missing) + 1) // 2
+            left_items = [f"❌ {n}" for n in missing[:mid]]
+            right_items = [f"❌ {n}" for n in missing[mid:]]
+
+        rows: list[str] = []
+        for i in range(max(len(left_items), len(right_items))):
+            left = left_items[i] if i < len(left_items) else ""
+            right = right_items[i] if i < len(right_items) else ""
+            rows.append(f"<tr><td>{left}</td><td>{right}</td></tr>")
 
         table = f"<table><tbody>{''.join(rows)}</tbody></table>"
 
@@ -1512,9 +1529,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         else:
             status_text = "Diagnostic details not available."
 
-        target = self._esp_device_name or ""
-        if self._esp_bridge_id:
-            target = f"{target} / {self._esp_bridge_id}"
+        target_placeholders = self._pair_target_placeholders()
+        target = target_placeholders["target"]
 
         step_id = (
             "esp_bridge_status_connected" if ble_connected else "esp_bridge_status"
@@ -1547,9 +1563,16 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     def _pair_target_placeholders(self) -> dict[str, str]:
-        """Placeholders identifying the bridge being paired/reset."""
+        """Placeholders identifying the bridge being paired/reset.
+
+        Prefers YAML ``friendly_name`` when set (matches the slot picker
+        label the user just saw), falls back to the technical identifier.
+        """
         device = self._esp_device_name or ""
-        if self._esp_bridge_id:
+        friendly = self._resolve_friendly_name()
+        if friendly:
+            target = friendly
+        elif self._esp_bridge_id:
             target = f"{device} / {self._esp_bridge_id}"
         else:
             target = device
@@ -1558,6 +1581,33 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             "bridge_id": self._esp_bridge_id or "",
             "target": target,
         }
+
+    def _resolve_friendly_name(
+        self,
+        esp_device_name: str | None = None,
+        esp_bridge_id: str | None = None,
+    ) -> str:
+        """Look up YAML ``friendly_name`` from probed bridge info for a slot.
+
+        Defaults to current flow state; callers in mid-fetch paths can
+        pass explicit values. Returns empty string when no probe data is
+        cached or the bridge didn't expose a friendly_name.
+        """
+        device = (
+            esp_device_name if esp_device_name is not None else self._esp_device_name
+        )
+        bridge_id = (
+            esp_bridge_id if esp_bridge_id is not None else self._esp_bridge_id
+        )
+        if not device:
+            return ""
+        cached = self._probed_bridges.get(device)
+        if not cached:
+            return ""
+        for did, info in cached:
+            if did == bridge_id:
+                return (info.get("friendly_name") or "").strip()
+        return ""
 
     async def async_step_wait_pair(
         self, user_input: dict[str, Any] | None = None
