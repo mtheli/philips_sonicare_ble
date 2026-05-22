@@ -1,5 +1,39 @@
 # ESP Bridge Changelog
 
+## v1.5.2 — 2026-05-22
+
+- **Heap monitoring + pre-connect backpressure** for multi-brush setups.
+
+  The bridge now logs a periodic warning when free heap drops below 35 KB
+  and refuses new BLE connection attempts when below 25 KB. Together,
+  the two prevent the watchdog-reboot we measured on M5Stack Atom Lite
+  with 4 brushes (heap exhaustion → blocking `tcp_write` in
+  `ListEntitiesServicesResponse` → loopTask hung → `task_wdt: Aborting`).
+
+  Behavior is invisible until the bridge approaches its RAM limit. New
+  log lines:
+
+  ```
+  [W][philips_sonicare.heap]: Heap low: free=14816 min_ever=6248 largest_block=12800
+  [W][philips_sonicare.<id>]: Refusing new connection attempt: free heap 22080 below safety threshold 25000
+  ```
+
+  Live-tested on Atom Lite with 4 brushes (HX9992 / HX992X / HX6340 /
+  HX960V). 3 brushes connect cleanly; the 4th is refused with the heap
+  at ~22 KB free instead of crashing the bridge. See the new "RAM limit
+  on single-core ESP32 boards" callout in
+  [`docs/ESP32_BRIDGE.md`](../docs/ESP32_BRIDGE.md#multi-device-setup)
+  for board guidance.
+
+- **New sample config: [`atom-lite-triple.yaml`](atom-lite-triple.yaml)**
+  for 3-brush setups on Atom Lite. Bumps `CONFIG_BT_GATTC_NOTIF_REG_MAX`
+  to 50 (3 × 11 subs + headroom), trims `CONFIG_BT_ACL_CONNECTIONS` and
+  `CONFIG_BTDM_CTRL_BLE_MAX_CONN` to 5 (4 wasted ~8 KB heap in our
+  prior 7-slot config), and sets `max_notifications: 50` to match.
+
+- **`MIN_BRIDGE_VERSION` stays at 1.4.0** — these changes are additive,
+  no HA-side schema change.
+
 ## v1.5.1 — 2026-05-20
 
 - **Optional GATT cache persistence to NVS** for fast reconnects.

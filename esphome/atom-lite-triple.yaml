@@ -1,0 +1,179 @@
+esphome:
+  name: atom-lite
+  friendly_name: "Atom Lite BLE Bridge"
+  # Optional: bluedroid_null_fix.py cherry-picks the NULL pointer guards
+  # from ESP-IDF commit d4f3517 into the build. Uncomment the
+  # platformio_options block below if you opt into either:
+  #   - CONFIG_BT_GATTC_CACHE_NVS_FLASH (see sdkconfig_options below)
+  #   - bluetooth_proxy: (see end of file)
+  # Both crash on ESP-IDF 5.5's bluedroid GATT cache path without the
+  # patch. Place the script next to this YAML in your ESPHome config dir.
+  #
+  # platformio_options:
+  #   extra_scripts:
+  #     - pre:/config/esphome/bluedroid_null_fix.py
+
+# ESP-IDF is required (not Arduino) because Bluedroid's notification limit
+# is only configurable via sdkconfig.  Arduino uses precompiled libbt.a with
+# BTA_GATTC_NOTIF_REG_MAX=5 — Sonicare needs 11 subscriptions per brush.
+#
+# This template is sized for 3 brushes on a M5Stack Atom Lite (ESP32-PICO-D4).
+# That is the practical limit of single-core ESP32 with 320 KB SRAM — 4
+# brushes run out of heap during normal operation. For 4+ brushes, use
+# either two Atom Lite bridges (2 brushes each) or an ESP32-S3 board.
+# See docs/ESP32_BRIDGE.md → "RAM limit on single-core ESP32 boards".
+esp32:
+  board: m5stack-atom
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "120"    # default 40; Sonicare tree ~80 entries (services + chars + CCCDs) + headroom
+      CONFIG_BT_GATTC_NOTIF_REG_MAX: "50"      # default 5; 3 brushes × 11 subs = 33, +sensor stream during brushing, +headroom
+      CONFIG_BT_ACL_CONNECTIONS: "5"           # default 4; 3 brushes + 1 transient (re-pair) + 1 reserve
+      CONFIG_BTDM_CTRL_BLE_MAX_CONN: "5"       # default 3; matches CONFIG_BT_ACL_CONNECTIONS
+      # Optional: persist discovered GATT DB to NVS keyed by bonded peer
+      # identity. First connect still does a full ~4s SDP; subsequent
+      # reconnects to the same brush hit the cache in tens of ms. Requires
+      # the bluedroid_null_fix.py pre-script (uncomment platformio_options
+      # at the top of this file) — without it the cache-save path crashes
+      # inside bta_gattc_cache_save on ESP-IDF 5.5.
+      # CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  custom_services: true
+  homeassistant_services: true
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Atom-Lite-Fallback"
+    password: !secret fallback_password
+
+captive_portal:
+
+# --- BLE ---
+
+esp32_ble:
+  io_capability: none
+  max_notifications: 50    # matches CONFIG_BT_GATTC_NOTIF_REG_MAX
+  max_connections: 5       # matches CONFIG_BT_ACL_CONNECTIONS
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+    interval: 211ms
+    window: 120ms
+
+# --- Philips Sonicare Components (Auto-Discovery — no MAC required) ---
+#
+# Three independent bridge slots on the same ESP. Each scans for the
+# Sonicare service UUID and bonds with whichever brush is put into
+# pair-mode while that slot's pair-mode service is armed. After
+# bonding, each slot resolves its bonded brush's rotating BLE address
+# (RPA) automatically — no MAC pinning needed.
+#
+# bridge_id ("prestige" / "kids" / "expert" below) is the slot label
+# that shows up in the HA setup picker and on the per-bridge ESPHome
+# services (e.g. atom_lite_ble_pair_mode_prestige).
+#
+# To pair each brush:
+#   1. Flash this firmware
+#   2. In Home Assistant, add the Philips Sonicare integration → ESP32 Bridge
+#   3. Pick the slot (e.g. "prestige") and walk through the pair flow
+#   4. Repeat for the other two slots ("kids", "expert")
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/mtheli/philips_sonicare_ble
+      ref: master
+      path: esphome/components
+    components: [philips_sonicare]
+    refresh: 0s
+
+philips_sonicare:
+  - id: sonicare_prestige
+    bridge_id: prestige
+    # Optional: pre-fill the HA setup form with a friendly name and
+    # auto-assign the brush to an HA area on first install. Both are
+    # one-shot defaults — once the brush is added, edits here do NOT
+    # propagate. Rename via Settings → Devices in HA after that.
+    friendly_name: "Master Bath"
+    area: "Master Bathroom"
+    on_connect:
+      then:
+        - logger.log: "Connected to Prestige"
+        - light.turn_on:
+            id: status_led
+            red: 0%
+            green: 100%
+            blue: 0%
+    on_disconnect:
+      then:
+        - logger.log: "Disconnected from Prestige"
+        - light.turn_on:
+            id: status_led
+            red: 100%
+            green: 0%
+            blue: 0%
+
+  - id: sonicare_kids
+    bridge_id: kids
+    friendly_name: "Kids"
+    area: "Kids Bathroom"
+    on_connect:
+      then:
+        - logger.log: "Connected to Kids"
+    on_disconnect:
+      then:
+        - logger.log: "Disconnected from Kids"
+
+  - id: sonicare_expert
+    bridge_id: expert
+    friendly_name: "Guest Bath"
+    area: "Guest Bathroom"
+    on_connect:
+      then:
+        - logger.log: "Connected to Expert"
+    on_disconnect:
+      then:
+        - logger.log: "Disconnected from Expert"
+
+# --- Hardware: M5Stack Atom Lite ---
+
+light:
+  - platform: esp32_rmt_led_strip
+    chipset: ws2812
+    rgb_order: GRB
+    pin: GPIO27
+    num_leds: 1
+    id: status_led
+    name: "Status LED"
+    restore_mode: ALWAYS_OFF
+
+binary_sensor:
+  - platform: gpio
+    id: atom_button
+    name: "Button"
+    pin:
+      number: GPIO39
+      inverted: true
+
+# --- Bluetooth Proxy (optional) ---
+# NOT recommended for 3-brush setups on Atom Lite — bluetooth_proxy adds
+# ~10-15 KB heap overhead and the bridge is already close to the RAM
+# limit with three Sonicares connected. If you need bluetooth_proxy as
+# well, drop to 2 brushes or move to an ESP32-S3 board.
+#
+# bluetooth_proxy:
+#   active: true

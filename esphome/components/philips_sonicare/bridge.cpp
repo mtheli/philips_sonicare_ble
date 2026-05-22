@@ -2,6 +2,7 @@
 #include "coordinator.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
+#include <esp_heap_caps.h>
 
 namespace esphome {
 namespace philips_sonicare {
@@ -79,6 +80,22 @@ void SonicareBridge::loop() {
   // from Worker + Bridge are harmless.
   uint32_t now = millis();
   this->coord_->on_loop(now);
+
+  // Heap monitor — shared throttle across all bridge instances (one log line
+  // per 10 s total, not per bridge). Warns below 35 KB so the user sees
+  // pressure building before the API path starves. See PR #17 4-brush test.
+  static uint32_t s_last_heap_log_ms = 0;
+  if ((now - s_last_heap_log_ms) >= 10000) {
+    s_last_heap_log_ms = now;
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+    if (free_heap < 35000) {
+      size_t min_free = heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT);
+      size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+      ESP_LOGW("philips_sonicare.heap",
+               "Heap low: free=%u min_ever=%u largest_block=%u",
+               (unsigned) free_heap, (unsigned) min_free, (unsigned) largest);
+    }
+  }
 
   if ((now - this->last_heartbeat_ms_) < HEARTBEAT_INTERVAL_MS)
     return;

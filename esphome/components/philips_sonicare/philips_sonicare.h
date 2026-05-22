@@ -86,6 +86,8 @@ class PhilipsSonicareStandalone : public esp32_ble_client::BLEClientBase {
   bool has_yaml_mac_{false};
   uint32_t pref_ns_{0};
   ESPPreferenceObject pref_;
+  // Throttle for pre-connect heap-backpressure warning (parse_device path).
+  uint32_t last_heap_refuse_log_ms_{0};
 };
 
 // Triggers usable in both modes — fire on the SonicareCoordinator's

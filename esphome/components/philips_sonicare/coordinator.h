@@ -20,7 +20,7 @@ namespace philips_sonicare {
 class SonicareBridge;  // forward — defined in bridge.h
 
 // HA event names — used by both Worker and Bridge
-static const char *const PHILIPS_SONICARE_VERSION = "1.5.1";
+static const char *const PHILIPS_SONICARE_VERSION = "1.5.2";
 static const char *const EVENT_STATUS = "esphome.philips_sonicare_ble_status";
 static const char *const EVENT_DATA = "esphome.philips_sonicare_ble_data";
 static const char *const EVENT_SERVICES = "esphome.philips_sonicare_ble_services";

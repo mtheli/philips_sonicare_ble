@@ -2,6 +2,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include "esphome/components/esp32_ble/ble.h"
+#include <esp_heap_caps.h>
 
 namespace espbt = esphome::esp32_ble_tracker;
 
@@ -190,6 +191,24 @@ void PhilipsSonicareStandalone::set_enabled(bool enabled) {
 bool PhilipsSonicareStandalone::parse_device(const espbt::ESPBTDevice &device) {
   if (!this->enabled_)
     return false;
+
+  // Pre-connect heap backpressure: only check when we're IDLE (i.e. an advert
+  // here could actually trigger a new connection). If heap is below the
+  // safety threshold, refuse — prevents the heap-exhaustion → malloc-fail →
+  // watchdog cascade observed with 4 brushes on M5Stack Atom Lite.
+  if (this->state() == espbt::ClientState::IDLE) {
+    size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+    if (free_heap < 25000) {
+      uint32_t now = millis();
+      if ((now - this->last_heap_refuse_log_ms_) > 30000) {
+        ESP_LOGW(this->log_tag_.c_str(),
+                 "Refusing new connection attempt: free heap %u below safety threshold 25000",
+                 (unsigned) free_heap);
+        this->last_heap_refuse_log_ms_ = now;
+      }
+      return false;
+    }
+  }
 
   if (!this->uuid_scan_mode_)
     return BLEClientBase::parse_device(device);

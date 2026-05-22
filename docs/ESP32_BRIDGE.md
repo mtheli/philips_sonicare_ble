@@ -70,9 +70,12 @@ MAC variant called out where the steps differ.
 
 ## Step 1: Create the ESPHome Configuration
 
-Use the template [`esphome/atom-lite.yaml`](../esphome/atom-lite.yaml) (single brush)
-or [`esphome/atom-lite-dual.yaml`](../esphome/atom-lite-dual.yaml) (multi-bridge)
-as a starting point. Copy it to your ESPHome configuration directory and customize.
+Use one of the templates as a starting point — copy to your ESPHome
+configuration directory and customize:
+
+- [`esphome/atom-lite.yaml`](../esphome/atom-lite.yaml) — single brush
+- [`esphome/atom-lite-dual.yaml`](../esphome/atom-lite-dual.yaml) — 2 brushes
+- [`esphome/atom-lite-triple.yaml`](../esphome/atom-lite-triple.yaml) — 3 brushes (practical limit on Atom Lite)
 
 If you already have an ESP32 running other components (e.g. `ble_adv_proxy`,
 `bluetooth_proxy`), you can add the Sonicare component to your existing config
@@ -443,8 +446,33 @@ UI after that.
 Each slot has its own bond storage in NVS, so the two brushes are completely
 independent — pair, unpair, or re-pair one without affecting the other.
 
-A full example is available in
-[`esphome/atom-lite-dual.yaml`](../esphome/atom-lite-dual.yaml).
+Full examples:
+- [`esphome/atom-lite-dual.yaml`](../esphome/atom-lite-dual.yaml) — 2 brushes
+- [`esphome/atom-lite-triple.yaml`](../esphome/atom-lite-triple.yaml) — 3 brushes (Atom Lite limit)
+
+> [!IMPORTANT]
+> **RAM limit on single-core ESP32 boards.** The M5Stack Atom Lite
+> (ESP32-PICO-D4, 320 KB SRAM) handles **2 brushes comfortably and 3
+> brushes at the limit**. With 4 brushes the bridge runs out of heap
+> during normal operation. The bridge logs a periodic warning as the
+> heap approaches the safety threshold, and refuses new connections
+> rather than crashing:
+>
+> ```
+> [W][philips_sonicare.heap]: Heap low: free=14816 min_ever=6248 largest_block=12800
+> [W][philips_sonicare.<id>:204]: Refusing new connection attempt: free heap 15896 below safety threshold 25000
+> ```
+>
+> For 4+ brushes, pick one of:
+> - **Two Atom Lite bridges, ~2 brushes each** — HA sees them as
+>   independent ESPHome devices, no integration changes needed. Cheapest
+>   path if you already have hardware.
+> - **An ESP32-S3 board** (e.g. [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R)
+>   or ESP32-S3-DevKitC-1) — dual-core, more SRAM, enough headroom for
+>   4 brushes on a single bridge.
+>
+> ESP32-C3 / ESP32-C6 are not recommended for multi-brush setups (single
+> core + less SRAM than Atom Lite).
 
 > [!NOTE]
 > Each toothbrush should only be connected via **one** path — either Direct BLE
