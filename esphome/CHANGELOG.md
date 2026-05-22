@@ -37,8 +37,16 @@
   limit on M5Stack Atom Lite, not a PR #17 issue — see
   [`docs/ESP32_BRIDGE.md`](../docs/ESP32_BRIDGE.md#multi-device-setup)).
 
-- **`MIN_BRIDGE_VERSION` stays at 1.4.0** — additive code paths, no
-  HA-side schema change.
+- **`MIN_BRIDGE_VERSION` stays at 1.4.0** — backwards-compatible with
+  older bridges. Improvement 1a includes one HA-side change
+  (`transport.py::read_chars` switches from serial to `asyncio.gather`),
+  but the parallel-read path would silently drop reads on bridges
+  before v1.5.3 (single-slot `pending_handle_` clobbering). HA now
+  gates the gather on the reported bridge version: bridges ≥1.5.3 get
+  the full pipelining speedup (~250–500 ms saved on the post-connect
+  read phase), older bridges keep the original serial behaviour with no
+  regression. Improvements 1b and 2a are bridge-only and need no
+  HA-side gating.
 
 ## v1.5.2 — 2026-05-22
 

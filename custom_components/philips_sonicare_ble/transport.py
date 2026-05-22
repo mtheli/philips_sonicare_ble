@@ -750,13 +750,32 @@ class EspBridgeTransport(SonicareTransport):
         if not self.is_connected:
             return {u: None for u in char_uuids}
 
-        # Fire all reads at once — the bridge serialises GATT ops via its
-        # pending-calls queue (drained one at a time on each read completion),
-        # so we get back-to-back BLE reads without HA-loop overhead between
-        # them. read_char never raises (returns None on failure) so a bare
-        # gather is safe.
-        results = await asyncio.gather(*(self.read_char(u) for u in char_uuids))
-        return dict(zip(char_uuids, results))
+        # Pipelining (concurrent reads via asyncio.gather) requires bridge
+        # v1.5.3+ — older bridges had a single-slot pending_handle_ that
+        # silently dropped overlapping GATT_READ_EVTs, so a parallel burst
+        # would lose all-but-the-last read. Fall back to serial reads when
+        # talking to an older bridge or before the first heartbeat has
+        # populated self._bridge_version.
+        from packaging.version import Version
+        use_pipeline = bool(
+            self._bridge_version
+            and Version(self._bridge_version) >= Version("1.5.3")
+        )
+
+        if use_pipeline:
+            # Fire all reads at once — the bridge serialises GATT ops via its
+            # pending-calls queue (drained one at a time on each read
+            # completion), so we get back-to-back BLE reads without HA-loop
+            # overhead between them. read_char never raises (returns None on
+            # failure) so a bare gather is safe.
+            results = await asyncio.gather(*(self.read_char(u) for u in char_uuids))
+            return dict(zip(char_uuids, results))
+
+        # Serial fallback for bridges <1.5.3.
+        sequential: dict[str, bytes | None] = {}
+        for uuid in char_uuids:
+            sequential[uuid] = await self.read_char(uuid)
+        return sequential
 
     async def write_char(self, char_uuid: str, data: bytes) -> None:
         if not self._setup_done:
