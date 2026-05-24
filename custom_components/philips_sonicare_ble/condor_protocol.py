@@ -238,8 +238,12 @@ class CondorProtocol(SonicareProtocol):
         payload = bytes(data[1:])
 
         # Every incoming data packet must be acked on TX_ACK — otherwise
-        # the device's send window fills up and notifications stall.
-        asyncio.get_running_loop().create_task(self._send_tx_ack(seq))
+        # the device's send window fills up and notifications stall, and
+        # if we're slow enough (>250 ms) the brush tears the link down with
+        # reason=0x13 mid-session. ESP bridges v1.6.0+ echo the ack on the
+        # BLE thread already, so skip the HA-loop round-trip there.
+        if not self._transport.auto_tx_ack:
+            asyncio.get_running_loop().create_task(self._send_tx_ack(seq))
 
         # A single logical frame may land across several notifications;
         # reassemble until 5 + payload_len bytes are buffered.

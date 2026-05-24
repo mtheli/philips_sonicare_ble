@@ -20,7 +20,7 @@ namespace philips_sonicare {
 class SonicareBridge;  // forward — defined in bridge.h
 
 // HA event names — used by both Worker and Bridge
-static const char *const PHILIPS_SONICARE_VERSION = "1.5.3";
+static const char *const PHILIPS_SONICARE_VERSION = "1.6.0";
 static const char *const EVENT_STATUS = "esphome.philips_sonicare_ble_status";
 static const char *const EVENT_DATA = "esphome.philips_sonicare_ble_data";
 static const char *const EVENT_SERVICES = "esphome.philips_sonicare_ble_services";
@@ -203,6 +203,11 @@ class SonicareCoordinator {
   std::map<uint16_t, uint16_t> cccd_map_;
   // char_handle -> characteristic properties (to distinguish notify vs indicate)
   std::map<uint16_t, uint8_t> char_props_map_;
+  // Condor auto-TX_ACK: cached handle of e50b0004 (TX_ACK char), resolved
+  // lazily on the first e50b0003 notify so we don't pay the GATT cache
+  // lookup on every packet. Reset to 0 on disconnect — re-resolved against
+  // the new GATT table after reconnect.
+  uint16_t condor_tx_ack_handle_{0};
   // Subscriptions that should be restored after reconnect (service_uuid, char_uuid)
   std::vector<std::pair<std::string, std::string>> desired_subscriptions_;
 

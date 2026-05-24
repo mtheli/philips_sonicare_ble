@@ -520,6 +520,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       this->notify_map_.clear();
       this->cccd_map_.clear();
       this->char_props_map_.clear();
+      this->condor_tx_ack_handle_ = 0;
       this->last_notify_ms_.clear();
       this->pending_calls_.clear();
       char reason_str[5];
@@ -902,6 +903,48 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
           break;
         }
         this->last_notify_ms_[param->notify.handle] = now;
+      }
+
+      // Condor auto-TX_ACK (fast path) — fires *before* the ESPHome-API emit
+      // so the ack hits the wire on the local BLE thread (~10 ms) instead of
+      // the Wi-Fi + HA round-trip (30-300 ms, occasionally above the brush's
+      // ~250 ms patience window → reason=0x13 mid-brushing disconnect, see
+      // GitHub issue #13). HA-side _send_tx_ack is suppressed when
+      // bridge_version >= 1.6.0; both running in parallel yields a harmless
+      // duplicate 1-byte write.
+      if (char_uuid == "e50b0003-af04-4564-92ad-fef019489de6" &&
+          param->notify.value_len >= 1) {
+        if (this->condor_tx_ack_handle_ == 0) {
+          auto svc = espbt::ESPBTUUID::from_raw(
+              "e50ba3c0-af04-4564-92ad-fef019489de6");
+          auto chr_uuid = espbt::ESPBTUUID::from_raw(
+              "e50b0004-af04-4564-92ad-fef019489de6");
+          auto *chr = this->parent_->get_characteristic(svc, chr_uuid);
+          if (chr != nullptr) {
+            this->condor_tx_ack_handle_ = chr->handle;
+            ESP_LOGI(this->log_tag_.c_str(),
+                     "Condor auto-TX_ACK enabled (handle 0x%04X)",
+                     this->condor_tx_ack_handle_);
+          }
+        }
+        if (this->condor_tx_ack_handle_ != 0) {
+          uint8_t ack_byte = param->notify.value[0] & 0x3F;
+          esp_gatt_auth_req_t auth_req = this->peer_is_bonded_
+              ? ESP_GATT_AUTH_REQ_NO_MITM
+              : ESP_GATT_AUTH_REQ_NONE;
+          auto status = esp_ble_gattc_write_char(
+              gattc_if,
+              this->parent_->get_conn_id(),
+              this->condor_tx_ack_handle_,
+              1, &ack_byte,
+              ESP_GATT_WRITE_TYPE_NO_RSP,
+              auth_req);
+          if (status != ESP_OK) {
+            ESP_LOGW(this->log_tag_.c_str(),
+                     "Auto-TX_ACK write failed: seq=0x%02X status=%d",
+                     ack_byte, status);
+          }
+        }
       }
 
       std::string hex_payload =

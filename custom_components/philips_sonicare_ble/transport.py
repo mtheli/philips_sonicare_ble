@@ -211,6 +211,17 @@ class SonicareTransport(abc.ABC):
     async def set_notify_throttle(self, ms: int) -> None:
         """Set the notification throttle on the bridge (no-op for direct BLE)."""
 
+    @property
+    def auto_tx_ack(self) -> bool:
+        """Whether the transport itself echoes Condor TX_ACK on e50b0003 notifies.
+
+        Default False — direct-BLE keeps acking from the HA event loop, since
+        BlueZ ↔ adapter latency is sub-millisecond and well within the brush's
+        ~250 ms patience window. Overridden by EspBridgeTransport when the
+        ESP bridge handles auto-ack itself (v1.6.0+).
+        """
+        return False
+
     @abc.abstractmethod
     def set_disconnect_callback(self, cb: Callable[[], None]) -> None:
         """Register a callback invoked when the connection drops."""
@@ -436,6 +447,20 @@ class EspBridgeTransport(SonicareTransport):
     @property
     def bridge_version(self) -> str | None:
         return self._bridge_version
+
+    @property
+    def auto_tx_ack(self) -> bool:
+        # Bridge v1.6.0+ echoes the seq from e50b0003 → e50b0004 on its own BLE
+        # thread (~10 ms vs. 30-300 ms via Wi-Fi+HA), which keeps us inside the
+        # brush's ~250 ms TX_ACK window during sustained brushing sessions.
+        # Older bridges don't, so HA must keep sending the ack itself.
+        if not self._bridge_version:
+            return False
+        from packaging.version import Version
+        try:
+            return Version(self._bridge_version) >= Version("1.6.0")
+        except Exception:
+            return False
 
     @property
     def bridge_boot_time(self) -> datetime | None:
