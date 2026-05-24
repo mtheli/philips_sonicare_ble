@@ -1,5 +1,36 @@
 # ESP Bridge Changelog
 
+## v1.6.0 — 2026-05-25
+
+- **Bridge-side Condor TX_ACK** — fixes mid-brushing disconnects reported
+  by @itchensen in [issue
+  #13](https://github.com/mtheli/philips_sonicare_ble/issues/13). The
+  Condor protocol expects a 1-byte ack on `e50b0004` within ~250 ms of
+  every `e50b0003` notify; bouncing that ack through the
+  Bridge→Wi-Fi→HA→asyncio→Wi-Fi→Bridge round-trip takes 30–300 ms with
+  occasional spikes past the patience window, at which point the brush
+  tears the link down with `reason=0x13` mid-session. The bridge now
+  echoes `data[0] & 0x3F` straight to `e50b0004` on its BLE thread
+  (~10 ms, deterministic), and the HA integration gates its own
+  `_send_tx_ack` on `bridge_version >= 1.6.0` so the ack runs once,
+  on the fast path.
+
+  Triggered only when the inbound UUID is `e50b0003` and at least one
+  byte of payload was delivered — legacy brushes and non-Condor chars
+  are not touched. Auth/write-type follow the same logic the
+  Bridge already uses for outbound writes (`AUTH_REQ_NO_MITM` for
+  bonded peers, `WRITE_TYPE_NO_RSP`). The `e50b0004` handle is resolved
+  once per connection and cached; an `INFO` log on first resolution
+  marks the fast path active. A `WARN` log fires only when the write
+  itself errors (`status != ESP_OK`).
+
+- **`MIN_BRIDGE_VERSION` stays at 1.4.0** — fully backwards-compatible.
+  Old HA + new bridge yields a harmless duplicate 1-byte ack (HA still
+  sends its ack, bridge also auto-acks, brush sees the same seq
+  twice). New HA + old bridge behaves exactly like before. Direct-BLE
+  users get no behaviour change — `auto_tx_ack` defaults to `False`
+  on the abstract transport.
+
 ## v1.5.3 — 2026-05-22
 
 - **Reconnect-lag improvements (PR #17 Improvements 1+2)**, contributed
