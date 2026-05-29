@@ -111,8 +111,9 @@ class CondorProtocol(SonicareProtocol):
         self._response_event = asyncio.Event()
         self._response_data = b""
 
-        # Outgoing data-channel sequence: 1..63 then wraps to 0 then back to
-        # 1. Seq 0 with BIT_START is reserved for the channel-open packet.
+        # Outgoing data-channel sequence: starts at 1 after the channel-open
+        # START frame (which alone carries BIT_START + seq 0), then advances
+        # mod-64. See _next_seq for the wrap invariant.
         self._next_data_seq = 1
 
         # Serializes outbound RX writes so chunks of different frames never
@@ -338,11 +339,12 @@ class CondorProtocol(SonicareProtocol):
     # --- Frame layer ------------------------------------------------------
 
     def _next_seq(self) -> int:
+        # Pure mod-64: the brush enforces strict monotonic seq matching
+        # and tears the link down on a gap. Seq 0 is reused after the
+        # wrap; the channel-open frame is distinguished by BIT_START in
+        # the high bits, not by reserving seq 0.
         seq = self._next_data_seq & _MASK_SEQ
         self._next_data_seq = (self._next_data_seq + 1) % 64
-        # Skip seq 0 — reserved for the channel-open handshake.
-        if self._next_data_seq == 0:
-            self._next_data_seq = 1
         return seq
 
     async def _send_msg(self, msg_type: int, payload: bytes = b"") -> None:
