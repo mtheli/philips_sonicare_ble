@@ -42,6 +42,10 @@ class SonicareProtocol(abc.ABC):
 
     def __init__(self, transport: SonicareTransport) -> None:
         self._transport = transport
+        # Firmware model-number family (e.g. "HX999X", "HX960X"). Set by the
+        # coordinator after construction; used to pick the correct brushing-
+        # mode decode table, which differs per model family. Empty until known.
+        self.model = ""
 
     # --- Session lifecycle -------------------------------------------------
 

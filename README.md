@@ -52,6 +52,7 @@ See [Configuration](#configuration) for setup instructions.
 | HX960V (ExpertClean 7300) | :white_check_mark: | :white_check_mark: | Maintainer |
 | **DiamondClean Smart** | | | |
 | [HX992X](https://www.usa.philips.com/c-p/HX9903_11/sonicare-diamondclean-smart-9300-sonic-electric-toothbrush-with-app) | :white_check_mark: | :white_check_mark: | Maintainer |
+| [HX993X](https://community.home-assistant.io/t/philips-sonicare-integration-for-bluetooth-toothbrushes/178229/75) (DiamondClean Smart 9300) | :white_check_mark: | *not yet tested* | Community ([forum](https://community.home-assistant.io/t/philips-sonicare-integration-for-bluetooth-toothbrushes/178229/75)) |
 | **DiamondClean 9000** | | | |
 | [HX960X](https://www.philips.de/c-p/HX9601_03/sonicare-diamondclean-9000-elektrische-zahnbuerste-mit-app) | :white_check_mark: | — | Community ([#9](https://github.com/mtheli/philips_sonicare_ble/issues/9)) |
 | HX991A | — | :white_check_mark: | Community ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)) |

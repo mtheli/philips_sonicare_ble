@@ -61,6 +61,8 @@ from .const import (
     PRESSURE_ALARM_STATES,
     SENSOR_FRAME_PRESSURE,
     SENSOR_FRAME_TEMPERATURE,
+    brushing_mode_for_model,
+    uses_routine_id_mode,
 )
 from .protocol import SonicareProtocol, UpdateCallback
 
@@ -218,17 +220,29 @@ class ClassicProtocol(SonicareProtocol):
         if raw := results.get(CHAR_MANUFACTURER_NAME):
             out["manufacturer_name"] = raw.decode("utf-8", "ignore").strip()
 
-        # Brushing mode has two possible sources; 0x4022 (selected routine
-        # id on write-capable models) wins over 0x4080 (read-only session
-        # status) when both are present.
-        mode_from_4022 = False
-        if raw := results.get(CHAR_AVAILABLE_ROUTINE_IDS):
+        # Brushing mode is reported by different characteristics with
+        # incompatible numbering schemes, gated on the model family:
+        #   - HX9996 / HX999X: 0x4022 carries the selected mode-id, decoded
+        #     with BRUSHING_MODES.
+        #   - every other handle: 0x4080 carries a sequential device-mode
+        #     index, decoded per-model via brushing_mode_for_model().
+        # On the latter, 0x4022 is instead the (constant) available-id list,
+        # NOT the selected mode, so it is ignored here. Decoding 0x4080 with
+        # the mode-id table swaps modes 3/4 (tongue_care <-> deep_clean_plus)
+        # and mis-shifts models whose list omits an entry (e.g. HX960X has no
+        # white mode). Verified on handle captures 2026-06-01
+        # (HX999X / HX992X / HX960X).
+        routine_id_mode = uses_routine_id_mode(self.model)
+        if routine_id_mode and (raw := results.get(CHAR_AVAILABLE_ROUTINE_IDS)):
             mode_value = raw[0]
             mapped = BRUSHING_MODES.get(mode_value)
-            if mapped:
-                out["brushing_mode"] = mapped
-                out["brushing_mode_value"] = mode_value
-                mode_from_4022 = True
+            if mapped is None:
+                _LOGGER.warning(
+                    "Unknown routine id on 0x4022: %d (raw: %s)",
+                    mode_value, raw.hex(),
+                )
+            out["brushing_mode_value"] = mode_value
+            out["brushing_mode"] = mapped
 
         if raw := results.get(CHAR_HANDLE_STATE):
             state_byte = raw[0]
@@ -241,20 +255,19 @@ class ClassicProtocol(SonicareProtocol):
                 )
             out["handle_state"] = mapped
 
-        if raw := results.get(CHAR_BRUSHING_MODE):
+        if not routine_id_mode and (raw := results.get(CHAR_BRUSHING_MODE)):
             if len(raw) >= 2:
                 mode_value = int.from_bytes(raw[:2], "little")
             else:
                 mode_value = raw[0]
-            mapped = BRUSHING_MODES.get(mode_value)
+            mapped = brushing_mode_for_model(self.model, mode_value)
             if mapped is None:
                 _LOGGER.warning(
-                    "Unknown brushing_mode value: %d (raw: %s)",
-                    mode_value, raw.hex(),
+                    "Unknown brushing_mode index %d for model %s (raw: %s)",
+                    mode_value, self.model or "?", raw.hex(),
                 )
-            if not mode_from_4022:
-                out["brushing_mode_value"] = mode_value
-                out["brushing_mode"] = mapped
+            out["brushing_mode_value"] = mode_value
+            out["brushing_mode"] = mapped
 
         if raw := results.get(CHAR_BRUSHING_STATE):
             state_value = raw[0]
