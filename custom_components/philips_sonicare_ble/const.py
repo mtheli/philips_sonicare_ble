@@ -136,6 +136,12 @@ HANDLE_STATES = {
     7: "background",
 }
 
+# Mode-id table for the 0x4022 (AVAILABLE_ROUTINE_IDS) value space. On handles
+# that report the *selected* mode there (HX9996 / HX999X), the value is a single
+# mode-id byte decoded by this table. NOTE: 0x4080 (BRUSHING_MODE) on every other
+# handle uses a DIFFERENT numbering — a sequential device-mode index — and must
+# NOT be decoded with this table; see brushing_mode_for_model(). Verified against
+# our own handle captures on HX999X (2026-06-01).
 BRUSHING_MODES = {
     0: "clean",
     1: "white_plus",
@@ -143,6 +149,28 @@ BRUSHING_MODES = {
     3: "tongue_care",
     4: "deep_clean_plus",
     5: "sensitive",
+}
+
+# On the remaining handles the selected mode comes from 0x4080 (BRUSHING_MODE)
+# as a sequential 0-based index into the device's own ordered mode list — the
+# same byte means different modes on different models (e.g. value 1 = white+ on
+# HX992X but gum_health on HX960X, which has no white mode). Each model family
+# therefore needs its own ordered list, indexed directly by the value; models
+# we haven't mapped fall back to the full mode order. Lists are derived from our
+# own handle captures (HX992X, HX960X — 2026-06-01).
+_SEQUENTIAL_MODE_DEFAULT = (
+    "clean",
+    "white_plus",
+    "gum_health",
+    "deep_clean_plus",
+    "tongue_care",
+    "sensitive",
+)
+_SEQUENTIAL_MODE_BY_MODEL: dict[str, tuple[str, ...]] = {
+    "HX960X": ("clean", "gum_health", "deep_clean_plus"),
+    "HX9120": ("clean", "white_plus", "deep_clean_plus"),
+    "HX961X": ("clean", "white_plus", "deep_clean_plus"),
+    "HX991X": ("clean", "white_plus", "gum_health", "deep_clean_plus"),
 }
 
 BRUSHING_STATES = {
@@ -176,6 +204,38 @@ def supports_settings_write(model: str) -> bool:
     """Check if the model supports settings (0x4420) writes."""
     upper = (model or "").upper()
     return any(upper.startswith(prefix) for prefix in SETTINGS_WRITE_MODELS)
+
+
+# ── Brushing-mode decode source ─────────────────────────────────────────────
+# Two handle families report the selected brushing mode differently: HX9996 /
+# HX999X expose it as a mode-id in 0x4022 (AVAILABLE_ROUTINE_IDS), while every
+# other handle exposes it as a sequential index in 0x4080 (BRUSHING_MODE). This
+# gate decides which characteristic and which table the parser uses.
+ROUTINE_ID_MODE_MODELS = ("HX9996", "HX999")
+
+
+def uses_routine_id_mode(model: str) -> bool:
+    """True when the selected mode is read from 0x4022 as a mode-id."""
+    upper = (model or "").upper()
+    return any(upper.startswith(prefix) for prefix in ROUTINE_ID_MODE_MODELS)
+
+
+def brushing_mode_for_model(model: str, value: int) -> str | None:
+    """Decode a 0x4080 sequential mode index to a label.
+
+    Uses the model family's own ordered mode list, falling back to the full
+    mode order for unmapped models. Returns ``None`` for values outside the
+    model's mode list (the caller logs the raw value).
+    """
+    upper = (model or "").upper()
+    table = _SEQUENTIAL_MODE_DEFAULT
+    for prefix, modes in _SEQUENTIAL_MODE_BY_MODEL.items():
+        if upper.startswith(prefix):
+            table = modes
+            break
+    if 0 <= value < len(table):
+        return table[value]
+    return None
 
 
 # ── Sector / zone count per model family ────────────────────────────────────

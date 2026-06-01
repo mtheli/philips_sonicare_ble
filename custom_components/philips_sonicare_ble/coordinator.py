@@ -135,6 +135,11 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Remove 0x4022 for models without mode write — they use 0x4080 for mode
         model = entry.data.get("model", "")
+        # The protocol needs the model family to pick the right brushing-mode
+        # decode table (0x4022 mode-id on HX9996/HX999X vs 0x4080 sequential
+        # index elsewhere); the firmware model-number is stable for a paired
+        # device.
+        self._protocol.model = model
         if not supports_mode_write(model):
             for charlist in (self._poll_chars, self._live_chars, self._notify_chars):
                 if CHAR_AVAILABLE_ROUTINE_IDS in charlist:
@@ -428,6 +433,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Device registry: only update when model or firmware actually changed
         model = new_data.get("model_number")
         firmware = new_data.get("firmware")
+        # Keep the protocol's mode-decode table in sync if we learn the model
+        # from a live read (covers fresh pairs whose entry had no model yet).
+        if model and not self._use_condor and self._protocol.model != model:
+            self._protocol.model = model
         if changed and (model or firmware):
             dev_reg = dr.async_get(self.hass)
             device = dev_reg.async_get_device(
