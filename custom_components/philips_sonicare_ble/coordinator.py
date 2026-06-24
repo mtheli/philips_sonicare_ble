@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.components import bluetooth as ha_bluetooth
 from homeassistant.components.bluetooth import (
     BluetoothCallbackMatcher,
     BluetoothScanningMode,
@@ -165,6 +166,11 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_adapter_type: str | None = None
         self._unsub_adv_debug = None
         self._dbus_bus: MessageBus | None = None
+        # HA >= 2026.5 exposes async_clear_advertisement_history — preferred over
+        # the BlueZ D-Bus RSSI listener for waking on static-ADV devices.
+        self._use_adv_clear = hasattr(
+            ha_bluetooth, "async_clear_advertisement_history"
+        )
         self._wake_event = asyncio.Event()
         self._sensor_subscribed = False
         self._brushhead_read_pending = False
@@ -242,7 +248,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Start live monitoring. Call after setup is complete."""
         if not self._is_esp_bridge:
             self._start_advertisement_callback()
-            await self._start_dbus_rssi_listener()
+            if not self._use_adv_clear:
+                # Fallback for HA < 2026.5 without async_clear_advertisement_history.
+                await self._start_dbus_rssi_listener()
         self._live_task = self.entry.async_create_background_task(
             self.hass, self._start_live_monitoring(), "philips_sonicare_monitoring"
         )
@@ -254,13 +262,30 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.async_set_updated_data(self.data)
         self._wake_event.set()
 
+    @callback
+    def _clear_adv_history(self) -> None:
+        """Re-arm advertisement-based wake detection for static-ADV devices.
+
+        habluetooth deduplicates identical advertisements (core#141662), so the
+        registered advertisement callback stops firing after the first packet.
+        Clearing the dedup history makes the next (identical) ADV reach the
+        callback again. Called right before each ADV wait so every reconnect
+        cycle re-opens the guard; no periodic timer needed.
+
+        Replaces the BlueZ D-Bus RSSI listener on HA >= 2026.5. No-op on older
+        HA, which uses _start_dbus_rssi_listener instead.
+        """
+        if self._use_adv_clear:
+            ha_bluetooth.async_clear_advertisement_history(self.hass, self.address)
+
     def _start_advertisement_callback(self) -> None:
         """Register HA bluetooth callback for advertisement detection.
 
         Note: habluetooth filters identical advertisements, so this only fires
         when advertisement DATA changes (manufacturer_data, service_data,
         service_uuids, or name). For devices like the Sonicare that send
-        static data, the D-Bus RSSI listener provides the fallback.
+        static data, _clear_adv_history re-arms it before each ADV wait (or the
+        D-Bus RSSI listener provides the fallback on HA < 2026.5).
         """
 
         @callback
@@ -454,7 +479,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _start_live_monitoring(self) -> None:
         """Persistent live connection with notifications.
 
-        Direct BLE: waits for advertisement (ADV callback or D-Bus RSSI).
+        Direct BLE: waits for advertisement (ADV callback; dedup history is
+        cleared before each wait, or D-Bus RSSI fallback on HA < 2026.5).
         ESP bridge: waits for ESP "ready" event (device auto-connected).
 
         Both modes are event-driven — no blind retries.
@@ -470,6 +496,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._wake_event.clear()
                         _LOGGER.info("Advertisement already pending — connecting to %s", self.address)
                     else:
+                        # Re-open the dedup guard so the next ADV wakes us even
+                        # though the payload is identical to the last one seen.
+                        self._clear_adv_history()
                         _LOGGER.debug("Waiting for advertisement from %s...", self.address)
                         await self._wake_event.wait()
                         self._wake_event.clear()
