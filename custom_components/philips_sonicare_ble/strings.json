@@ -10,7 +10,7 @@
     "step": {
       "bluetooth_confirm": {
         "title": "Confirm Philips Sonicare",
-        "description": "**{name}** discovered at `{address}` via Direct Bluetooth.\n\nMake sure your toothbrush is **turned on** (press the button), then click **Submit**."
+        "description": "{status}**{name}** discovered at `{address}` via Direct Bluetooth.\n\nMake sure your toothbrush is **turned on** (press the button), then click **Submit**."
       },
       "user": {
         "title": "Add Philips Sonicare",
@@ -89,6 +89,7 @@
       "unknown": "Unexpected error. Check the logs for details."
     },
     "abort": {
+      "device_asleep": "The toothbrush is asleep and could not be reached. Wake it (press the power button or lift it off the charger), then start setup again.",
       "already_configured": "Device is already configured.",
       "already_configured_detail": "This toothbrush is already configured via **{transport}** (status: {status}). Remove or re-enable the existing entry first.",
       "already_in_progress": "Configuration flow is already in progress.",

@@ -12,6 +12,7 @@ from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
     async_ble_device_from_address,
     async_discovered_service_info,
+    async_last_service_info,
 )
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.const import CONF_ADDRESS
@@ -66,7 +67,7 @@ from .const import (
 )
 from .helpers import esphome_service_id
 from .transport import EspBridgeTransport, describe_connection_path
-from .exceptions import NotPairedException, TransportError
+from .exceptions import DeviceAsleepException, NotPairedException, TransportError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -74,6 +75,13 @@ _LOGGER = logging.getLogger(__name__)
 # Picked when the user wants to type a MAC manually (e.g. an RPA-rotating
 # brush whose current address is not the freshest one in the discovery list).
 _MANUAL_ADDRESS = "__manual__"
+
+# Max age of the last *connectable* advertisement before we treat the brush as
+# asleep. habluetooth keeps returning a connectable BLEDevice for up to ~195 s
+# after the last advertisement, so a fresh BLEDevice reference alone does not
+# prove the device is reachable; the brush only advertises every ~1-2 s while
+# awake, so a stricter window cleanly separates "awake now" from "asleep".
+_STALE_ADV_MAX_SECONDS = 15.0
 
 # Standard BLE services to hide from display
 _STANDARD_BLE_SERVICES = {
@@ -256,15 +264,31 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         result: dict[str, Any] = {"services": list(adv_services)}
 
-        # Always get the freshest BLEDevice reference — the discovery_info
-        # device may be stale if the user waited before clicking Submit.
-        device = async_ble_device_from_address(self.hass, address)
-        if not device and self._discovery_info is not None:
-            device = self._discovery_info.device
+        # Gate on the age of the last *connectable* advertisement. Within the
+        # ~195 s habluetooth fallback window async_ble_device_from_address (and
+        # the frozen discovery_info.device) still hand back a stale BLEDevice
+        # whose connect just drops mid-handshake — surfacing to the user as
+        # five "device disconnected" retries and a confusing "Authentication
+        # Canceled". The brush advertises every ~1-2 s while awake and stops
+        # when it sleeps, so a stale last-ADV means it is asleep: bail out early
+        # with an actionable signal instead. The history timestamp is updated on
+        # every received advertisement (including deduplicated identical ones —
+        # dedup only suppresses callback dispatch, not the history write), so an
+        # awake brush is never misread as asleep here.
+        last = async_last_service_info(self.hass, address, connectable=True)
+        age = None if last is None else (time.monotonic() - last.time)
+        if last is None or age > _STALE_ADV_MAX_SECONDS:
+            _LOGGER.info(
+                "%s: no recent connectable advertisement (%s) — device asleep",
+                address,
+                "never seen" if last is None else f"{age:.0f}s ago",
+            )
+            raise DeviceAsleepException
 
+        device = async_ble_device_from_address(self.hass, address)
         if not device:
-            _LOGGER.warning("Device %s not found in range", address)
-            return result
+            _LOGGER.warning("Device %s not found despite recent ADV", address)
+            raise DeviceAsleepException
 
         client: BleakClient | None = None
         try:
@@ -1003,37 +1027,43 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             self._esp_bridge_ids = self._detect_esp_bridge_ids(self._esp_device_name)
             return await self._esp_bridge_health_check()
 
-        if user_input is None:
-            return self.async_show_form(
-                step_id="bluetooth_confirm",
-                description_placeholders={
-                    "name": self._name,
-                    "address": self._address,
-                },
-            )
-
+        status = ""
         errors: dict[str, str] = {}
-        try:
-            self._fetched_data = await self._fetch_with_pair_retry(self._address)
-            has_device_info = any(
-                self._fetched_data.get(k)
-                for k in ("model", "serial", "firmware", "battery")
-            )
-            if has_device_info and self._has_sonicare_services(self._fetched_data):
-                self._transport_type = TRANSPORT_BLEAK
-                return await self.async_step_show_capabilities()
-            errors["base"] = "cannot_connect"
-        except NotPairedException:
-            return await self.async_step_not_paired()
-        except Exception:
-            _LOGGER.exception("Unexpected error during capabilities fetch")
-            errors["base"] = "unknown"
+        if user_input is not None:
+            try:
+                self._fetched_data = await self._fetch_with_pair_retry(self._address)
+                has_device_info = any(
+                    self._fetched_data.get(k)
+                    for k in ("model", "serial", "firmware", "battery")
+                )
+                if has_device_info and self._has_sonicare_services(self._fetched_data):
+                    self._transport_type = TRANSPORT_BLEAK
+                    return await self.async_step_show_capabilities()
+                errors["base"] = "cannot_connect"
+            except DeviceAsleepException:
+                # Keep the discovery flow alive — an abort would dismiss the
+                # discovery card, and ADV deduplication stops HA from
+                # re-creating it when the brush wakes. errors["base"] does not
+                # render on this schema-less confirmation step, so inject an
+                # <ha-alert> into the description; ha-markdown renders it as a
+                # real coloured alert box.
+                status = (
+                    '<ha-alert alert-type="error">The toothbrush is asleep — '
+                    "wake it (press the power button or lift it off the "
+                    "charger), then click Submit again.</ha-alert>\n\n"
+                )
+            except NotPairedException:
+                return await self.async_step_not_paired()
+            except Exception:
+                _LOGGER.exception("Unexpected error during capabilities fetch")
+                errors["base"] = "unknown"
 
         return self.async_show_form(
             step_id="bluetooth_confirm",
             description_placeholders={
                 "name": self._name,
                 "address": self._address,
+                "status": status,
             },
             errors=errors,
         )
@@ -1099,6 +1129,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                         # "Initializing" forever — surface as an error so
                         # the user can re-try with a different address.
                         errors["base"] = "not_a_sonicare"
+                except DeviceAsleepException:
+                    return self.async_abort(reason="device_asleep")
                 except NotPairedException:
                     return await self.async_step_not_paired()
                 except Exception:
@@ -1856,6 +1888,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._transport_type = TRANSPORT_BLEAK
                     return await self.async_step_show_capabilities()
                 errors["base"] = "cannot_connect"
+            except DeviceAsleepException:
+                return self.async_abort(reason="device_asleep")
             except NotPairedException:
                 errors["base"] = "pairing_failed"
             except Exception:

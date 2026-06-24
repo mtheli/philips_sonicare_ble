@@ -21,3 +21,7 @@ class TransportError(PhilipsSonicareException):
 
 class NotPairedException(PhilipsSonicareException):
     """Device requires BLE bonding but is not paired."""
+
+
+class DeviceAsleepException(PhilipsSonicareException):
+    """No recent connectable advertisement — the brush is asleep/unreachable."""
