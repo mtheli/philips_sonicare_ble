@@ -19,8 +19,15 @@ namespace philips_sonicare {
 
 class SonicareBridge;  // forward — defined in bridge.h
 
+// Bridge firmware version — injected at build time from the component's VERSION
+// file (see __init__.py). The fallback only applies if the define is missing
+// (e.g. the header is compiled outside the ESPHome codegen path).
+#ifndef PHILIPS_SONICARE_BRIDGE_VERSION
+#define PHILIPS_SONICARE_BRIDGE_VERSION "dev"
+#endif
+
 // HA event names — used by both Worker and Bridge
-static const char *const PHILIPS_SONICARE_VERSION = "1.6.0";
+static const char *const PHILIPS_SONICARE_VERSION = PHILIPS_SONICARE_BRIDGE_VERSION;
 static const char *const EVENT_STATUS = "esphome.philips_sonicare_ble_status";
 static const char *const EVENT_DATA = "esphome.philips_sonicare_ble_data";
 static const char *const EVENT_SERVICES = "esphome.philips_sonicare_ble_services";

@@ -1,5 +1,17 @@
 # ESP Bridge Changelog
 
+## v1.6.1 — 2026-06-25
+
+- **Firmware version is now a single source of truth.** The bridge version
+  lives in `esphome/components/philips_sonicare/VERSION` and is baked into
+  the firmware at build time (injected as a compile define by `__init__.py`,
+  read via the `PHILIPS_SONICARE_BRIDGE_VERSION` macro in `coordinator.h`)
+  instead of a hard-coded constant. The Home Assistant integration reads the
+  same file from GitHub to power a passive firmware-update notification, so
+  new bridge firmware is surfaced without shipping an integration release.
+  No behavioural change to the bridge itself — the bump from v1.6.0 only
+  reflects the new version plumbing.
+
 ## v1.6.0 — 2026-05-25
 
 - **Bridge-side Condor TX_ACK** — fixes mid-brushing disconnects reported

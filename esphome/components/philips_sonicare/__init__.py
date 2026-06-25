@@ -1,4 +1,5 @@
 import zlib
+from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
@@ -128,6 +129,13 @@ _instance_count = 0
 async def to_code(config):
     global _instance_count
     _instance_count += 1
+
+    # Single source of truth for the bridge firmware version: the VERSION file
+    # next to this component. Baked into the binary as a compile define so the
+    # ESP reports it at runtime (ble_get_info), and read by the HA integration's
+    # update entity from GitHub — bump the file, no integration release needed.
+    version = (Path(__file__).parent / "VERSION").read_text(encoding="utf-8").strip()
+    cg.add_define("PHILIPS_SONICARE_BRIDGE_VERSION", f'"{version}"')
 
     bridge_id = config[CONF_BRIDGE_ID]
     if _instance_count > 1 and not bridge_id:
