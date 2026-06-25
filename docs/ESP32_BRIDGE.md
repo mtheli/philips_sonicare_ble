@@ -211,6 +211,12 @@ after being picked up from the charger or turned on/off:
 > Switching between Arduino and ESP-IDF framework requires a full clean build
 > ("Clean Build Files" in the ESPHome dashboard before flashing).
 
+> [!TIP]
+> Once set up, the integration adds a **Bridge Firmware** update entity (on the
+> Connection sub-device) that notifies you when a newer bridge firmware is
+> available, with cumulative release notes. It's informational only — reflash
+> via the ESPHome dashboard as above; there's no install button.
+
 ## Step 3: Verify the Bridge Boots
 
 After flashing, the ESP32 boots and starts scanning. The expected boot log
