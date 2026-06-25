@@ -12,6 +12,10 @@
   No behavioural change to the bridge itself — the bump from v1.6.0 only
   reflects the new version plumbing.
 
+  > The firmware-update notification in Home Assistant is supported from
+  > **integration version 0.14.0** onwards. Older integration versions
+  > ignore this and keep working unchanged.
+
 ## v1.6.0 — 2026-05-25
 
 - **Bridge-side Condor TX_ACK** — fixes mid-brushing disconnects reported
