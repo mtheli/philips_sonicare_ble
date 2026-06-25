@@ -135,7 +135,11 @@ async def to_code(config):
     # ESP reports it at runtime (ble_get_info), and read by the HA integration's
     # update entity from GitHub — bump the file, no integration release needed.
     version = (Path(__file__).parent / "VERSION").read_text(encoding="utf-8").strip()
-    cg.add_define("PHILIPS_SONICARE_BRIDGE_VERSION", f'"{version}"')
+    # Pass the bare string — ESPHome's add_define runs the value through
+    # safe_exp()/StringLiteral, which already wraps it in C quotes. Adding our
+    # own quotes here would double-quote it (the macro would expand to the
+    # literal string including the quote characters).
+    cg.add_define("PHILIPS_SONICARE_BRIDGE_VERSION", version)
 
     bridge_id = config[CONF_BRIDGE_ID]
     if _instance_count > 1 and not bridge_id:
