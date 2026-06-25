@@ -13,8 +13,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
 
 from .coordinator import PhilipsSonicareCoordinator
-from .entity import PhilipsSonicareEntity, PhilipsConnectionEntity
-from .const import DOMAIN, CONF_SERVICES, CONF_TRANSPORT_TYPE, SVC_SENSOR, TRANSPORT_ESP_BRIDGE
+from .entity import PhilipsSonicareEntity, PhilipsBrushHeadEntity, PhilipsConnectionEntity
+from .const import DOMAIN, CONF_SERVICES, CONF_TRANSPORT_TYPE, SVC_SENSOR, SVC_BRUSHHEAD, SVC_CONDOR, TRANSPORT_ESP_BRIDGE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +35,10 @@ async def async_setup_entry(
     # Pressure alert requires Sensor/IMU service
     if SVC_SENSOR.lower() in services:
         entities.append(SonicarePressureAlertBinarySensor(coordinator, entry))
+
+    # Counterfeit brush head sensor (brush head sub-device)
+    if SVC_BRUSHHEAD.lower() in services or SVC_CONDOR.lower() in services:
+        entities.append(SonicareBrushHeadCounterfeitSensor(coordinator, entry))
 
     # Connection sub-device sensors
     entities.append(SonicareBleConnectedSensor(coordinator, entry))
@@ -159,3 +163,33 @@ class SonicareBleConnectedSensor(PhilipsConnectionEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return self.coordinator.transport.is_device_connected
+
+
+class SonicareBrushHeadCounterfeitSensor(PhilipsBrushHeadEntity, BinarySensorEntity):
+    """Binary sensor that turns on when a counterfeit brush head is suspected.
+
+    Raises after 30 seconds of active brushing with no valid NFC serial.
+    Clears immediately when a valid serial is detected.
+    """
+
+    _attr_translation_key = "brushhead_counterfeit"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:shield-alert-outline"
+    _data_key = "brushhead_counterfeit"
+
+    def __init__(
+        self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_brushhead_counterfeit"
+
+    @property
+    def is_on(self) -> bool:
+        if not self.coordinator.data:
+            return False
+        return bool(self.coordinator.data.get("brushhead_counterfeit", False))
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.data is not None

@@ -79,6 +79,10 @@ from .const import (
     MIN_BRIDGE_VERSION,
     CONF_NOTIFY_THROTTLE,
     DEFAULT_NOTIFY_THROTTLE,
+    CONF_WARN_COUNTERFEIT,
+    DEFAULT_WARN_COUNTERFEIT,
+    COUNTERFEIT_SERIAL,
+    COUNTERFEIT_DETECTION_DELAY,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -166,6 +170,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_adapter_type: str | None = None
         self._unsub_adv_debug = None
         self._dbus_bus: MessageBus | None = None
+        self._counterfeit_timer_task: asyncio.Task | None = None
+        self._counterfeit_detected: bool = False
         # HA >= 2026.5 exposes async_clear_advertisement_history — preferred over
         # the BlueZ D-Bus RSSI listener for waking on static-ADV devices.
         self._use_adv_clear = hasattr(
@@ -232,6 +238,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "temperature": None,
             "handle_time": None,
             "last_seen": None,
+            "brushhead_counterfeit": False,
         }
 
     @property
@@ -416,20 +423,24 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         :meth:`async_set_updated_data` once they've confirmed a state
         transition is worth publishing.
         """
-        new_data = self.data.copy() if self.data else {}
+        old = self.data or {}
+        new_data = old.copy()
         new_data.update(parsed)
 
         # Sensor stream gates on brushing_state — Classic only, since
         # Condor never emits this key (its sensor stream rides a separate
         # Subscribe on the ``SensorData.b`` port instead of CCCD).
         if not self._use_condor and "brushing_state" in parsed:
-            old_state = (self.data or {}).get("brushing_state")
+            old_state = old.get("brushing_state")
             new_state = parsed["brushing_state"]
             if new_state != old_state:
                 if new_state == "on" and not self._sensor_subscribed:
                     self.hass.async_create_task(self._subscribe_sensor_data())
                 elif old_state == "on" and self._sensor_subscribed:
                     self.hass.async_create_task(self._unsubscribe_sensor_data())
+
+        # Counterfeit brush head detection
+        self._update_counterfeit(old, new_data)
 
         # Derived: brush head wear percentage
         limit = new_data.get("brushhead_lifetime_limit")
@@ -441,7 +452,6 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Change detection: only update last_seen when data actually changed
         # or every 30s as heartbeat for availability tracking
-        old = self.data or {}
         changed = any(
             new_data.get(k) != old.get(k)
             for k in new_data
@@ -475,6 +485,125 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
 
         return new_data
+
+    # ------------------------------------------------------------------
+    # Counterfeit brush head detection
+    # ------------------------------------------------------------------
+
+    def _is_valid_serial(self, serial: str | None) -> bool:
+        """True when the serial represents a successfully-read NFC chip."""
+        return serial is not None and serial != COUNTERFEIT_SERIAL
+
+    def _looks_counterfeit(self, data: dict) -> bool:
+        """True when the serial indicates no valid NFC chip was read.
+
+        Type is intentionally not checked — non-genuine heads sometimes
+        report a plausible-looking type byte even without a valid serial.
+        """
+        return not self._is_valid_serial(data.get("brushhead_serial"))
+
+    def _update_counterfeit(self, old: dict, new_data: dict) -> None:
+        """Manage the counterfeit detection timer and issue state."""
+        serial = new_data.get("brushhead_serial")
+
+        # Valid serial arrived — cancel timer and clear the alert
+        if self._is_valid_serial(serial):
+            self._cancel_counterfeit_timer()
+            if self._counterfeit_detected:
+                self._counterfeit_detected = False
+                self._clear_counterfeit_issue()
+            new_data["brushhead_counterfeit"] = False
+            return
+
+        # Propagate currently-detected state into the new snapshot
+        new_data["brushhead_counterfeit"] = self._counterfeit_detected
+
+        # Only run detection when both serial and type look suspect
+        if not self._looks_counterfeit(new_data):
+            self._cancel_counterfeit_timer()
+            return
+
+        brushing_now = (
+            new_data.get("brushing_state") == "on"
+            or new_data.get("handle_state_value") == 2
+        )
+        old_brushing = (
+            old.get("brushing_state") == "on"
+            or old.get("handle_state_value") == 2
+        )
+
+        if brushing_now and not old_brushing:
+            # Brushing just started — begin 30 s countdown
+            self._start_counterfeit_timer()
+        elif not brushing_now and old_brushing:
+            # Brushing stopped before the timer fired — cancel without alerting
+            self._cancel_counterfeit_timer()
+        elif brushing_now and self._counterfeit_timer_task is None and not self._counterfeit_detected:
+            # Already brushing when we (re)connected — start timer if not running
+            self._start_counterfeit_timer()
+
+    def _start_counterfeit_timer(self) -> None:
+        """Start (or restart) the counterfeit detection countdown."""
+        self._cancel_counterfeit_timer()
+        self._counterfeit_timer_task = self.entry.async_create_background_task(
+            self.hass,
+            self._counterfeit_timer_fired(),
+            "philips_sonicare_counterfeit_timer",
+        )
+
+    def _cancel_counterfeit_timer(self) -> None:
+        """Cancel any pending counterfeit detection timer."""
+        if self._counterfeit_timer_task and not self._counterfeit_timer_task.done():
+            self._counterfeit_timer_task.cancel()
+        self._counterfeit_timer_task = None
+
+    async def _counterfeit_timer_fired(self) -> None:
+        """Fired after COUNTERFEIT_DETECTION_DELAY seconds of continuous brushing."""
+        await asyncio.sleep(COUNTERFEIT_DETECTION_DELAY)
+        if not self.data:
+            return
+        # Re-check conditions at fire time
+        if not self._looks_counterfeit(self.data):
+            return
+        brushing_now = (
+            self.data.get("brushing_state") == "on"
+            or self.data.get("handle_state_value") == 2
+        )
+        if not brushing_now:
+            return
+        _LOGGER.warning(
+            "%s: no valid brush head serial after %ds of brushing — "
+            "possible counterfeit brush head",
+            self.address,
+            COUNTERFEIT_DETECTION_DELAY,
+        )
+        self._counterfeit_detected = True
+        self.data["brushhead_counterfeit"] = True
+        self._create_counterfeit_issue()
+        self.async_set_updated_data(self.data)
+
+    def _create_counterfeit_issue(self) -> None:
+        """Raise an HA repair issue for the counterfeit brush head."""
+        if not self.entry.options.get(CONF_WARN_COUNTERFEIT, DEFAULT_WARN_COUNTERFEIT):
+            return
+        from homeassistant.helpers import issue_registry as ir
+        device_name = self.entry.data.get("device_name") or self.address
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            f"brushhead_counterfeit_{self.address}",
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="brushhead_counterfeit",
+            translation_placeholders={"device": device_name},
+        )
+
+    def _clear_counterfeit_issue(self) -> None:
+        """Remove the counterfeit repair issue."""
+        from homeassistant.helpers import issue_registry as ir
+        ir.async_delete_issue(
+            self.hass, DOMAIN, f"brushhead_counterfeit_{self.address}"
+        )
 
     async def _start_live_monitoring(self) -> None:
         """Persistent live connection with notifications.
@@ -1076,6 +1205,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_shutdown(self) -> None:
         """Called on unload - clean up everything."""
+        self._cancel_counterfeit_timer()
+
         if self._unsub_adv_debug:
             self._unsub_adv_debug()
             self._unsub_adv_debug = None
