@@ -346,6 +346,11 @@
       "pressure_feedback": {
         "name": "Pressure Feedback"
       }
+    },
+    "update": {
+      "bridge_firmware": {
+        "name": "Bridge Firmware"
+      }
     }
   }
 }

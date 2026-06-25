@@ -16,8 +16,23 @@ SONICARE_SERVICE_UUIDS = [
 ]
 SONICARE_MANUFACTURER_ID = 477
 
-# Minimum ESP bridge component version required for full functionality
+# Minimum ESP bridge component version required for full functionality.
+# This is the hard compatibility floor — below it the integration raises a
+# Repairs warning. It only bumps on breaking changes.
 MIN_BRIDGE_VERSION = "1.4.0"
+
+# ── ESP bridge firmware update entity ────────────────────────────────────────
+# The latest available bridge firmware version is read straight from the repo
+# (same VERSION file the firmware bakes in at build time) so users are notified
+# of new bridge firmware without us shipping an integration release. The update
+# entity is passive (no install) — flashing happens via ESPHome. Release notes
+# are pulled lazily from CHANGELOG.md when the user opens the dialog.
+_GH_RAW = "https://raw.githubusercontent.com/mtheli/philips_sonicare_ble/master"
+BRIDGE_VERSION_URL = f"{_GH_RAW}/esphome/components/philips_sonicare/VERSION"
+BRIDGE_CHANGELOG_URL = f"{_GH_RAW}/esphome/CHANGELOG.md"
+BRIDGE_RELEASE_URL = (
+    "https://github.com/mtheli/philips_sonicare_ble/blob/master/esphome/CHANGELOG.md"
+)
 
 # ── Service UUIDs ────────────────────────────────────────────────────────────
 SVC_BATTERY = "0000180f-0000-1000-8000-00805f9b34fb"

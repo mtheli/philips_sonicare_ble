@@ -565,6 +565,10 @@ class EspBridgeTransport(SonicareTransport):
             status = event.data.get("status", "")
             version = event.data.get("version")
             if version:
+                # Defensive: normalise stray surrounding quotes/whitespace so a
+                # firmware that reports e.g. '"1.6.1"' still parses as 1.6.1.
+                if isinstance(version, str):
+                    version = version.strip().strip("\"'").strip()
                 self._bridge_version = version
 
             self._last_heartbeat = time.monotonic()
