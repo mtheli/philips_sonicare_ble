@@ -29,6 +29,7 @@ from .exceptions import TransportError
 from .const import (
     DOMAIN,
     SVC_CONDOR,
+    SVC_BRUSHHEAD,
     CHAR_BATTERY_LEVEL,
     CHAR_MODEL_NUMBER,
     CHAR_SERIAL_NUMBER,
@@ -114,6 +115,11 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # adapters, so entity code stays protocol-agnostic.
         discovered = {s.lower() for s in entry.data.get(CONF_SERVICES, [])}
         self._use_condor = SVC_CONDOR.lower() in discovered
+        # Counterfeit detection only applies to devices that actually expose a
+        # brush-head NFC service (Classic ``SVC_BRUSHHEAD`` or Condor). Models
+        # without it — e.g. the HX63xx Kids — never report a serial, so the
+        # check would otherwise flag every brushing session as a fake.
+        self._has_brushhead = SVC_BRUSHHEAD.lower() in discovered or self._use_condor
         if self._use_condor:
             from .condor_protocol import CondorProtocol
             self._protocol = CondorProtocol(transport)
@@ -172,6 +178,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._dbus_bus: MessageBus | None = None
         self._counterfeit_timer_task: asyncio.Task | None = None
         self._counterfeit_detected: bool = False
+        self._counterfeit_cleanup_done: bool = False
         # HA >= 2026.5 exposes async_clear_advertisement_history — preferred over
         # the BlueZ D-Bus RSSI listener for waking on static-ADV devices.
         self._use_adv_clear = hasattr(
@@ -504,14 +511,28 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _update_counterfeit(self, old: dict, new_data: dict) -> None:
         """Manage the counterfeit detection timer and issue state."""
+        # Devices without a brush-head NFC service (e.g. HX63xx Kids) never
+        # report a serial — skip detection entirely so we don't flag every
+        # session. Drop any issue an earlier build may have raised, once.
+        if not self._has_brushhead:
+            if not self._counterfeit_cleanup_done:
+                self._counterfeit_cleanup_done = True
+                self._clear_counterfeit_issue()
+            new_data["brushhead_counterfeit"] = False
+            return
+
         serial = new_data.get("brushhead_serial")
 
-        # Valid serial arrived — cancel timer and clear the alert
+        # Valid serial arrived — cancel timer and clear the alert. The issue
+        # persists in the registry across restarts while _counterfeit_detected
+        # resets to False, so clear once at startup too (cleanup flag) to drop
+        # a stale warning, without spamming async_delete_issue every notify.
         if self._is_valid_serial(serial):
             self._cancel_counterfeit_timer()
-            if self._counterfeit_detected:
-                self._counterfeit_detected = False
+            if self._counterfeit_detected or not self._counterfeit_cleanup_done:
                 self._clear_counterfeit_issue()
+            self._counterfeit_detected = False
+            self._counterfeit_cleanup_done = True
             new_data["brushhead_counterfeit"] = False
             return
 
