@@ -518,7 +518,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Propagate currently-detected state into the new snapshot
         new_data["brushhead_counterfeit"] = self._counterfeit_detected
 
-        # Only run detection when both serial and type look suspect
+        # Only run detection while the serial looks suspect (no valid NFC read)
         if not self._looks_counterfeit(new_data):
             self._cancel_counterfeit_timer()
             return
