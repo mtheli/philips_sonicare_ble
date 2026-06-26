@@ -593,8 +593,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not brushing_now:
             return
         _LOGGER.warning(
-            "%s: no valid brush head serial after %ds of brushing — "
-            "possible counterfeit brush head",
+            "%s: no valid brush head serial after %ds with the handle running "
+            "— possible counterfeit or missing brush head",
             self.address,
             COUNTERFEIT_DETECTION_DELAY,
         )

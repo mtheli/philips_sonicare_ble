@@ -5,8 +5,8 @@
       "description": "Your ESP bridge is running **v{version}**, but **v{min_version}** or newer is required for full functionality.\n\nRebuild and flash your ESPHome device to get the latest firmware. See the ESP Bridge Changelog in the repository for details."
     },
     "brushhead_counterfeit": {
-      "title": "Possible counterfeit brush head — {device}",
-      "description": "**{device}** has been brushing for 30 seconds without detecting a valid NFC serial on the brush head.\n\nThis may indicate a counterfeit or non-genuine replacement head that lacks an NFC chip.\n\n**To resolve:** Attach a genuine Philips Sonicare brush head. The warning will clear automatically once a valid serial is detected.\n\nYou can disable this warning in the integration options."
+      "title": "Possible counterfeit or missing brush head — {device}",
+      "description": "**{device}** has been running for 30 seconds without reading a valid NFC serial from the brush head.\n\nThis usually means a counterfeit or non-genuine head without an NFC chip — or that no brush head is attached.\n\n**To resolve:** Attach a genuine Philips Sonicare brush head. The warning will clear automatically once a valid serial is read.\n\nYou can disable this warning in the integration options."
     }
   },
   "config": {
