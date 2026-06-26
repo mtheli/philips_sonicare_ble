@@ -41,12 +41,14 @@ from .const import (
     CONF_SENSOR_PRESSURE,
     CONF_SENSOR_TEMPERATURE,
     CONF_SENSOR_GYROSCOPE,
+    CONF_WARN_COUNTERFEIT,
     TRANSPORT_BLEAK,
     TRANSPORT_ESP_BRIDGE,
     DEFAULT_NOTIFY_THROTTLE,
     DEFAULT_SENSOR_PRESSURE,
     DEFAULT_SENSOR_TEMPERATURE,
     DEFAULT_SENSOR_GYROSCOPE,
+    DEFAULT_WARN_COUNTERFEIT,
     MIN_NOTIFY_THROTTLE,
     MAX_NOTIFY_THROTTLE,
     CHAR_BATTERY_LEVEL,
@@ -1938,6 +1940,7 @@ class PhilipsSonicareOptionsFlow(OptionsFlow):
                 CONF_SENSOR_PRESSURE: user_input.get(CONF_SENSOR_PRESSURE, DEFAULT_SENSOR_PRESSURE),
                 CONF_SENSOR_TEMPERATURE: user_input.get(CONF_SENSOR_TEMPERATURE, DEFAULT_SENSOR_TEMPERATURE),
                 CONF_SENSOR_GYROSCOPE: user_input.get(CONF_SENSOR_GYROSCOPE, DEFAULT_SENSOR_GYROSCOPE),
+                CONF_WARN_COUNTERFEIT: user_input.get(CONF_WARN_COUNTERFEIT, DEFAULT_WARN_COUNTERFEIT),
             }
             if is_esp:
                 if CONF_NOTIFY_THROTTLE in user_input:
@@ -1957,6 +1960,10 @@ class PhilipsSonicareOptionsFlow(OptionsFlow):
         schema_fields[vol.Required(
                 CONF_SENSOR_GYROSCOPE,
                 default=options.get(CONF_SENSOR_GYROSCOPE, DEFAULT_SENSOR_GYROSCOPE),
+            )] = bool
+        schema_fields[vol.Required(
+                CONF_WARN_COUNTERFEIT,
+                default=options.get(CONF_WARN_COUNTERFEIT, DEFAULT_WARN_COUNTERFEIT),
             )] = bool
 
         if is_esp:

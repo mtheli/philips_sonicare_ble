@@ -3,6 +3,10 @@
     "esp_bridge_outdated": {
       "title": "ESP bridge firmware update required",
       "description": "Your ESP bridge is running **v{version}**, but **v{min_version}** or newer is required for full functionality.\n\nRebuild and flash your ESPHome device to get the latest firmware. See the ESP Bridge Changelog in the repository for details."
+    },
+    "brushhead_counterfeit": {
+      "title": "Possible counterfeit brush head — {device}",
+      "description": "**{device}** has been brushing for 30 seconds without detecting a valid NFC serial on the brush head.\n\nThis may indicate a counterfeit or non-genuine replacement head that lacks an NFC chip.\n\n**To resolve:** Attach a genuine Philips Sonicare brush head. The warning will clear automatically once a valid serial is detected.\n\nYou can disable this warning in the integration options."
     }
   },
   "config": {
@@ -106,13 +110,15 @@
           "sensor_pressure": "Enable pressure sensor",
           "sensor_temperature": "Enable temperature sensor",
           "sensor_gyroscope": "Enable gyroscope sensor",
-          "notify_throttle_ms": "Notification throttle (ms)"
+          "notify_throttle_ms": "Notification throttle (ms)",
+          "warn_counterfeit_brushhead": "Warn about counterfeit brush heads"
         },
         "data_description": {
           "sensor_pressure": "Stream pressure data during brushing sessions (0x01).",
           "sensor_temperature": "Stream temperature data during brushing sessions (0x02).",
           "sensor_gyroscope": "Stream 6-axis IMU data during brushing sessions (0x04). High bandwidth — may impact ESP performance.",
-          "notify_throttle_ms": "Minimum interval between BLE notification events forwarded by the ESP bridge. Lower values give faster updates but may overload the ESP. Only applies to ESP32 bridge connections."
+          "notify_throttle_ms": "Minimum interval between BLE notification events forwarded by the ESP bridge. Lower values give faster updates but may overload the ESP. Only applies to ESP32 bridge connections.",
+          "warn_counterfeit_brushhead": "Warn if no valid brush head NFC serial is detected after 30 seconds of brushing."
         }
       }
     }
@@ -249,7 +255,8 @@
       "is_charging": { "name": "Charging" },
       "pressure_alert": { "name": "Pressure Alert" },
       "esp_bridge_alive": { "name": "ESP Bridge" },
-      "ble_connected": { "name": "BLE Connected" }
+      "ble_connected": { "name": "BLE Connected" },
+      "brushhead_counterfeit": { "name": "Counterfeit Brush Head" }
     },
     "select": {
       "brushing_mode_select": {
