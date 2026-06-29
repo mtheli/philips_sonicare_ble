@@ -744,13 +744,23 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         return bool(fetched_lower & _EXPECTED_SERVICES)
 
     @staticmethod
-    def _get_connection_status_text(
-        name: str, bridge_info: str, data: dict[str, Any]
-    ) -> str:
-        """Return connection status message based on fetched data."""
-        if bridge_info:
-            return f"✅ Connected{bridge_info}."
-        return "✅ Connected."
+    def _get_connection_status_text(transport_type: str, path: str | None) -> str:
+        """Return the connection status line for the capabilities dialog.
+
+        Leads with the transport *class* (``ESP32 Bridge`` / ``Direct
+        Bluetooth``) — same framing as the other ``via`` dialogs — and
+        appends the slot/adapter label (YAML ``friendly_name`` for ESP,
+        host adapter name for direct BLE) in parentheses as a
+        disambiguator, never in the ``via`` position itself.
+        """
+        transport_label = (
+            "ESP32 Bridge"
+            if transport_type == TRANSPORT_ESP_BRIDGE
+            else "Direct Bluetooth"
+        )
+        if path:
+            return f"✅ Connected via **{transport_label}** ({path})."
+        return f"✅ Connected via **{transport_label}**."
 
     # ------------------------------------------------------------------
     # ESP bridge helpers
@@ -1848,10 +1858,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
         path = self._fetched_data.get("connection_path")
-        bridge_info = f" via **{path}**" if path else ""
-
         connection_status = self._get_connection_status_text(
-            str(self._name), bridge_info, self._fetched_data
+            self._transport_type, path
         )
 
         return self.async_show_form(

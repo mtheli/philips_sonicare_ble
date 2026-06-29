@@ -60,7 +60,7 @@
       },
       "request_pair": {
         "title": "Pair toothbrush with bridge",
-        "description": "The bridge **{target}** has no toothbrush bonded yet.\n\n1. **Switch on** the Sonicare you want to bond and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.\n2. Click **Start pairing**. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.",
+        "description": "Slot **{target}** has no toothbrush bonded yet.\n\n1. **Switch on** the Sonicare you want to bond and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.\n2. Click **Start pairing**. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.",
         "submit": "Start pairing"
       },
       "reset_bridge": {
