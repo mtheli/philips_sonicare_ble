@@ -466,7 +466,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
             data = event.data
             if data.get("status") != "unpaired":
                 return
-            if data.get("bridge_id", "") != bridge_id:
+            # bridge_id compared case-insensitively (HA lowercases service names)
+            if data.get("bridge_id", "").lower() != bridge_id.lower():
                 return
             unpair_done.set()
 

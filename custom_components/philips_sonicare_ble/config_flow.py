@@ -857,7 +857,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         @callback
         def _on_status(event: Event) -> None:
             if (event.data.get("status") == "info"
-                    and event.data.get("bridge_id", "") == bridge_id
+                    # HA's ServiceRegistry lowercases service names, so a
+                    # bridge_id with uppercase (e.g. an HX model number) yields
+                    # a lowercase service suffix while the event echoes the
+                    # original case — compare case-insensitively.
+                    and event.data.get("bridge_id", "").lower() == bridge_id.lower()
                     and not info_future.done()):
                 info_future.set_result(dict(event.data))
 
@@ -945,7 +949,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             @callback
             def _on_status(event: Event, _did=did) -> None:
                 if (event.data.get("status") == "info"
-                        and event.data.get("bridge_id", "") == _did
+                        # bridge_id compared case-insensitively (see above)
+                        and event.data.get("bridge_id", "").lower() == _did.lower()
                         and not info_future.done()):
                     info_future.set_result(dict(event.data))
 
@@ -1650,7 +1655,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if not cached:
             return ""
         for did, info in cached:
-            if did == bridge_id:
+            # Cached did is detection-form (lowercase); compare case-insensitively
+            # so an uppercase bridge_id still resolves its friendly_name.
+            if did.lower() == bridge_id.lower():
                 return (info.get("friendly_name") or "").strip()
         return ""
 
@@ -1665,7 +1672,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         @callback
         def _on_status(event: Event) -> None:
             data = event.data
-            if data.get("bridge_id", "") != bridge_id:
+            # bridge_id compared case-insensitively (HA lowercases service names)
+            if data.get("bridge_id", "").lower() != bridge_id.lower():
                 return
             status = data.get("status")
             if status not in ("pair_complete", "pair_timeout"):

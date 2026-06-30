@@ -394,7 +394,10 @@ class EspBridgeTransport(SonicareTransport):
         self._hass = hass
         self._address = address
         self._device_name = esphome_device_name
-        self._esp_bridge_id = esp_bridge_id
+        # HA's ServiceRegistry lowercases service names, so the bridge_id suffix
+        # is always lowercase on the wire — canonicalize here so service-name
+        # building and bridge_id event filtering stay consistent.
+        self._esp_bridge_id = (esp_bridge_id or "").lower()
         self._setup_done = False
         self._device_connected = False
         self._esp_alive = False
@@ -610,8 +613,9 @@ class EspBridgeTransport(SonicareTransport):
                     pass
 
             if status == "info":
-                # Filter by bridge_id if present (multi-device ESP)
-                event_bridge_id = event.data.get("bridge_id", "")
+                # Filter by bridge_id if present (multi-device ESP).
+                # Lowercase to match the canonicalized self._esp_bridge_id.
+                event_bridge_id = event.data.get("bridge_id", "").lower()
                 if event_bridge_id and self._esp_bridge_id and event_bridge_id != self._esp_bridge_id:
                     return
                 # Only set _detected_mac from info events (bridge_id filtered)
