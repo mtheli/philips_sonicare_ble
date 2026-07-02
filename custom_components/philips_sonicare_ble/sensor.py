@@ -69,6 +69,7 @@ async def async_setup_entry(
 
     model = entry.data.get("model", "")
     is_kids = model.upper().startswith("HX63")
+    is_condor = SVC_CONDOR.lower() in services
 
     entities: list[PhilipsSonicareEntity] = [
         # Toothbrush handle sensors
@@ -81,15 +82,28 @@ async def async_setup_entry(
         SonicareRoutineCountdownSensor(coordinator, entry),
         SonicareNumberOfSectorsSensor(coordinator, entry),
         SonicareSectorSensor(coordinator, entry),
-        SonicareMotorRuntimeSensor(coordinator, entry),
         SonicareModelNumberSensor(coordinator, entry),
         SonicareFirmwareSensor(coordinator, entry),
         SonicareLastSeenSensor(coordinator, entry),
-        SonicareHandleTimeSensor(coordinator, entry),
         SonicareActivitySensor(coordinator, entry),
         SonicareAdapterSensor(coordinator, entry),
         SonicareAdapterTypeSensor(coordinator, entry),
     ]
+
+    # Classic-only handle counters with no Condor equivalent:
+    #  - Motor Runtime: the Condor protocol exposes no cumulative
+    #    motor-runtime field, so the sensor could only ever read Unknown
+    #    (Issue #23).
+    #  - Handle Time: on Classic this is a Uint32 operating-seconds counter;
+    #    on Condor the same name is the handle's real-time clock (a wall-clock
+    #    timestamp), which this integration never sets — so it free-runs and
+    #    reads as an implausible multi-hundred-day "duration" (Issue #23).
+    #    Not a duration, not telemetry.
+    # Stale entities created by earlier versions on Condor devices are
+    # cleaned up once by async_migrate_entry (config-entry minor_version 2).
+    if not is_condor:
+        entities.append(SonicareMotorRuntimeSensor(coordinator, entry))
+        entities.append(SonicareHandleTimeSensor(coordinator, entry))
 
     # Not available on Kids devices (HX63xx)
     if not is_kids:

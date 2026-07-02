@@ -175,6 +175,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Philips Sonicare BLE."""
 
     VERSION = 1
+    MINOR_VERSION = 2  # 2: drop Classic-only sensors on Condor (see #23)
 
     def __init__(self) -> None:
         self._discovery_info: BluetoothServiceInfoBleak | None = None

@@ -10,17 +10,23 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
-from homeassistant.helpers import area_registry as ar, device_registry as dr
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 
 from .const import (
     DOMAIN,
     CONF_ADDRESS,
     CONF_AREA,
+    CONF_SERVICES,
     CONF_TRANSPORT_TYPE,
     TRANSPORT_ESP_BRIDGE,
     CONF_ESP_DEVICE_NAME,
     CONF_ESP_BRIDGE_ID,
     CHAR_SERVICE_MAP,
+    SVC_CONDOR,
 )
 from .coordinator import PhilipsSonicareCoordinator
 from .helpers import esphome_service_id
@@ -137,6 +143,57 @@ def _async_apply_yaml_area(hass: HomeAssistant, entry: ConfigEntry) -> None:
         _LOGGER.info(
             "Applied YAML area '%s' to sub-device '%s'", area_name, sub_device.name
         )
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate an existing config entry to the current schema."""
+    if entry.version > 1:
+        # Downgraded from a future major version — refuse rather than guess.
+        return False
+
+    if entry.minor_version < 2:
+        # 0.15.1 (#23): Motor Runtime and Handle Time have no meaning on the
+        # Condor protocol and were removed from the entity set. Drop the stale
+        # registry rows earlier versions created; Classic devices keep them.
+        _async_migrate_drop_condor_classic_sensors(hass, entry)
+        hass.config_entries.async_update_entry(entry, minor_version=2)
+
+    _LOGGER.debug(
+        "Migrated entry %s to version %s.%s",
+        entry.entry_id,
+        entry.version,
+        entry.minor_version,
+    )
+    return True
+
+
+@callback
+def _async_migrate_drop_condor_classic_sensors(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """Remove the Classic-only Motor Runtime / Handle Time sensors on Condor.
+
+    Added in 0.15.1. Safe to delete once all Condor users have run >= 0.15.1
+    (from ~0.17.0 onward this only ever no-ops).
+    """
+    services = {s.lower() for s in entry.data.get(CONF_SERVICES, [])}
+    if SVC_CONDOR.lower() not in services:
+        return
+
+    ent_reg = er.async_get(hass)
+    device_id = entry.data.get(
+        CONF_ADDRESS, entry.data.get(CONF_ESP_DEVICE_NAME, "unknown")
+    )
+    for suffix in ("motor_runtime", "handle_time"):
+        entity_id = ent_reg.async_get_entity_id(
+            "sensor", DOMAIN, f"{device_id}_{suffix}"
+        )
+        if entity_id:
+            ent_reg.async_remove(entity_id)
+            _LOGGER.debug(
+                "Migration 0.15.1: removed Classic-only sensor %s on Condor device",
+                entity_id,
+            )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
