@@ -126,6 +126,40 @@ version, which the bridge reports in its status events:
   slower read phase, and a read fired during connection setup can time
   out on the HA side before the bridge executes it.
 
+Side by side:
+
+```text
+Sequential (bridge < 1.7.0, or the option turned off)
+
+  HA                ESP                 Brush
+  │── read #1 ─────►│                     │
+  │                 │── ATT request ─────►│ ╮
+  │                 │◄──── ATT response ──│ ╯ a few conn events
+  │◄──── event ─────│                     │
+  │── read #2 ─────►│                     │  ◄─ next read only after a
+  │                 │──────►              │     full HA↔ESP round-trip
+  ⋮                 ⋮                     ⋮     (× N reads)
+
+  • per read: radio round-trip + HA↔ESP round-trip
+  • each read has its own 5 s timeout → a read fired while the bridge
+    is still subscribing (or mid-SMP on a bonded brush) can expire
+    before it ever executes
+
+Pipelined (bridge ≥ 1.7.0)
+
+  HA                ESP                 Brush
+  │── N reads ─────►│ queue [████ N]      │
+  │                 │── request #1 ──────►│
+  │◄──── event ─────│◄─── response #1 ────│
+  │◄──── event ─────│── request #2 ──────►│  ◄─ back-to-back at radio
+  │◄──── event ─────│── request #3 ──────►│     pace, no HA round-trip
+  ⋮                 ⋮                     ⋮     in between
+
+  • one timeout budgets the whole batch (15 s + 1 s per read)
+  • waiting behind connection setup is safe: the queue holds the reads
+    instead of letting them time out
+```
+
 The "Pipelined GATT reads" toggle in the integration options is a
 runtime opt-out: switch it off to force sequential reads without
 reflashing if a setup misbehaves. It has no effect on bridges older
@@ -142,8 +176,9 @@ the parameters change, which makes this directly visible.
 
 ## Connection-parameter boost (not implemented)
 
-Unlike the shaver bridge (≥ 1.11.0), this firmware implements no
-connection-parameter boost. The toothbrushes measured so far have not
+Unlike the bridge firmware of [philips_shaver](https://github.com/mtheli/philips_shaver)
+(the sister integration for Philips shavers, ≥ 1.11.0), this firmware
+implements no connection-parameter boost. The toothbrushes measured so far have not
 shown a profile that would need one: a Prestige 9900 holds a constant
 15 ms interval for the whole connection, and a Kids HX6340 settles on
 a mild power-save profile (70 ms, slave latency 3) that still
