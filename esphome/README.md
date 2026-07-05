@@ -52,7 +52,7 @@ adapter), which the integration uses when no bridge is configured:
   own slot with its own service set.
 
 For end-to-end setup instructions (flashing, integration configuration,
-multi-device setups) see [`docs/ESP32_BRIDGE.md`](../docs/ESP32_BRIDGE.md).
+multi-device setups) see [`SETUP.md`](SETUP.md).
 
 ## Contents
 
@@ -102,8 +102,8 @@ the slot.
 > exception. This is an ESP-IDF bug (not specific to this integration) —
 > tracked in [esphome#15783](https://github.com/esphome/esphome/issues/15783).
 
-Until ESP-IDF **v5.5.5** is released (expected mid-May 2026, contains the
-fix from ESP-IDF commit [`d4f3517`](https://github.com/espressif/esp-idf/commit/d4f3517)),
+Until ESP-IDF **v5.5.5** is released (still pending as of July 2026; it will
+contain the fix from ESP-IDF commit [`d4f3517`](https://github.com/espressif/esp-idf/commit/d4f3517)),
 compile the bridge with the pre-build script in this directory:
 
 ```yaml

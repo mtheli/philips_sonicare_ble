@@ -21,7 +21,7 @@ esphome:
 # That is the practical limit of single-core ESP32 with 320 KB SRAM — 4
 # brushes run out of heap during normal operation. For 4+ brushes, use
 # either two Atom Lite bridges (2 brushes each) or an ESP32-S3 board.
-# See docs/ESP32_BRIDGE.md → "RAM limit on single-core ESP32 boards".
+# See esphome/SETUP.md → "RAM limit on single-core ESP32 boards".
 esp32:
   board: m5stack-atom
   framework:

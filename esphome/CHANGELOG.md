@@ -127,7 +127,7 @@
   reconnect). Stable with 3 brushes connected simultaneously; the 4th
   is cleanly refused by the v1.5.2 heap backpressure (RAM hardware
   limit on M5Stack Atom Lite, not a PR #17 issue — see
-  [`docs/ESP32_BRIDGE.md`](../docs/ESP32_BRIDGE.md#multi-device-setup)).
+  [`esphome/SETUP.md`](SETUP.md#multi-device-setup)).
 
 - **`MIN_BRIDGE_VERSION` stays at 1.4.0** — backwards-compatible with
   older bridges. Improvement 1a includes one HA-side change
@@ -162,7 +162,7 @@
   HX960V). 3 brushes connect cleanly; the 4th is refused with the heap
   at ~22 KB free instead of crashing the bridge. See the new "RAM limit
   on single-core ESP32 boards" callout in
-  [`docs/ESP32_BRIDGE.md`](../docs/ESP32_BRIDGE.md#multi-device-setup)
+  [`esphome/SETUP.md`](SETUP.md#multi-device-setup)
   for board guidance.
 
 - **New sample config: [`atom-lite-triple.yaml`](atom-lite-triple.yaml)**
@@ -397,7 +397,7 @@
   7100 / HX742X) reconnect across reboots without YAML-pinned MAC.
 - New HA services for Mode B: `ble_pair_mode(enabled, timeout_s)`,
   `ble_unpair`, `ble_scan(timeout_s)`, `ble_pair_mac(mac, timeout_s)`,
-  `ble_list_services` — see `docs/ESP32_PROTOCOL.md`.
+  `ble_list_services` — see `esphome/PROTOCOL.md`.
 - `ble_get_info` extended with `mode`, `pair_capable`, `pair_mode_active`,
   `identity_address` so HA's config flow can decide whether to show the
   pair dialog or go straight to capability detection.

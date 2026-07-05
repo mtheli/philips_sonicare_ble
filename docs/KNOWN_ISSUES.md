@@ -12,10 +12,10 @@ of framework, even if the proxy itself does not connect to the toothbrush.
 With the compile-time patch described under [Workaround](#workaround), the
 proxy path works. See [Option C: Bluetooth Proxy](../README.md#option-c-bluetooth-proxy)
 in the main README for scope and limitations of the proxy path compared to
-the dedicated [ESP32 BLE Bridge](ESP32_BRIDGE.md).
+the dedicated [ESP32 BLE Bridge](../esphome/SETUP.md).
 
 The same patch also unlocks an optional bridge performance setting
-([`CONFIG_BT_GATTC_CACHE_NVS_FLASH`](ESP32_BRIDGE.md#persisted-gatt-cache-optional))
+([`CONFIG_BT_GATTC_CACHE_NVS_FLASH`](../esphome/SETUP.md#persisted-gatt-cache-optional))
 that depends on the same NULL guards. The flag is off in a stock build
 and only relevant if you enable it explicitly.
 
@@ -90,9 +90,9 @@ and `bta_gattc_sm_execute`.
 
 **This fix has been backported to `release/v5.5`, `release/v5.3`, and
 `release/v5.2` but is not yet in a tagged release** (v5.5.4 was cut one
-day before the backport landed). The next tag — expected around
-**v5.5.5 in mid-May 2026** — will carry the fix. ESPHome will pick it
-up a few weeks later.
+day before the backport landed). The next 5.5.x tag — **v5.5.5, still
+unreleased as of July 2026** — will carry the fix. ESPHome will pick it
+up a few weeks after that.
 
 Once ESPHome ships with ESP-IDF v5.5.5+, `bluetooth_proxy` can coexist
 with our component without the workaround below.
@@ -132,7 +132,7 @@ The example YAMLs in this repository show the configuration (commented out).
 ### Without the workaround
 
 Do **not** run `bluetooth_proxy` on the same ESP32 as the Sonicare component.
-Use the [ESP32 BLE Bridge](ESP32_BRIDGE.md) component alone. If you need a
+Use the [ESP32 BLE Bridge](../esphome/SETUP.md) component alone. If you need a
 Bluetooth Proxy for other devices, run it on a **separate ESP32**.
 
 ---
@@ -181,7 +181,7 @@ esp32:
       CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"
 ```
 
-Our [ESP32 Bridge](ESP32_BRIDGE.md) component requires ESP-IDF and documents
+Our [ESP32 Bridge](../esphome/SETUP.md) component requires ESP-IDF and documents
 these settings.
 
 ---
@@ -251,7 +251,7 @@ In rough order of effectiveness:
    already present on modern mainboards) and onboard BT5.2 on recent NUCs
    / mini-PCs reliably do 3-7 concurrent BLE connections with parallel
    scanning.
-2. **[ESP32 BLE Bridge](ESP32_BRIDGE.md) for the toothbrushes that wake
+2. **[ESP32 BLE Bridge](../esphome/SETUP.md) for the toothbrushes that wake
    rarely.** Each bridge owns its GATT link end-to-end, so the host's
    hci0 never has to multiplex. Scales linearly with ESPs.
 3. **Power-cycle workaround.** If you want to force a wake-up right now

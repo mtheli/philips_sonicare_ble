@@ -8,7 +8,7 @@ The bridge is a thin facade — every action HA wants the ESP to perform is an
 `esphome.<device>_<service>` call, every reply comes back as a Home Assistant
 event the integration listens for. There is no direct return value.
 
-> Component version: **1.3.0**
+> Component version: **1.7.0**
 
 ## Architecture
 
@@ -77,6 +77,33 @@ UUIDs accept three forms:
 Garbage input is rejected with a warning and falls back to raw, which usually
 fails downstream as `error="not_found"`.
 
+### Concurrency (since 1.7.0)
+
+Since 1.7.0 every GATT-touching call runs through a **single ATT-operation
+scheduler**: only one read/write/subscribe is in flight on the BLE link at
+any time. Calls arriving while an operation (or an SMP handshake, or the
+post-connect subscribe burst) is outstanding are deferred into the
+pending-calls queue (max 64, overflow → `error=queue_full`) and drained
+back-to-back in arrival order. This makes concurrent service calls safe —
+the integration (v0.16.0+) fires its whole poll batch at once against
+bridges reporting ≥ 1.7.0.
+
+Two consequences for callers:
+
+- **Ordering is preserved, timing is not**: a deferred call executes when
+  the queue reaches it, which can be seconds after the service call
+  returned. Budget timeouts per batch, not per call.
+- **A stuck operation cannot wedge the queue**: if the BLE stack drops a
+  completion event, a 10 s ATT watchdog force-clears the in-flight marker,
+  answers a stuck read with `error=read_timeout`, and keeps draining.
+
+On bridges **older than 1.7.0** there is a single response slot —
+overlapping reads silently drop all but the last reply. Callers must wait
+for each `_ble_data` reply before issuing the next read (the integration
+detects the version and does this automatically). See the
+[README](README.md#pipelined-gatt-reads-bridge--170) for the user-facing
+description with timing diagrams.
+
 ---
 
 ## Operation modes
@@ -97,7 +124,7 @@ from HA's point of view.
 > [!NOTE]
 > The `"external"` mode is kept for backwards compatibility with older configs
 > that wired up an external `ble_client:` block. New setups should use
-> `"standalone"`; see [ESP32 Bridge Setup](ESP32_BRIDGE.md) for the
+> `"standalone"`; see [ESP32 Bridge Setup](SETUP.md) for the
 > user-facing **Auto-Discovery** (no MAC) and **Fixed MAC** flows, both of
 > which run in `"standalone"` mode.
 
@@ -189,7 +216,7 @@ Read a GATT characteristic on the bonded brush.
 | | |
 |---|---|
 | **Args** | `service_uuid: string`, `char_uuid: string` |
-| **Side-effect** | Issues an `esp_ble_gattc_read_char`. On `INSUF_AUTH/ENCR` it transparently triggers SMP and retries the read once `AUTH_CMPL` succeeds (auto-retry behavior added in 1.3.0). Concurrent reads that race the SMP handshake — common when HA fires its initial poll over `read_chars` — are requeued via the bridge's pending-calls queue and drained on `AUTH_CMPL` (added in <!-- BRIDGE_VERSION -->1.5.0). |
+| **Side-effect** | Issues an `esp_ble_gattc_read_char`. On `INSUF_AUTH/ENCR` it transparently triggers SMP and retries the read once `AUTH_CMPL` succeeds (auto-retry behavior added in 1.3.0). Concurrent reads — common when HA fires its poll batch at once — defer through the single ATT-op scheduler and execute back-to-back; see [Concurrency](#concurrency-since-170). |
 | **Reply** | `_ble_data` event |
 
 **`_ble_data` (success):**
@@ -197,7 +224,7 @@ Read a GATT characteristic on the bonded brush.
 | Field | Type | Note |
 |---|---|---|
 | `uuid` | string | The `char_uuid` requested |
-| `payload` | string (hex) | Raw bytes, lowercase hex |
+| `payload` | string (hex) | Raw bytes, lowercase hex. **May be empty**: a successful read of a 0-byte value (e.g. a blank Hardware Revision string) yields `payload=""` with **no** `error` field — callers must treat that as "read OK, no data", not as a missing reply. |
 | `mac` | string | Brush MAC |
 | `bridge_id` | string | Possibly empty |
 
@@ -206,10 +233,11 @@ Read a GATT characteristic on the bonded brush.
 | Field | Value |
 |---|---|
 | `payload` | `""` |
-| `error` | `not_connected` \| `not_found` \| `read_failed` \| `auth_failed` \| `gatt_err_<n>` \| `queue_full` |
+| `error` | `not_connected` \| `not_found` \| `read_failed` \| `auth_failed` \| `gatt_err_<n>` \| `queue_full` \| `read_timeout` (since 1.7.0, from the ATT watchdog) |
 
-If service discovery hasn't completed yet, the call is **queued** (max 64
-entries) and replayed once `SEARCH_CMPL_EVT` fires. Overflowing the queue
+If service discovery hasn't completed yet — or another ATT operation is in
+flight (since 1.7.0) — the call is **queued** (max 64 entries) and replayed
+once `SEARCH_CMPL_EVT` fires / the queue drains. Overflowing the queue
 yields `error=queue_full`.
 
 ### `ble_subscribe`
@@ -235,6 +263,15 @@ multi-chunk framed payloads; `RX_ACK` (`e50b0002`) is per-frame flow
 control. Throttling any of them silently dropped data and stalled the
 V4 handshake. Classic CCCD streams still throttle as before.
 
+**Condor auto-TX_ACK (since 1.6.0):** on every `TX` (`e50b0003`) notify the
+bridge itself echoes the frame's sequence byte (`data[0] & 0x3F`) as a
+1-byte write-without-response to `e50b0004`, directly on the BLE thread
+(~10 ms) instead of waiting for the HA round-trip (30–300 ms, occasionally
+beyond the brush's ~250 ms patience window → mid-brushing disconnect). The
+integration suppresses its own HA-side ack when the reported bridge version
+is ≥ 1.6.0; if both run in parallel the duplicate 1-byte write is harmless.
+This fast path deliberately bypasses the ATT-op scheduler.
+
 ### `ble_unsubscribe`
 
 *Available since 1.2.0.*
@@ -255,7 +292,7 @@ Write a characteristic with response.
 | | |
 |---|---|
 | **Args** | `service_uuid: string`, `char_uuid: string`, `data: string` (hex, no separators) |
-| **Side-effect** | `esp_ble_gattc_write_char` with `WRITE_TYPE_RSP`. |
+| **Side-effect** | `esp_ble_gattc_write_char`. The write type follows the characteristic's GATT properties (since 1.4.1): `WRITE_TYPE_RSP` by default, `WRITE_TYPE_NO_RSP` for chars that only support write-without-response (the Condor `RX` char `e50b0004`). Writes share the ATT-op scheduler with reads (since 1.7.0). |
 | **Reply** | None — success/failure only in the ESP log |
 
 Hex parsing rejects malformed input silently (warning in log, no event).
