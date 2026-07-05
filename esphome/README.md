@@ -30,7 +30,7 @@ adapter), which the integration uses when no bridge is configured:
              ▼                         │  philips_sonicare   │
       ┌────────────┐                   │  BLE client — owns  │
       │ toothbrush │                   │  connection + bond  │
-      └────────────┘                   └─────┬─────────┬─────┘
+      └────────────┘                   └─────┬──────────┬────┘
                                           BLE│          │BLE
                                              ▼          ▼
                                        ┌──────────┐ ┌──────────┐
