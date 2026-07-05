@@ -86,6 +86,22 @@ void SonicareCoordinator::emit_data_(const std::string &uuid,
   this->emit_(EVENT_DATA, data);
 }
 
+void SonicareCoordinator::log_conn_params_if_changed_() {
+  if (this->parent_ == nullptr || !this->connected_)
+    return;
+  esp_gap_conn_params_t p;
+  if (esp_ble_get_current_conn_params(this->parent_->get_remote_bda(), &p) !=
+      ESP_OK)
+    return;
+  if (p.interval == this->last_conn_interval_units_)
+    return;
+  this->last_conn_interval_units_ = p.interval;
+  ESP_LOGI(this->log_tag_.c_str(),
+           "Conn params now: interval=%u ms latency=%u timeout=%u ms",
+           (unsigned) (p.interval * 125 / 100), (unsigned) p.latency,
+           (unsigned) (p.timeout * 10));
+}
+
 void SonicareCoordinator::apply_smp_params_() {
   // LE Secure Connections pairing parameters.
   // Models that don't need bonding (e.g. DiamondClean) will simply
@@ -147,6 +163,53 @@ void SonicareCoordinator::refresh_bond_status_() {
 }
 
 void SonicareCoordinator::on_loop(uint32_t now_ms) {
+  // ATT watchdog: an in-flight operation whose completion event never
+  // arrives (Bluedroid response loss, SMP handshake that never completes,
+  // …) would otherwise hold the ATT slot forever — and since the
+  // single-ATT-op scheduler defers concurrent reads/writes behind that
+  // slot, the queue would wedge until disconnect. One net for all tracked
+  // ops: force-clear every marker after ATT_WATCHDOG_MS without progress,
+  // resolve a stuck read towards HA, and keep the queue draining.
+  if (this->att_busy_() && this->att_last_progress_ms_ != 0 &&
+      (now_ms - this->att_last_progress_ms_) > ATT_WATCHDOG_MS) {
+    ESP_LOGW(this->log_tag_.c_str(),
+             "ATT op got no response in %us (read=0x%04X probe=0x%04X "
+             "write=0x%04X reg=%u cccd=%u retry=%d smp=%d) — clearing, "
+             "draining %u queued call(s)",
+             ATT_WATCHDOG_MS / 1000, this->pending_handle_,
+             this->probe_handle_, this->write_handle_,
+             (unsigned) this->reg_notify_pending_,
+             (unsigned) this->pending_cccd_writes_,
+             (int) this->retry_read_after_auth_,
+             (int) this->encryption_requested_,
+             (unsigned) this->pending_calls_.size());
+    // A read is stuck either in the pending slot or parked on an SMP
+    // handshake that never completed — resolve it towards HA so the
+    // future doesn't run into its batch timeout.
+    if (this->pending_handle_ != 0 ||
+        (this->retry_read_after_auth_ && !this->pending_char_uuid_.empty())) {
+      this->emit_data_(this->pending_char_uuid_, "", "read_timeout");
+    }
+    if (this->probe_handle_ != 0) {
+      // No ready-fallback needed here (unlike the shaver): ready fires
+      // unconditionally from SEARCH_CMPL, the probe only drives the
+      // pair flow — and pair-mode has its own timeout.
+      ESP_LOGW(this->log_tag_.c_str(), "Pairing probe never resolved");
+    }
+    this->pending_handle_ = 0;
+    this->pending_char_uuid_.clear();
+    this->pending_service_uuid_.clear();
+    this->probe_handle_ = 0;
+    this->write_handle_ = 0;
+    this->reg_notify_pending_ = 0;
+    this->pending_cccd_writes_ = 0;
+    this->retry_read_after_auth_ = false;
+    this->encryption_requested_ = false;
+    this->pending_eager_smp_ = false;
+    this->att_last_progress_ms_ = 0;
+    this->drain_pending_calls_();
+  }
+
   // Unpair drain window — re-enable + emit `unpaired` after the BLE stack
   // had time to finish GAP_DISCONNECT and drain in-flight notifications.
   if (this->unpair_pending_ && now_ms >= this->unpair_until_ms_) {
@@ -437,6 +500,17 @@ void SonicareCoordinator::unpair() {
              (unsigned) this->pending_calls_.size());
     this->pending_calls_.clear();
   }
+  // Reset the ATT scheduler — in-flight markers refer to the connection
+  // being torn down.
+  this->pending_handle_ = 0;
+  this->pending_char_uuid_.clear();
+  this->pending_service_uuid_.clear();
+  this->write_handle_ = 0;
+  this->probe_handle_ = 0;
+  this->reg_notify_pending_ = 0;
+  this->pending_cccd_writes_ = 0;
+  this->retry_read_after_auth_ = false;
+  this->att_last_progress_ms_ = 0;
 
   // Step 4: force a disconnect, but defer re-enable + the unpaired event by
   // UNPAIR_DRAIN_MS so the BLE stack has time to finish GAP_DISCONNECT and
@@ -468,6 +542,24 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
   if (this->parent_ == nullptr)
     return;
   switch (event) {
+    case ESP_GATTC_CONNECT_EVT: {
+      if (memcmp(param->connect.remote_bda,
+                 this->parent_->get_remote_bda(), 6) != 0)
+        break;
+      // Initial link parameters (central's defaults). Sizes the fast-interval
+      // window the post-connect read batch races against — the peripheral
+      // may request power-save parameters later (invisible as an event:
+      // ESPHome drops ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT, hence the poll in
+      // log_conn_params_if_changed_).
+      ESP_LOGI(this->log_tag_.c_str(),
+               "Conn params initial: interval=%u ms latency=%u timeout=%u ms",
+               (unsigned) (param->connect.conn_params.interval * 125 / 100),
+               (unsigned) param->connect.conn_params.latency,
+               (unsigned) (param->connect.conn_params.timeout * 10));
+      this->last_conn_interval_units_ = param->connect.conn_params.interval;
+      break;
+    }
+
     case ESP_GATTC_OPEN_EVT: {
       if (param->open.status == ESP_GATT_OK) {
         this->auth_completed_ = false;
@@ -516,6 +608,10 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       this->retry_read_after_auth_ = false;
       this->encryption_requested_ = false;
       this->pending_eager_smp_ = false;
+      this->write_handle_ = 0;
+      this->reg_notify_pending_ = 0;
+      this->pending_cccd_writes_ = 0;
+      this->att_last_progress_ms_ = 0;
       this->name_handle_ = 0;
       this->notify_map_.clear();
       this->cccd_map_.clear();
@@ -617,12 +713,24 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
           ESP_LOGD(this->log_tag_.c_str(),
                    "Bonded Classic peer — eager SMP queued for post-MTU");
           this->pending_eager_smp_ = true;
+          // Arms the ATT gate (att_busy_) so queued reads don't fire onto
+          // the not-yet-encrypted link between here and CFG_MTU_EVT.
+          this->att_progress_();
         } else if (chr) {
           this->probe_handle_ = chr->handle;
-          esp_ble_gattc_read_char(
+          auto probe_status = esp_ble_gattc_read_char(
               this->parent_->get_gattc_if(),
               this->parent_->get_conn_id(),
               chr->handle, ESP_GATT_AUTH_REQ_NONE);
+          if (probe_status != ESP_GATT_OK) {
+            // Don't leave the ATT gate armed on a probe that never went
+            // out — queued reads would wedge until the watchdog.
+            ESP_LOGW(this->log_tag_.c_str(),
+                     "Probe read request failed, status=%d", probe_status);
+            this->probe_handle_ = 0;
+          } else {
+            this->att_progress_();
+          }
         } else {
           auto condor_svc = espbt::ESPBTUUID::from_raw(
               "e50ba3c0-af04-4564-92ad-fef019489de6");
@@ -643,15 +751,15 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
 
       // Drain any HA service calls that arrived before service discovery
       // completed (HA's coordinator fires read/subscribe/unsubscribe on
-      // 'connected', not waiting for 'ready'). resubscribe_all_ already
-      // restored prior subscriptions; HA's intent supersedes via the queue.
+      // 'connected', not waiting for 'ready'). The drain loop stops as
+      // soon as one call occupies the ATT slot — in particular, the
+      // resubscribe burst started above has already armed the gate, so
+      // queued reads stay deferred until every CCCD write is confirmed
+      // instead of racing the burst.
       if (!this->pending_calls_.empty()) {
         ESP_LOGI(this->log_tag_.c_str(), "Draining %u queued call(s) deferred until discovery",
                  (unsigned) this->pending_calls_.size());
-        auto pending = std::move(this->pending_calls_);
-        this->pending_calls_.clear();
-        for (auto &fn : pending)
-          fn();
+        this->drain_pending_calls_();
       }
       break;
     }
@@ -764,6 +872,24 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
           ESP_LOGD(this->log_tag_.c_str(), "Pairing probe failed, status=%d", param->read.status);
         }
         this->probe_handle_ = 0;
+        this->att_progress_();
+        this->drain_pending_calls_();
+        break;
+      }
+
+      // Stray-event guard: only events for the read we actually issued
+      // may resolve the slot. After a watchdog force-clear, a late event
+      // for the OLD read can arrive while a NEW read owns the slot —
+      // without this check it would be misattributed (spurious
+      // read_failed for the new uuid, and the new read's real response
+      // dropped).
+      if (this->pending_handle_ == 0 ||
+          param->read.handle != this->pending_handle_) {
+        ESP_LOGD(this->log_tag_.c_str(),
+                 "Ignoring stray READ_CHAR_EVT (handle 0x%04X, status=%d, "
+                 "pending 0x%04X)",
+                 param->read.handle, param->read.status,
+                 this->pending_handle_);
         break;
       }
 
@@ -786,6 +912,9 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
                      "Read requires authentication (status=%d) — initiating "
                      "encryption, will retry on AUTH_CMPL",
                      param->read.status);
+            // retry_read_after_auth_ keeps att_busy_ armed, so queued
+            // reads stay parked until the handshake resolves instead of
+            // bouncing off the half-encrypted link one by one.
             this->retry_read_after_auth_ = true;
             this->request_encryption_(ESP_BLE_SEC_ENCRYPT_MITM);
           } else {
@@ -799,28 +928,32 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
                                       this->pending_char_uuid_);
           }
           this->pending_handle_ = 0;
+          this->att_progress_();
           break;
         }
         ESP_LOGW(this->log_tag_.c_str(), "Read failed for %s, status=%d",
                  this->pending_char_uuid_.c_str(), param->read.status);
         this->emit_data_(this->pending_char_uuid_, "", "read_failed");
         this->pending_handle_ = 0;
-        this->drain_next_pending_call_();
+        this->att_progress_();
+        this->drain_pending_calls_();
         break;
       }
 
-      if (param->read.handle == this->pending_handle_) {
+      {
         std::string hex_payload =
             format_hex(param->read.value, param->read.value_len);
 
         ESP_LOGI(this->log_tag_.c_str(), "Read %s: %s (%d bytes)",
                  this->pending_char_uuid_.c_str(),
                  hex_payload.c_str(), param->read.value_len);
+        this->log_conn_params_if_changed_();
 
         this->emit_data_(this->pending_char_uuid_, hex_payload);
 
         this->pending_handle_ = 0;
-        this->drain_next_pending_call_();
+        this->att_progress_();
+        this->drain_pending_calls_();
       }
       break;
     }
@@ -832,10 +965,26 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
         ESP_LOGW(this->log_tag_.c_str(), "Write FAILED for handle 0x%04X, status=%d",
                  param->write.handle, param->write.status);
       }
+      // Only the HA-driven write we actually issued may free the slot —
+      // Condor auto-TX_ACK writes (fired ungated from NOTIFY_EVT) land
+      // here too and must not be misattributed.
+      if (this->write_handle_ != 0 &&
+          param->write.handle == this->write_handle_) {
+        this->write_handle_ = 0;
+        this->att_progress_();
+        this->drain_pending_calls_();
+      }
       break;
     }
 
     case ESP_GATTC_REG_FOR_NOTIFY_EVT: {
+      // One registration of the subscribe burst resolved (the counter was
+      // incremented synchronously when register_for_notify was issued, so
+      // reads stay deferred across the whole burst including the CCCD
+      // writes that follow below).
+      if (this->reg_notify_pending_ > 0)
+        this->reg_notify_pending_--;
+      this->att_progress_();
       if (param->reg_for_notify.status == ESP_GATT_OK) {
         ESP_LOGI(this->log_tag_.c_str(), "Notify registered for handle 0x%04X",
                  param->reg_for_notify.handle);
@@ -853,7 +1002,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
             else if (has_indicate)
               cccd_val = 0x0002;
           }
-          esp_ble_gattc_write_char_descr(
+          auto wr_status = esp_ble_gattc_write_char_descr(
               gattc_if,
               this->parent_->get_conn_id(),
               it->second,
@@ -861,12 +1010,30 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
               (uint8_t *) &cccd_val,
               ESP_GATT_WRITE_TYPE_RSP,
               ESP_GATT_AUTH_REQ_NONE);
+          if (wr_status == ESP_OK) {
+            this->pending_cccd_writes_++;
+            this->att_progress_();
+          }
           ESP_LOGI(this->log_tag_.c_str(), "CCCD written for handle 0x%04X (descr 0x%04X, value 0x%04X)",
                    param->reg_for_notify.handle, it->second, cccd_val);
         }
       } else {
         ESP_LOGW(this->log_tag_.c_str(), "Notify registration failed, status=%d",
                  param->reg_for_notify.status);
+      }
+      // Burst may be over (last registration failed / carried no CCCD) —
+      // let deferred reads resume; no-op while anything is still busy.
+      this->drain_pending_calls_();
+      break;
+    }
+
+    case ESP_GATTC_WRITE_DESCR_EVT: {
+      // CCCD write completed (success or failure) — reads deferred behind
+      // the subscribe burst may resume once the last write is done.
+      if (this->pending_cccd_writes_ > 0) {
+        this->pending_cccd_writes_--;
+        this->att_progress_();
+        this->drain_pending_calls_();
       }
       break;
     }
@@ -904,6 +1071,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
         }
         this->last_notify_ms_[param->notify.handle] = now;
       }
+      this->log_conn_params_if_changed_();
 
       // Condor auto-TX_ACK (fast path) — fires *before* the ESPHome-API emit
       // so the ack hits the wire on the local BLE thread (~10 ms) instead of
@@ -969,6 +1137,23 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
   if (this->parent_ == nullptr)
     return;
   switch (event) {
+    case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT: {
+      // Dead in practice — ESPHome's esp32_ble swallows this event before
+      // component GAP handlers run — but kept for parity with the shaver
+      // bridge in case ESPHome ever forwards it.
+      if (memcmp(param->update_conn_params.bda,
+                 this->parent_->get_remote_bda(), 6) != 0)
+        break;
+      ESP_LOGI(this->log_tag_.c_str(),
+               "Conn params updated: interval=%u ms latency=%u timeout=%u ms "
+               "(status=%d)",
+               (unsigned) (param->update_conn_params.conn_int * 125 / 100),
+               (unsigned) param->update_conn_params.latency,
+               (unsigned) (param->update_conn_params.timeout * 10),
+               (int) param->update_conn_params.status);
+      break;
+    }
+
     case ESP_GAP_BLE_NC_REQ_EVT: {
       ESP_LOGI(this->log_tag_.c_str(), "Numeric Comparison request — auto-confirming (passkey %06lu)",
                (unsigned long) param->ble_security.key_notif.passkey);
@@ -1032,6 +1217,7 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
               {"note", "post_auth_no_probe"},
           });
         }
+        this->att_progress_();
         if (this->retry_read_after_auth_ && !this->pending_char_uuid_.empty()) {
           ESP_LOGI(this->log_tag_.c_str(), "Retrying read of %s after successful auth",
                    this->pending_char_uuid_.c_str());
@@ -1043,28 +1229,33 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
         } else {
           // No single in-flight read was sitting on retry_read_after_auth_
           // (eager-encryption path on a bonded peer), but reads might have
-          // raced the SMP handshake and landed in pending_calls_ via the
-          // INSUF_AUTH requeue branch in READ_CHAR_EVT. Clear the encryption
-          // flag so future faults can re-arm SMP, and drain whatever's queued.
+          // queued while the SMP handshake held the ATT gate. Clear the
+          // encryption flag so future faults can re-arm SMP, and drain
+          // whatever's queued.
           this->encryption_requested_ = false;
           if (!this->pending_calls_.empty()) {
             ESP_LOGD(this->log_tag_.c_str(),
-                     "AUTH_CMPL: draining %u read(s) that raced SMP",
+                     "AUTH_CMPL: draining %u call(s) parked during SMP",
                      (unsigned) this->pending_calls_.size());
-            this->drain_next_pending_call_();
           }
+          this->drain_pending_calls_();
         }
       } else {
         ESP_LOGW(this->log_tag_.c_str(), "Authentication FAILED (reason=0x%X)", auth.fail_reason);
+        this->att_progress_();
+        // The handshake is over — release the ATT gate so queued calls
+        // don't park until the watchdog. Reads that then hit INSUF_AUTH
+        // re-arm SMP; the auth-fail counter bounds the retries.
+        this->encryption_requested_ = false;
         if (this->retry_read_after_auth_ && !this->pending_char_uuid_.empty()) {
           this->emit_data_(this->pending_char_uuid_, "", "auth_failed");
           this->retry_read_after_auth_ = false;
           this->pending_char_uuid_.clear();
           this->pending_service_uuid_.clear();
-          // Don't leave queued reads stranded — they'll likely fail too
-          // (same encrypted link) but at least HA's futures resolve.
-          this->drain_next_pending_call_();
         }
+        // Don't leave queued calls stranded — they'll likely fail too
+        // (same unencrypted link) but at least HA's futures resolve.
+        this->drain_pending_calls_();
         esp_ble_remove_bond_device(auth.bd_addr);
         // Pair-mode: user just asked to bond. Don't enter the auth-backoff
         // path — that would freeze the bridge for 60 s and effectively kill
@@ -1101,16 +1292,31 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
   }
 }
 
-void SonicareCoordinator::drain_next_pending_call_() {
-  if (this->pending_calls_.empty())
-    return;
-  auto next = std::move(this->pending_calls_.front());
-  this->pending_calls_.pop_front();
-  next();
+void SonicareCoordinator::att_progress_() {
+  this->att_last_progress_ms_ = millis();
+}
+
+void SonicareCoordinator::drain_pending_calls_() {
+  if (this->draining_)
+    return;  // re-entrant call from a synchronously-failing drained call
+  this->draining_ = true;
+  while (!this->pending_calls_.empty() && this->connected_ &&
+         this->services_discovered_ && !this->att_busy_()) {
+    auto next = std::move(this->pending_calls_.front());
+    this->pending_calls_.pop_front();
+    next();
+    // If next() started an ATT op, att_busy_() ends the loop; if it
+    // failed synchronously (not_found, gatt_err, …) the loop simply
+    // continues with the following entry.
+  }
+  this->draining_ = false;
 }
 
 void SonicareCoordinator::request_encryption_(esp_ble_sec_act_t sec_act) {
   this->encryption_requested_ = true;
+  // Stamps the ATT watchdog: the SMP handshake now holds the ATT gate,
+  // and a handshake that never completes must not park the queue forever.
+  this->att_progress_();
   this->apply_smp_params_();
   esp_ble_set_encryption(this->parent_->get_remote_bda(), sec_act);
 }
@@ -1122,18 +1328,27 @@ void SonicareCoordinator::read_characteristic(const std::string &service_uuid,
     this->emit_data_(char_uuid, "", "not_connected");
     return;
   }
-  // Defer when either (a) service discovery hasn't completed, or (b) another
-  // read is in flight — ``pending_handle_`` is a single slot and concurrent
-  // reads would clobber each other's response routing.
-  if (!this->services_discovered_ || this->pending_handle_ != 0) {
+  // Defer while service discovery hasn't completed or any ATT operation
+  // is in flight (see att_busy_): only one ATT request may be outstanding
+  // per connection, and Bluedroid has been observed to lose the response
+  // of an operation racing another one (read vs. CCCD burst, live-
+  // reproduced three times on the shaver bridge).
+  if (!this->services_discovered_ || this->att_busy_()) {
     if (this->pending_calls_.size() >= MAX_PENDING_CALLS) {
       ESP_LOGW(this->log_tag_.c_str(), "Pending queue full — dropping read for %s", char_uuid.c_str());
       this->emit_data_(char_uuid, "", "queue_full");
       return;
     }
+    const char *reason =
+        !this->services_discovered_       ? "awaiting service discovery"
+        : this->pending_handle_ != 0      ? "another read in flight"
+        : this->probe_handle_ != 0        ? "pairing probe in flight"
+        : this->write_handle_ != 0        ? "write in flight"
+        : (this->reg_notify_pending_ > 0 ||
+           this->pending_cccd_writes_ > 0) ? "subscription writes in flight"
+                                           : "SMP handshake in flight";
     ESP_LOGD(this->log_tag_.c_str(), "Queueing read of %s (%s)",
-             char_uuid.c_str(),
-             this->services_discovered_ ? "another read in flight" : "awaiting service discovery");
+             char_uuid.c_str(), reason);
     this->pending_calls_.push_back(
         [this, service_uuid, char_uuid]() { this->read_characteristic(service_uuid, char_uuid); });
     return;
@@ -1147,12 +1362,17 @@ void SonicareCoordinator::read_characteristic(const std::string &service_uuid,
     ESP_LOGW(this->log_tag_.c_str(), "Characteristic %s not found in service %s",
              char_uuid.c_str(), service_uuid.c_str());
     this->emit_data_(char_uuid, "", "not_found");
+    // Keep the chain alive when this call was popped from the queue —
+    // drain_pending_calls_ guards against re-entrancy, so this is a
+    // no-op while the drain loop is already running.
+    this->drain_pending_calls_();
     return;
   }
 
   this->pending_handle_ = chr->handle;
   this->pending_char_uuid_ = char_uuid;
   this->pending_service_uuid_ = service_uuid;
+  this->att_progress_();
 
   ESP_LOGI(this->log_tag_.c_str(), "Reading %s (handle 0x%04X)...",
            char_uuid.c_str(), chr->handle);
@@ -1169,6 +1389,7 @@ void SonicareCoordinator::read_characteristic(const std::string &service_uuid,
     char err_str[16];
     snprintf(err_str, sizeof(err_str), "gatt_err_%d", status);
     this->emit_data_(char_uuid, "", std::string(err_str));
+    this->drain_pending_calls_();
   }
 }
 
@@ -1178,13 +1399,17 @@ void SonicareCoordinator::subscribe(const std::string &service_uuid,
     ESP_LOGW(this->log_tag_.c_str(), "Cannot subscribe: not connected");
     return;
   }
-  if (!this->services_discovered_) {
+  // The CCCD write triggered by this subscription shares the ATT slot —
+  // issued mid-read it can cost the read its response event.
+  if (!this->services_discovered_ || this->att_busy_()) {
     if (this->pending_calls_.size() >= MAX_PENDING_CALLS) {
       ESP_LOGW(this->log_tag_.c_str(), "Pending queue full — dropping subscribe for %s", char_uuid.c_str());
       return;
     }
-    ESP_LOGD(this->log_tag_.c_str(), "Queueing subscribe of %s until service discovery completes",
-             char_uuid.c_str());
+    ESP_LOGD(this->log_tag_.c_str(), "Queueing subscribe of %s (%s)",
+             char_uuid.c_str(),
+             !this->services_discovered_ ? "awaiting service discovery"
+                                         : "ATT operation in flight");
     this->pending_calls_.push_back(
         [this, service_uuid, char_uuid]() { this->subscribe(service_uuid, char_uuid); });
     return;
@@ -1238,6 +1463,12 @@ void SonicareCoordinator::subscribe(const std::string &service_uuid,
     ESP_LOGW(this->log_tag_.c_str(), "Subscribe failed: %d", status);
     this->notify_map_.erase(chr->handle);
     this->cccd_map_.erase(chr->handle);
+  } else {
+    // Arm the ATT gate synchronously: the REG_FOR_NOTIFY_EVT and the
+    // CCCD write it triggers arrive asynchronously, and reads must not
+    // interleave with that burst.
+    this->reg_notify_pending_++;
+    this->att_progress_();
   }
 }
 
@@ -1296,13 +1527,18 @@ void SonicareCoordinator::write_characteristic(const std::string &service_uuid,
     ESP_LOGW(this->log_tag_.c_str(), "Cannot write: not connected");
     return;
   }
-  if (!this->services_discovered_) {
+  // Writes share the single ATT slot with reads/probe/subscribe — a
+  // write racing an in-flight read is the same Bluedroid response-loss
+  // class observed live for CCCD descriptor writes.
+  if (!this->services_discovered_ || this->att_busy_()) {
     if (this->pending_calls_.size() >= MAX_PENDING_CALLS) {
       ESP_LOGW(this->log_tag_.c_str(), "Pending queue full — dropping write for %s", char_uuid.c_str());
       return;
     }
-    ESP_LOGD(this->log_tag_.c_str(), "Queueing write of %s until service discovery completes",
-             char_uuid.c_str());
+    ESP_LOGD(this->log_tag_.c_str(), "Queueing write of %s (%s)",
+             char_uuid.c_str(),
+             !this->services_discovered_ ? "awaiting service discovery"
+                                         : "ATT operation in flight");
     this->pending_calls_.push_back(
         [this, service_uuid, char_uuid, hex_data]() {
           this->write_characteristic(service_uuid, char_uuid, hex_data);
@@ -1356,6 +1592,9 @@ void SonicareCoordinator::write_characteristic(const std::string &service_uuid,
            write_type == ESP_GATT_WRITE_TYPE_RSP ? "rsp" : "no_rsp",
            this->peer_is_bonded_ ? "no_mitm" : "none");
 
+  this->write_handle_ = chr->handle;
+  this->att_progress_();
+
   auto status = esp_ble_gattc_write_char(
       this->parent_->get_gattc_if(),
       this->parent_->get_conn_id(),
@@ -1367,6 +1606,8 @@ void SonicareCoordinator::write_characteristic(const std::string &service_uuid,
 
   if (status != ESP_OK) {
     ESP_LOGW(this->log_tag_.c_str(), "Write request failed: %d", status);
+    this->write_handle_ = 0;
+    this->drain_pending_calls_();
   }
 }
 
@@ -1619,6 +1860,11 @@ void SonicareCoordinator::resubscribe_all_() {
     if (status == ESP_OK) {
       ESP_LOGI(this->log_tag_.c_str(), "Resubscribe: %s (handle 0x%04X, cccd 0x%04X)",
                chr_uuid_str.c_str(), chr->handle, cccd_handle);
+      // Arm the ATT gate synchronously — the whole resubscribe burst
+      // (REG_FOR_NOTIFY_EVTs + CCCD writes) resolves asynchronously,
+      // and queued reads must stay deferred until it completes.
+      this->reg_notify_pending_++;
+      this->att_progress_();
     } else {
       ESP_LOGW(this->log_tag_.c_str(), "Resubscribe failed for %s: %d",
                chr_uuid_str.c_str(), status);

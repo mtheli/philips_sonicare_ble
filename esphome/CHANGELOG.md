@@ -1,5 +1,50 @@
 # ESP Bridge Changelog
 
+## v1.7.0 — 2026-07-05
+
+- **Pipelined GATT reads behind a single ATT-op scheduler.** Concurrent
+  `ble_read_char` calls used to clobber the single-slot read state,
+  silently dropping the earlier read's response. All coordinator-issued
+  GATT operations now share one in-flight gate: reads and characteristic
+  writes defer through the pending-calls queue while a read, the pairing
+  probe, a write, the subscribe burst (notify registrations + CCCD
+  descriptor writes) or an SMP handshake is outstanding, and the queue
+  drains as a loop on every completion path so synchronously-failing
+  calls (`not_found`, `gatt_err_*`) cannot strand the entries behind
+  them. Ported from the shaver bridge v1.10.0, where Bluedroid was
+  observed three times to lose the response of an operation racing
+  another one; hardening carried over:
+  - the subscribe-burst gate is armed synchronously at registration so
+    the very first queued read cannot race the CCCD writes; new
+    `WRITE_DESCR_EVT` handler drains the queue as the burst completes
+  - one ATT watchdog: no progress for 10 s force-clears all markers,
+    resolves a stuck read to HA as `error=read_timeout` and keeps the
+    queue draining instead of wedging until disconnect
+  - late `READ_CHAR_EVT`s are matched against the issued handle and
+    ignored as stray, so a post-watchdog completion cannot be
+    misattributed to the next queued read
+  - `DISCONNECT`/unpair cleanup resets all scheduler state
+
+  Sonicare-specific integration: reads parked on the lazy-encryption
+  retry (`INSUF_AUTH` → SMP → retry on `AUTH_CMPL`) and the deferred
+  eager-SMP window on bonded Classic peers hold the same gate, so the
+  queue waits out the handshake instead of bouncing reads off the
+  half-encrypted link. The Condor auto-TX_ACK fast path stays ungated —
+  it is a no-response write inside the brush's ~250 ms ack window.
+
+  With this scheduler the HA integration (v0.16.0+) fires its poll
+  cycle concurrently against bridges reporting v1.7.0 or newer.
+
+- **Connection-parameter visibility.** The bridge now logs the link's
+  connection parameters: `Conn params initial: interval=… ms latency=…`
+  on connect, and `Conn params now: …` whenever they change (polled on
+  read/notify completions, since ESPHome drops the GAP update event
+  before it reaches components). Devices may renegotiate these
+  parameters by state — the shaver drops to a power-save interval with
+  slave latency once idle, which directly bounds how fast a poll batch
+  can run; whether the toothbrushes do the same is exactly what these
+  INFO lines will show.
+
 ## v1.6.1 — 2026-06-25
 
 - **Firmware version is now a single source of truth.** The bridge version

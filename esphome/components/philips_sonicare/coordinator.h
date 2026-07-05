@@ -190,12 +190,49 @@ class SonicareCoordinator {
 
   bool connected_{false};
   bool services_discovered_{false};
+  // Pending HA-driven read. Single slot — only one GATT read can be in
+  // flight per connection; concurrent requests are serialised via
+  // pending_calls_ (see below).
   uint16_t pending_handle_{0};
   std::string pending_char_uuid_;
   std::string pending_service_uuid_;
   // Read deferred until pairing completes (INSUF_AUTH/ENCR → encryption →
   // retry on AUTH_CMPL success). Only one read can be in-flight at a time.
   bool retry_read_after_auth_{false};
+  // Pending HA-driven characteristic write (single slot, cleared from
+  // WRITE_CHAR_EVT). Gated like reads: a write racing an in-flight read
+  // is the same Bluedroid response-loss class observed live for CCCD
+  // descriptor writes. The Condor auto-TX_ACK write deliberately bypasses
+  // this slot — it is a no-response write inside the brush's ~250 ms ack
+  // window and must never queue behind other ATT traffic.
+  uint16_t write_handle_{0};
+  // Subscribe burst tracking. reg_notify_pending_ counts notify
+  // registrations issued whose REG_FOR_NOTIFY_EVT hasn't arrived yet —
+  // incremented synchronously at issue time so the gate is armed BEFORE
+  // the burst's CCCD writes start (the events arrive asynchronously).
+  // pending_cccd_writes_ counts issued CCCD descriptor writes awaiting
+  // WRITE_DESCR_EVT. Reads racing this burst lose their READ_CHAR_EVT
+  // (observed three times live on the shaver bridge).
+  uint8_t reg_notify_pending_{0};
+  uint8_t pending_cccd_writes_{0};
+  // ATT watchdog: att_last_progress_ms_ is stamped whenever a tracked ATT
+  // op starts or completes. If att_busy_() holds with no progress for
+  // ATT_WATCHDOG_MS (response event lost — Bluedroid hiccup, SMP that
+  // never completes, …), on_loop() force-clears all in-flight markers,
+  // emits read_timeout for a stuck read and keeps the queue draining
+  // instead of wedging until disconnect.
+  uint32_t att_last_progress_ms_{0};
+  static const uint32_t ATT_WATCHDOG_MS = 10000;
+  // Re-entrancy guard for drain_pending_calls_().
+  bool draining_{false};
+  // Last connection interval (1.25 ms units) seen via
+  // esp_ble_get_current_conn_params(). Polled on read/notify completions
+  // because ESPHome's esp32_ble drops ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT
+  // before it reaches component GAP handlers — the event-based path never
+  // fires.
+  uint16_t last_conn_interval_units_{0};
+  void log_conn_params_if_changed_();
+
   // Cached BLE device name (read from GAP 0x2A00 after service discovery)
   uint16_t name_handle_{0};
   // Pairing probe handle (Sonicare 0x4010, read after service discovery)
@@ -222,12 +259,40 @@ class SonicareCoordinator {
   uint32_t notify_throttle_ms_{500};
   std::map<uint16_t, uint32_t> last_notify_ms_;
 
-  // HA service calls that arrived between OPEN_EVT and SEARCH_CMPL_EVT, or
-  // were deferred because another GATT read was already in flight. Drained
-  // one at a time so concurrent reads don't clobber pending_handle_.
+  // HA service calls deferred until they can run. Two reasons a call lands
+  // here: (a) service discovery hasn't completed yet — HA fires
+  // read/subscribe/write the moment the BLE link is up; (b) another ATT
+  // operation is in flight (att_busy_) — the slots are single and
+  // concurrent ops clobber each other's response routing. Drained as a
+  // loop from every completion path, cleared on disconnect/unpair.
   std::deque<std::function<void()>> pending_calls_;
   static const size_t MAX_PENDING_CALLS = 64;
-  void drain_next_pending_call_();
+  // True while any ATT operation this coordinator issued is outstanding:
+  // a HA-driven read, the pairing probe, a HA-driven characteristic
+  // write, the subscribe burst (notify registrations awaiting their
+  // REG_FOR_NOTIFY_EVT plus CCCD descriptor writes awaiting their
+  // WRITE_DESCR_EVT), or an SMP handshake in flight or imminent
+  // (retry_read_after_auth_ / encryption_requested_ / pending_eager_smp_
+  // — reads issued on the half-encrypted link would only bounce with
+  // INSUF_AUTH and churn the queue). Only one ATT request may be in flight per connection —
+  // Bluedroid has been observed to lose the response of an operation
+  // that races another one — so read/subscribe/write defer through
+  // pending_calls_ while this holds.
+  bool att_busy_() const {
+    return this->pending_handle_ != 0 || this->probe_handle_ != 0 ||
+           this->write_handle_ != 0 || this->reg_notify_pending_ > 0 ||
+           this->pending_cccd_writes_ > 0 || this->retry_read_after_auth_ ||
+           this->encryption_requested_ || this->pending_eager_smp_;
+  }
+  // Record ATT progress (an op started or completed) for the watchdog.
+  void att_progress_();
+  // Fire deferred calls from pending_calls_ until one occupies the ATT
+  // slot (att_busy_) or the queue is empty. Loop, not recursion: calls
+  // that fail synchronously (not_found, gatt_err) simply let the loop
+  // continue with the next entry, so no completion path can strand the
+  // queue. Re-entrant calls (a fired call completing synchronously and
+  // invoking a drain) are no-ops via draining_.
+  void drain_pending_calls_();
 
   // Encryption: only request after INSUF_AUTH on read (not unconditionally)
   bool encryption_requested_{false};
