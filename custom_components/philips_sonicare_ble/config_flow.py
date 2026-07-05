@@ -38,6 +38,7 @@ from .const import (
     CONF_DEVICE_NAME,
     CONF_AREA,
     CONF_NOTIFY_THROTTLE,
+    CONF_PIPELINED_READS,
     CONF_SENSOR_PRESSURE,
     CONF_SENSOR_TEMPERATURE,
     CONF_SENSOR_GYROSCOPE,
@@ -45,6 +46,7 @@ from .const import (
     TRANSPORT_BLEAK,
     TRANSPORT_ESP_BRIDGE,
     DEFAULT_NOTIFY_THROTTLE,
+    DEFAULT_PIPELINED_READS,
     DEFAULT_SENSOR_PRESSURE,
     DEFAULT_SENSOR_TEMPERATURE,
     DEFAULT_SENSOR_GYROSCOPE,
@@ -1962,6 +1964,8 @@ class PhilipsSonicareOptionsFlow(OptionsFlow):
             if is_esp:
                 if CONF_NOTIFY_THROTTLE in user_input:
                     data[CONF_NOTIFY_THROTTLE] = int(user_input[CONF_NOTIFY_THROTTLE])
+                if CONF_PIPELINED_READS in user_input:
+                    data[CONF_PIPELINED_READS] = bool(user_input[CONF_PIPELINED_READS])
             return self.async_create_entry(title="", data=data)
 
         options = self._config_entry.options
@@ -1991,6 +1995,10 @@ class PhilipsSonicareOptionsFlow(OptionsFlow):
                 vol.Coerce(int),
                 vol.Range(min=MIN_NOTIFY_THROTTLE, max=MAX_NOTIFY_THROTTLE),
             )
+            schema_fields[vol.Required(
+                CONF_PIPELINED_READS,
+                default=options.get(CONF_PIPELINED_READS, DEFAULT_PIPELINED_READS),
+            )] = bool
 
         return self.async_show_form(
             step_id="init",

@@ -25,6 +25,8 @@ from .const import (
     TRANSPORT_ESP_BRIDGE,
     CONF_ESP_DEVICE_NAME,
     CONF_ESP_BRIDGE_ID,
+    CONF_PIPELINED_READS,
+    DEFAULT_PIPELINED_READS,
     CHAR_SERVICE_MAP,
     SVC_CONDOR,
 )
@@ -204,7 +206,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if transport_type == TRANSPORT_ESP_BRIDGE:
         esp_device_name = entry.data[CONF_ESP_DEVICE_NAME]
         esp_bridge_id = entry.data.get(CONF_ESP_BRIDGE_ID, "")
-        transport = EspBridgeTransport(hass, address, esp_device_name, esp_bridge_id)
+        transport = EspBridgeTransport(
+            hass,
+            address,
+            esp_device_name,
+            esp_bridge_id,
+            pipelined_reads_enabled=lambda: entry.options.get(
+                CONF_PIPELINED_READS, DEFAULT_PIPELINED_READS
+            ),
+        )
     else:
         transport = BleakTransport(hass, address)
 

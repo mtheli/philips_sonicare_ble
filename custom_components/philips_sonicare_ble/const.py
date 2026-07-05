@@ -21,6 +21,14 @@ SONICARE_MANUFACTURER_ID = 477
 # Repairs warning. It only bumps on breaking changes.
 MIN_BRIDGE_VERSION = "1.4.0"
 
+# Bridges from this version serialise overlapping GATT operations through a
+# single-ATT-op scheduler (pending-calls queue, CCCD gate, ATT watchdog), so
+# the transport may fire its poll cycle concurrently (asyncio.gather). Older
+# bridges queue overlapping reads without those guards — a read racing the
+# subscribe burst can lose its GATT event and wedge the queue — so the
+# transport reads sequentially against those.
+BRIDGE_PIPELINED_READS_VERSION = "1.7.0"
+
 # ── ESP bridge firmware update entity ────────────────────────────────────────
 # The latest available bridge firmware version is read straight from the repo
 # (same VERSION file the firmware bakes in at build time) so users are notified
@@ -516,6 +524,11 @@ CONF_AREA = "area"
 
 CONF_NOTIFY_THROTTLE = "notify_throttle_ms"
 DEFAULT_NOTIFY_THROTTLE = 500
+
+# Opt-out for pipelined poll reads (only effective on bridges >=
+# BRIDGE_PIPELINED_READS_VERSION; older bridges are always read serially).
+CONF_PIPELINED_READS = "pipelined_reads"
+DEFAULT_PIPELINED_READS = True
 MIN_NOTIFY_THROTTLE = 100
 MAX_NOTIFY_THROTTLE = 5000
 

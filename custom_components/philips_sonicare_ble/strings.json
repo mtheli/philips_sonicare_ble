@@ -111,6 +111,7 @@
           "sensor_temperature": "Enable temperature sensor",
           "sensor_gyroscope": "Enable gyroscope sensor",
           "notify_throttle_ms": "Notification throttle (ms)",
+          "pipelined_reads": "Pipelined GATT reads",
           "warn_counterfeit_brushhead": "Warn about counterfeit brush heads"
         },
         "data_description": {
@@ -118,6 +119,7 @@
           "sensor_temperature": "Stream temperature data during brushing sessions (0x02).",
           "sensor_gyroscope": "Stream 6-axis IMU data during brushing sessions (0x04). High bandwidth — may impact ESP performance.",
           "notify_throttle_ms": "Minimum interval between BLE notification events forwarded by the ESP bridge. Lower values give faster updates but may overload the ESP. Only applies to ESP32 bridge connections.",
+          "pipelined_reads": "Send poll reads to the ESP bridge as one concurrent batch instead of one at a time. Requires bridge firmware 1.7.0 or newer (older bridges are always read sequentially). Disable only if you see read errors after a bridge update.",
           "warn_counterfeit_brushhead": "Warn if no valid brush head NFC serial is detected after 30 seconds of brushing."
         }
       }

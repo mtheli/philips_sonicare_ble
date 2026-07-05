@@ -65,6 +65,7 @@ from .const import (
     uses_routine_id_mode,
 )
 from .protocol import SonicareProtocol, UpdateCallback
+from .transport import EspBridgeTransport
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -110,6 +111,14 @@ class ClassicProtocol(SonicareProtocol):
         failures are logged at debug level and result in a ``None`` entry,
         letting parse_results simply skip them.
         """
+        if isinstance(self._transport, EspBridgeTransport):
+            # The bridge serialises overlapping GATT ops itself, so its
+            # read_chars can fire the whole batch concurrently (gated on
+            # bridge version there). Direct BLE must NOT take this path:
+            # BleakTransport.read_chars is a connect-read-disconnect poll
+            # helper and would tear down the persistent connection.
+            return await self._transport.read_chars(uuids)
+
         results: dict[str, bytes | None] = {}
         for uuid in uuids:
             if not self._transport.is_connected:
