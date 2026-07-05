@@ -22,6 +22,7 @@ for direct Bluetooth access from the HA host.
 | [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R) (ESP32-S3) | :white_check_mark: | Maintainer |
 | [M5Stack AtomS3](https://docs.m5stack.com/en/core/AtomS3) (ESP32-S3) | :white_check_mark: | Community ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)) |
 | Generic ESP32 dev board (ESP32-WROOM/PICO) | :white_check_mark: | Community — two brushes on one bridge ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)) |
+| Heemol ESP32 Mini (classic ESP32, mini form factor) | :white_check_mark: | Community ([#20](https://github.com/mtheli/philips_sonicare_ble/issues/20)) |
 | ESP32-S3 DevKitC-1 | :grey_question: | Should work — same SoC as the confirmed AtomS3/AtomS3R |
 | ESP32-C3 / ESP32-C6 | :grey_question: | Untested — BLE stack should be compatible |
 
