@@ -27,14 +27,16 @@ This document describes the Bluetooth Low Energy (BLE) GATT protocol used by Phi
 
 ## Protocol Variants
 
-Philips Sonicare devices expose two BLE service stacks. Most current models support both simultaneously:
+Philips Sonicare devices expose up to three BLE service stacks:
 
 | Protocol | Primary Service UUID | Method |
 | :--- | :--- | :--- |
-| **GATT** (this document) | `477ea600-a260-11e4-ae37-0002a5d50001` | Direct GATT characteristics |
-| **ByteStreaming** | `e50ba3c0-af04-4564-92ad-fef019489de6` | Binary streaming channel (not yet documented) |
+| **Classic GATT** (this document) | `477ea600-a260-11e4-ae37-0002a5d50001` | Direct GATT characteristics |
+| **ByteStreaming** | `a651fff1-4074-4131-bce9-56d4261bc7b1` | Framed reliable transport on premium Classic models (e.g. Prestige 9900) — see [ByteStreaming Service](#bytestreaming-service) |
+| **Condor** | `e50ba3c0-af04-4564-92ad-fef019489de6` | Framed transport carrying a port-based data model. The **only** protocol stack on the 7100 series (HX742X) — those models expose none of the Classic services below. |
 
-This integration uses the **GATT** protocol, which is supported by all known BLE-enabled Sonicare models.
+The integration speaks **Classic GATT** to every model that has it, and
+**Condor** to the 7100 series. ByteStreaming is not used.
 
 ---
 
@@ -77,26 +79,32 @@ Where `XXXX` is the characteristic or service short ID. Standard BLE characteris
 | **Diagnostic** | `0007` | `477ea600-a260-11e4-ae37-0002a5d50007` |
 | **Extended** | `0008` | `477ea600-a260-11e4-ae37-0002a5d50008` |
 | **ByteStreaming** | — | `a651fff1-4074-4131-bce9-56d4261bc7b1` |
+| **Condor** | — | `e50ba3c0-af04-4564-92ad-fef019489de6` |
 | Battery | — | `0000180f-0000-1000-8000-00805f9b34fb` |
 | Device Information | — | `0000180a-0000-1000-8000-00805f9b34fb` |
 | GATT | — | `00001801-0000-1000-8000-00805f9b34fb` |
 
 ### Service Availability by Model
 
-Not all models expose all services. The Sonicare For Kids (HX6340) has a reduced GATT table:
+Not all models expose all services. The Sonicare For Kids (HX6340) has a reduced GATT table, and the 7100 series (HX742X) has no Classic GATT table at all:
 
-| Service | HX992X | HX991M | HX999X | HX6340 (Kids) |
-| :--- | :---: | :---: | :---: | :---: |
-| Sonicare | ✓ | ✓ | ✓ | ✓ |
-| Routine | ✓ | ✓ | ✓ | ✓ (partial) |
-| Storage | ✓ | ✓ | ✓ | ✗ |
-| Sensor | ✓ | ✓ | ✓ | ✗ |
-| Brush Head | ✓ | ✓ | ✓ | ✗ |
-| Diagnostic | ✓ | ✓ | ✓ | ✗ |
-| Extended | ✓ | ✓ | ✓ | ✗ |
-| ByteStreaming | ✗ | ? | ✓ | ✗ |
+| Service | HX992X | HX991M | HX999X | HX6340 (Kids) | HX742X (7100) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| Sonicare | ✓ | ✓ | ✓ | ✓ | ✗ |
+| Routine | ✓ | ✓ | ✓ | ✓ (partial) | ✗ |
+| Storage | ✓ | ✓ | ✓ | ✗ | ✗ |
+| Sensor | ✓ | ✓ | ✓ | ✗ | ✗ |
+| Brush Head | ✓ | ✓ | ✓ | ✗ | ✗ |
+| Diagnostic | ✓ | ✓ | ✓ | ✗ | ✗ |
+| Extended | ✓ | ✓ | ✓ | ✗ | ✗ |
+| ByteStreaming | ✗ | ? | ✓ | ✗ | ✗ |
+| Condor | ✗ | ✗ | ✗ | ✗ | ✓ |
 
 Kids "partial" Routine: `0x4082` (Brushing State) and `0x4022` (Available Routine IDs) do not exist. `0x4070` (Session ID) exists but does not support notifications.
+
+HX742X: the GATT table ends after Generic Access/Device Information and the
+Condor service — there is **no standard Battery service (0x180F)** either;
+battery level and everything else travel through the Condor channel.
 
 ---
 

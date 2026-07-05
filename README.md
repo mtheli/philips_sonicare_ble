@@ -103,7 +103,7 @@ This integration creates a new device for your toothbrush and provides the follo
 
 ### Sensor Data (live during brushing)
 
-These sensors are only available while actively brushing and stream live data from the toothbrush IMU.
+These sensors are only available while actively brushing and stream live data from the toothbrush's built-in sensors.
 
 | Entity | Type | Description |
 | :--- | :--- | :--- |
@@ -132,12 +132,13 @@ These sensors are only available while actively brushing and stream live data fr
 | **Brush Head Ring ID** | Sensor | Color ring identifier (for family brush head tracking). |
 | **Brush Head NFC Version** | Sensor | NFC chip version on the brush head. |
 | **Brush Head Payload** | Sensor | Raw NFC payload data (hex). |
+| **Counterfeit Brush Head** | Binary | On when no valid NFC serial could be read after 30 s of brushing — usually a counterfeit head without NFC chip, or no head attached. Also raises a dismissable repair warning (configurable in the options). |
 
 ### Diagnostics
 | Entity | Type | Description |
 | :--- | :--- | :--- |
-| **Motor Runtime** | Sensor | Cumulative motor runtime (seconds). |
-| **Handle Time** | Sensor | Total handle operating time since manufacture (seconds). |
+| **Motor Runtime** | Sensor | Cumulative motor runtime (seconds). Not available on the 7100 series (HX742X) — the Condor protocol has no equivalent counter. |
+| **Handle Time** | Sensor | Total handle operating time since manufacture (seconds). Not available on the 7100 series (HX742X). |
 | **Model Number** | Sensor | Device model number (e.g., HX992B). |
 | **Firmware** | Sensor | Installed firmware version. |
 | **Last Seen** | Sensor | Timestamp of last successful data read. |
@@ -155,8 +156,8 @@ These sensors are only available while actively brushing and stream live data fr
 ## Prerequisites
 
 * A compatible Philips Sonicare toothbrush (see [Tested Models](#tested-models) above).
-* **Either** a Home Assistant instance with the **Bluetooth integration** enabled and a working Bluetooth adapter, **or** an ESP32 running the [BLE Bridge component](docs/ESP32_BRIDGE.md).
-* **Pairing depends on the model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X), DiamondClean Prestige (HX999X), HX991M, and Series 7100 (HX742X) require BLE pairing. The integration handles both cases automatically. Series 7100 brushes additionally use a rolling private address (RPA) that changes every few minutes — bonding lets the host follow the brush across address rotations. Simply close any Sonicare phone app to free the BLE connection.
+* **Either** a Home Assistant instance with the **Bluetooth integration** enabled and a working Bluetooth adapter, **or** an ESP32 running the [BLE Bridge component](esphome/SETUP.md).
+* **Pairing depends on the model** -- some models require BLE bonding, the integration detects and handles this automatically (see the note under [Tested Models](#tested-models)). Simply close any Sonicare phone app to free the BLE connection.
 
 > [!NOTE]
 > The toothbrush only advertises via BLE for a short time after being picked up from the charger or turned on/off. It enters deep sleep after approximately 20 seconds of inactivity. While on the charging stand, it is **not reachable** via BLE.
@@ -198,7 +199,7 @@ The integration supports three connection methods:
 ⭐ = recommended path
 
 > [!IMPORTANT]
-> Both proxy/bridge paths on ESP32 are affected by an [ESP-IDF bug](https://github.com/esphome/esphome/issues/15783) that crashes GATT service discovery. A [compile-time workaround](docs/KNOWN_ISSUES.md#workaround) is available and required until ESP-IDF v5.5.5 ships (expected mid-May 2026).
+> Both proxy/bridge paths on ESP32 are affected by an [ESP-IDF bug](https://github.com/esphome/esphome/issues/15783) that crashes GATT service discovery. A [compile-time workaround](docs/KNOWN_ISSUES.md#workaround) is available and required until ESP-IDF v5.5.5 ships (still unreleased as of July 2026 — the fix is merged upstream but not yet tagged).
 
 ### Option A: Direct Bluetooth
 
@@ -220,7 +221,7 @@ This is **not** a standard ESPHome Bluetooth Proxy -- it is a dedicated componen
 > [!NOTE]
 > This option requires basic [ESPHome](https://esphome.io/) knowledge (flashing firmware, editing YAML configs). If you're new to ESPHome, check out [Getting Started with ESPHome](https://esphome.io/guides/getting_started_hassio) first.
 
-For the complete setup guide, see **[ESP32 Bridge Setup Guide](docs/ESP32_BRIDGE.md)**.
+For the complete setup guide, see **[ESP32 Bridge Setup Guide](esphome/SETUP.md)**.
 
 > [!TIP]
 > Each ESP bridge slot accepts optional `friendly_name:` and `area:` fields that pre-fill the HA setup form and auto-assign the brush to an HA area on first install — convenient for multi-brush setups. See [Per-slot defaults](esphome/README.md#per-slot-defaults-friendly_name-and-area).
@@ -250,6 +251,8 @@ Setup is the same as Option A — Home Assistant's Bluetooth stack picks the pro
 | Temperature Sensor | Enabled | Stream live temperature data during brushing. |
 | Gyroscope Sensor | Disabled | Stream live 6-axis IMU data during brushing (experimental). |
 | Notify Throttle | 500ms | Minimum interval between BLE notification updates (ESP Bridge only, 100-5000ms). |
+| Pipelined GATT reads | Enabled | Send poll reads to the ESP bridge as one concurrent batch (ESP Bridge only, needs bridge firmware ≥ 1.7.0 — older bridges always read sequentially). Takes effect immediately, no reload. |
+| Warn about counterfeit brush heads | Enabled | Raise a repair warning if no valid brush head NFC serial is read after 30 seconds of brushing. |
 
 ---
 
@@ -261,7 +264,7 @@ The Sonicare toothbrush has unique BLE behavior compared to other Philips device
 
 * **Slow advertising** -- the toothbrush sends BLE advertisements only every 10-30 seconds (most BLE devices: every 100-500ms).
 * **Short wake window** -- after turning off, the toothbrush stays connectable for only ~20 seconds before entering deep sleep.
-* **Pairing varies by model** -- DiamondClean Smart (HX992X) uses open GATT without bonding. ExpertClean (HX962X), DiamondClean Prestige (HX999X), HX991M, and Series 7100 (HX742X) require BLE pairing. The integration handles both cases automatically. Series 7100 brushes also use rolling private addresses (RPA) that change every few minutes — bonding pins them to a stable identity that survives the rotations.
+* **Pairing varies by model** -- open GATT on some families, BLE bonding on others; Series 7100 additionally rotates its BLE address (RPA). Details in the note under [Tested Models](#tested-models) — the integration picks the right path automatically.
 
 The integration handles this with:
 
@@ -290,12 +293,12 @@ Toothbrush wakes up
 * **Connection drops quickly**: This is normal when the toothbrush is idle. It sleeps after ~20 seconds. The integration will reconnect automatically on the next wake.
 * **Phone app conflict**: The toothbrush supports only one BLE connection. Close or uninstall the Sonicare phone app if you experience connection issues.
 * **Pairing issues**: If a model that requires bonding won't connect, remove the toothbrush from your phone's Bluetooth settings first (Settings → Bluetooth → Philips Sonicare → Forget/Unpair). The integration handles stale bonds automatically, but the phone's bond may block the connection.
-* **ESPHome Bluetooth Proxy**: Works with the [Bluedroid NULL-check patch](docs/KNOWN_ISSUES.md#workaround) until ESP-IDF v5.5.5 ships. See [Option C](#option-c-bluetooth-proxy) for scope and the dedicated [ESP32 BLE Bridge](docs/ESP32_BRIDGE.md) as the recommended alternative for multi-device setups.
+* **ESPHome Bluetooth Proxy**: Works with the [Bluedroid NULL-check patch](docs/KNOWN_ISSUES.md#workaround) until ESP-IDF v5.5.5 ships. See [Option C](#option-c-bluetooth-proxy) for scope and the dedicated [ESP32 BLE Bridge](esphome/SETUP.md) as the recommended alternative for multi-device setups.
 * **Unsure if your model is compatible?** Run the [GATT scan script](scripts/sonicare_scan.py) to check which BLE protocol your toothbrush uses. It only needs Python 3 and `bleak` (`pip install bleak`).
 
 ### Known Issues
 
-* **Direct BLE reconnect may be delayed**: Home Assistant's Bluetooth stack filters duplicate advertisements. Since the Sonicare sends identical advertisement data on every broadcast, wake-ups can be missed. The integration uses a D-Bus RSSI listener as a workaround, but reconnects may still take longer than expected. See [habluetooth#397](https://github.com/Bluetooth-Devices/habluetooth/discussions/397) for the upstream discussion.
+* **Direct BLE reconnect may be delayed**: Home Assistant's Bluetooth stack filters duplicate advertisements. Since the Sonicare sends identical advertisement data on every broadcast, wake-ups can be missed. On HA 2026.5+ the integration clears the advertisement de-dup history before each wait so the next broadcast gets through; on older HA versions it falls back to a D-Bus RSSI listener. Reconnects may still take a little longer than expected. See [habluetooth#397](https://github.com/Bluetooth-Devices/habluetooth/discussions/397) for the upstream discussion.
 
 ---
 
