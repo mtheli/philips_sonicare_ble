@@ -102,6 +102,56 @@ this flag depends on the patch above. To opt in, uncomment the
 `CONFIG_BT_GATTC_CACHE_NVS_FLASH` line in your YAML (and the patch
 wiring at the top of `esphome:` if not already enabled).
 
+## Pipelined GATT reads (bridge ≥ 1.7.0)
+
+How the integration polls characteristics depends on the bridge firmware
+version, which the bridge reports in its status events:
+
+- **Bridge ≥ 1.7.0 (pipelined):** Home Assistant fires the whole poll
+  batch at once. The firmware serialises everything through a single
+  ATT-operation scheduler — only one GATT read/write/subscribe is in
+  flight on the BLE link at any time; the rest wait in the bridge's
+  pending-calls queue and are drained back-to-back as each operation
+  completes. Reads deferred behind connection setup (service discovery,
+  subscription writes, the SMP handshake on bonded brushes) simply wait
+  in the queue instead of timing out individually, so a poll batch
+  completes without lost values. A 10-second ATT watchdog recovers the
+  queue if the BLE stack ever drops a completion event, so a lost read
+  costs one 10 s stall instead of a stuck connection.
+- **Bridge < 1.7.0 (sequential):** older firmware has a single response
+  slot, so overlapping reads would silently drop all but the last reply.
+  The integration detects this from the reported version and falls back
+  to reading one characteristic at a time, waiting for each reply —
+  exactly the previous behavior. Everything keeps working, just with a
+  slower read phase, and a read fired during connection setup can time
+  out on the HA side before the bridge executes it.
+
+The "Pipelined GATT reads" toggle in the integration options is a
+runtime opt-out: switch it off to force sequential reads without
+reflashing if a setup misbehaves. It has no effect on bridges older
+than 1.7.0.
+
+How fast a batch completes is bounded by the BLE **connection
+interval**, which the device may renegotiate depending on its state.
+Each GATT read costs a few connection events, so the same batch can
+take a different time on a fresh connection than on a long-idle one —
+in both modes. Pipelining removes the per-read HA→ESP round-trip and
+the timeout risk; it cannot make the radio tick faster. The firmware
+logs `Conn params initial/now: interval=… ms` lines (INFO) whenever
+the parameters change, which makes this directly visible.
+
+## Connection-parameter boost (not implemented)
+
+Unlike the shaver bridge (≥ 1.11.0), this firmware implements no
+connection-parameter boost. The toothbrushes measured so far have not
+shown a profile that would need one: a Prestige 9900 holds a constant
+15 ms interval for the whole connection, and a Kids HX6340 settles on
+a mild power-save profile (70 ms, slave latency 3) that still
+completes a full poll batch in under 3 s and delivers its
+once-per-second brushing notifications without loss. Should a model
+turn up whose idle profile genuinely slows polling down, the
+`Conn params` log lines above are the data to collect first.
+
 ## Requirements
 
 - **ESP-IDF framework** (not Arduino). Arduino's precompiled Bluedroid has
