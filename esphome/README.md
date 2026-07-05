@@ -10,6 +10,47 @@ the toothbrush, when you want to monitor multiple brushes from one bridge,
 or when you prefer a dedicated, always-connected bridge over the less
 stable `bluetooth_proxy` path.
 
+Side by side with the Direct BLE path (Home Assistant's own Bluetooth
+adapter), which the integration uses when no bridge is configured:
+
+```text
+  Direct BLE                            ESP bridge
+
+  ┌─────────────────────┐              ┌─────────────────────┐
+  │   Home Assistant    │              │   Home Assistant    │
+  │  ┌───────────────┐  │              │  ┌───────────────┐  │
+  │  │  integration  │  │              │  │  integration  │  │
+  │  └───────┬───────┘  │              │  └───────┬───────┘  │
+  │   bleak / BlueZ     │              │  ESPHome native API │
+  │  ┌───────┴───────┐  │              └──────────┼──────────┘
+  │  │  BT adapter   │  │                    Wi-Fi│ services ▼
+  │  └───────┬───────┘  │                         │ events   ▲
+  └──────────┼──────────┘              ┌──────────┴──────────┐
+             │ BLE                     │        ESP32        │
+             ▼                         │  philips_sonicare   │
+      ┌────────────┐                   │  BLE client — owns  │
+      │ toothbrush │                   │  connection + bond  │
+      └────────────┘                   └─────┬─────────┬─────┘
+                                          BLE│          │BLE
+                                             ▼          ▼
+                                       ┌──────────┐ ┌──────────┐
+                                       │ brush #1 │ │ brush #2 │
+                                       └──────────┘ └──────────┘
+```
+
+- **Where the BLE link lives:** Direct BLE ties the connection to the HA
+  host's adapter — the brush must be in radio range of your server. With
+  the bridge, the BLE link terminates on the ESP32, which you can place
+  anywhere with Wi-Fi coverage (e.g. in the bathroom).
+- **Who holds the bond:** on the bridge path the ESP stores the LE bond
+  in its own flash (NVS), independent of Home Assistant restarts,
+  container rebuilds, or the host's BlueZ state.
+- **What travels over Wi-Fi:** plain ESPHome traffic — HA calls services
+  (`ble_read_char_<bridge_id>`, …) and the bridge answers with events.
+  No Bluetooth stack is involved on the HA side at all.
+- **Multi-device:** one bridge serves several toothbrushes, each as its
+  own slot with its own service set.
+
 For end-to-end setup instructions (flashing, integration configuration,
 multi-device setups) see [`docs/ESP32_BRIDGE.md`](../docs/ESP32_BRIDGE.md).
 
@@ -118,6 +159,21 @@ version, which the bridge reports in its status events:
   completes without lost values. A 10-second ATT watchdog recovers the
   queue if the BLE stack ever drops a completion event, so a lost read
   costs one 10 s stall instead of a stuck connection.
+
+  ```text
+  HA                ESP                 Brush
+  │── N reads ─────►│ queue [████ N]      │
+  │                 │── request #1 ──────►│
+  │◄──── event ─────│◄─── response #1 ────│
+  │◄──── event ─────│── request #2 ──────►│  ◄─ back-to-back at radio
+  │◄──── event ─────│── request #3 ──────►│     pace, no HA round-trip
+  ⋮                 ⋮                     ⋮     in between
+
+  • one timeout budgets the whole batch (15 s + 1 s per read)
+  • waiting behind connection setup is safe: the queue holds the reads
+    instead of letting them time out
+  ```
+
 - **Bridge < 1.7.0 (sequential):** older firmware has a single response
   slot, so overlapping reads would silently drop all but the last reply.
   The integration detects this from the reported version and falls back
@@ -126,11 +182,7 @@ version, which the bridge reports in its status events:
   slower read phase, and a read fired during connection setup can time
   out on the HA side before the bridge executes it.
 
-Side by side:
-
-```text
-Sequential (bridge < 1.7.0, or the option turned off)
-
+  ```text
   HA                ESP                 Brush
   │── read #1 ─────►│                     │
   │                 │── ATT request ─────►│ ╮
@@ -144,21 +196,7 @@ Sequential (bridge < 1.7.0, or the option turned off)
   • each read has its own 5 s timeout → a read fired while the bridge
     is still subscribing (or mid-SMP on a bonded brush) can expire
     before it ever executes
-
-Pipelined (bridge ≥ 1.7.0)
-
-  HA                ESP                 Brush
-  │── N reads ─────►│ queue [████ N]      │
-  │                 │── request #1 ──────►│
-  │◄──── event ─────│◄─── response #1 ────│
-  │◄──── event ─────│── request #2 ──────►│  ◄─ back-to-back at radio
-  │◄──── event ─────│── request #3 ──────►│     pace, no HA round-trip
-  ⋮                 ⋮                     ⋮     in between
-
-  • one timeout budgets the whole batch (15 s + 1 s per read)
-  • waiting behind connection setup is safe: the queue holds the reads
-    instead of letting them time out
-```
+  ```
 
 The "Pipelined GATT reads" toggle in the integration options is a
 runtime opt-out: switch it off to force sequential reads without
