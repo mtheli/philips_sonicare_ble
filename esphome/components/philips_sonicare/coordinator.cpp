@@ -617,6 +617,9 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       this->cccd_map_.clear();
       this->char_props_map_.clear();
       this->condor_tx_ack_handle_ = 0;
+      this->condor_rx_handle_ = 0;
+      this->condor_wire_tx_seq_ = 1;
+      this->condor_tx_reasm_.clear();
       this->last_notify_ms_.clear();
       this->pending_calls_.clear();
       char reason_str[5];
@@ -1113,6 +1116,14 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
                      ack_byte, status);
           }
         }
+
+        // Condor Phase B (fast path) — reassemble the framed e50b0003 stream
+        // and answer each complete CHANGE_INDICATION with a CHANGE_IND_RESP
+        // on the local BLE thread. HA also sends one but the bridge drops it
+        // in write_characteristic, so exactly one reaches the brush, always
+        // inside the ~250 ms window.
+        this->condor_answer_change_indications_(param->notify.value,
+                                                param->notify.value_len);
       }
 
       std::string hex_payload =
@@ -1563,6 +1574,30 @@ void SonicareCoordinator::write_characteristic(const std::string &service_uuid,
     return;
   }
 
+  // Condor Phase B: the bridge owns the e50b0001 wire sequence. The channel-
+  // open handshake (single byte with BIT_START 0x40) passes through and
+  // rebases our counter; HA's CHANGE_IND_RESP is dropped (we answer it
+  // ourselves on the notify path) without consuming a wire seq so the
+  // sequence stays gap-free; every other frame gets its seq rewritten to our
+  // own monotonic counter. Only the first fragment of a frame carries the
+  // FE FF header, so a 7-byte FE FF 09 00 01 00 match is unambiguous.
+  if (char_uuid == "e50b0001-af04-4564-92ad-fef019489de6") {
+    if (bytes.size() == 1 && (bytes[0] & 0x40)) {
+      this->condor_wire_tx_seq_ = 1;
+    } else if (bytes.size() == 7 && bytes[1] == 0xFE && bytes[2] == 0xFF &&
+               bytes[3] == 0x09 && bytes[4] == 0x00 && bytes[5] == 0x01 &&
+               bytes[6] == 0x00) {
+      // We answer this ourselves on the notify path — drop it here without
+      // issuing an ATT op or consuming a wire seq. No drain needed: if this
+      // ran from the pending-call drain, that loop simply continues.
+      ESP_LOGV(this->log_tag_.c_str(), "Condor: dropping HA CHANGE_IND_RESP");
+      return;
+    } else {
+      bytes[0] = (bytes[0] & 0xC0) | (this->condor_wire_tx_seq_ & 0x3F);
+      this->condor_wire_tx_seq_ = (this->condor_wire_tx_seq_ + 1) % 64;
+    }
+  }
+
   // Pick the write method that matches the characteristic's declared
   // properties. Default is WRITE_TYPE_RSP (legacy Sonicare chars all have
   // the WRITE bit set), but Condor's e50b0007 (Client Config) is
@@ -1609,6 +1644,67 @@ void SonicareCoordinator::write_characteristic(const std::string &service_uuid,
     this->write_handle_ = 0;
     this->drain_pending_calls_();
   }
+}
+
+void SonicareCoordinator::condor_answer_change_indications_(const uint8_t *data,
+                                                            uint16_t len) {
+  // Strip the 1-byte transport seq header; the remainder is a fragment of the
+  // framed byte stream (FE FF <type> <len_hi> <len_lo> <payload>). Reassemble
+  // exactly as HA does, then answer every complete CHANGE_INDICATION (0x08).
+  if (len < 2)
+    return;
+  auto &buf = this->condor_tx_reasm_;
+  buf.insert(buf.end(), data + 1, data + len);
+  while (buf.size() >= 5) {
+    if (buf[0] != 0xFE || buf[1] != 0xFF) {
+      // Stream desync — drop a byte and resync on the next FE FF marker.
+      buf.erase(buf.begin());
+      continue;
+    }
+    uint16_t frame_len = (static_cast<uint16_t>(buf[3]) << 8) | buf[4];
+    size_t total = 5u + frame_len;
+    if (buf.size() < total)
+      break;  // frame still incomplete — wait for more fragments
+    uint8_t msg_type = buf[2];
+    buf.erase(buf.begin(), buf.begin() + total);
+    if (msg_type != 0x08 /* CHANGE_INDICATION */)
+      continue;
+
+    // Resolve the e50b0001 (RX) handle lazily, like the TX_ACK handle.
+    if (this->condor_rx_handle_ == 0) {
+      auto svc =
+          espbt::ESPBTUUID::from_raw("e50ba3c0-af04-4564-92ad-fef019489de6");
+      auto rx =
+          espbt::ESPBTUUID::from_raw("e50b0001-af04-4564-92ad-fef019489de6");
+      auto *chr = this->parent_->get_characteristic(svc, rx);
+      if (chr != nullptr) {
+        this->condor_rx_handle_ = chr->handle;
+        ESP_LOGI(this->log_tag_.c_str(),
+                 "Condor auto CHANGE_IND_RESP enabled (handle 0x%04X)",
+                 this->condor_rx_handle_);
+      }
+    }
+    if (this->condor_rx_handle_ == 0)
+      continue;
+
+    uint8_t resp[7] = {
+        static_cast<uint8_t>(this->condor_wire_tx_seq_ & 0x3F),
+        0xFE, 0xFF, 0x09, 0x00, 0x01, 0x00};
+    this->condor_wire_tx_seq_ = (this->condor_wire_tx_seq_ + 1) % 64;
+    esp_gatt_auth_req_t auth_req = this->peer_is_bonded_
+                                       ? ESP_GATT_AUTH_REQ_NO_MITM
+                                       : ESP_GATT_AUTH_REQ_NONE;
+    auto status = esp_ble_gattc_write_char(
+        this->parent_->get_gattc_if(), this->parent_->get_conn_id(),
+        this->condor_rx_handle_, 7, resp, ESP_GATT_WRITE_TYPE_NO_RSP, auth_req);
+    if (status != ESP_OK) {
+      ESP_LOGW(this->log_tag_.c_str(),
+               "Auto CHANGE_IND_RESP write failed: status=%d", status);
+    }
+  }
+  // Safety valve: never let a desynced/oversized buffer grow without bound.
+  if (buf.size() > 1024)
+    buf.clear();
 }
 
 void SonicareCoordinator::list_services() {

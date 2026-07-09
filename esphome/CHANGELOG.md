@@ -1,5 +1,23 @@
 # ESP Bridge Changelog
 
+## v1.8.0 — 2026-07-09
+
+- **Bridge answers the newer-protocol change-indication acknowledgment
+  itself.** On the Series 7100 (newer) protocol the brush pushes a change
+  indication for every state change and expects the acknowledgment back on
+  its sequenced control channel within ~250 ms. Over the bridge that
+  acknowledgment made the full Wi-Fi + Home Assistant round-trip, which under
+  load occasionally exceeded the window — the brush then tore the link down
+  mid-brushing (`reason=0x13`), every 30–90 s during an active session. The
+  bridge now owns that channel's outbound sequence: it rewrites the sequence
+  of every frame Home Assistant sends, answers each change indication on its
+  own BLE thread (~10 ms), and drops Home Assistant's now-redundant
+  acknowledgment so exactly one reaches the brush and always inside the
+  window. Completes the mid-session-disconnect work started with the
+  transport-layer auto-ack in v1.6.0. No integration change and no
+  re-configuration needed; older integration versions benefit automatically.
+  `MIN_BRIDGE_VERSION` stays 1.4.0.
+
 ## v1.7.0 — 2026-07-05
 
 - **Pipelined GATT reads behind a single ATT-op scheduler.** Concurrent

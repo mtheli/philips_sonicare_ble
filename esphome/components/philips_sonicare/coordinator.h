@@ -252,6 +252,20 @@ class SonicareCoordinator {
   // lookup on every packet. Reset to 0 on disconnect — re-resolved against
   // the new GATT table after reconnect.
   uint16_t condor_tx_ack_handle_{0};
+
+  // Condor Phase B — the bridge owns the e50b0001 (RX) wire sequence. It
+  // rewrites the seq of every HA frame to its own monotonic counter, drops
+  // HA's now-redundant CHANGE_IND_RESP, and answers each CHANGE_INDICATION
+  // itself on the BLE thread (~10 ms) instead of the Wi-Fi+HA round-trip that
+  // pushes the response past the brush's ~250 ms window under load (issue
+  // #13, "Muster A"). HA is unaware of any of this. All reset on disconnect.
+  uint16_t condor_rx_handle_{0};          // cached e50b0001 handle (lazy)
+  uint8_t condor_wire_tx_seq_{1};         // 1..63 mod-64, rebased on channel open
+  std::vector<uint8_t> condor_tx_reasm_;  // e50b0003 frame-reassembly buffer
+  // Answer every complete CHANGE_INDICATION (msg_type 0x08) reassembled from
+  // the e50b0003 stream with a CHANGE_IND_RESP on e50b0001.
+  void condor_answer_change_indications_(const uint8_t *data, uint16_t len);
+
   // Subscriptions that should be restored after reconnect (service_uuid, char_uuid)
   std::vector<std::pair<std::string, std::string>> desired_subscriptions_;
 
