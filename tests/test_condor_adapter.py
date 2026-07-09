@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.philips_sonicare_ble.condor_adapter import map_port_props
+from custom_components.philips_sonicare_ble.condor_adapter import (
+    map_port_props,
+    resolve_brushing_mode,
+)
 
 # Golden mapping of every port present in the fixture to the flat
 # coordinator-data keys the entities consume. Derived from the captured
@@ -24,11 +27,13 @@ EXPECTED_BY_PORT: dict[str, dict] = {
         "brushing_state": "on",
         "brushing_state_value": 1,
         "handle_time": 18058312,
+        "routine_ids": [0, 5, 1, 2, 0],
     },
     "RoutineStatus": {
+        # Mode is a raw slot position here; the label is resolved against
+        # routine_ids at the coordinator, so the port mapper leaves it unset.
         "session_id": 7,
         "brushing_mode_value": 0,
-        "brushing_mode": "clean",
         "brushing_time": 23,
         "routine_length": 120,
         "intensity_value": 0,
@@ -96,3 +101,40 @@ def test_partial_props_merge_cleanly(condor_hx742x):
     """
     out = map_port_props("Battery", {"BatteryPercent": 42})
     assert out == {"battery": 42}
+
+
+def test_routine_status_mode_is_raw_position(condor_hx742x):
+    """RoutineStatus exposes only the raw slot position — the label is
+    resolved against routine_ids at the coordinator, not in the port mapper.
+    """
+    out = map_port_props("RoutineStatus", {"Mode": 1})
+    assert out == {"brushing_mode_value": 1}
+    assert "brushing_mode" not in out
+
+
+def test_sonicare_exposes_routine_ids(condor_hx742x):
+    """The Sonicare port carries the device's static slot→routine-id list."""
+    out = map_port_props("Sonicare", {"RoutineIDs": [0, 5, 1, 2, 0]})
+    assert out["routine_ids"] == [0, 5, 1, 2, 0]
+
+
+def test_resolve_brushing_mode_indexes_routine_ids():
+    """Mode is a position into RoutineIDs, not a routine id. For the HX742X
+    slot list [0, 5, 1, 2, 0] the four physical slots resolve to
+    clean / sensitive / white / gum_care.
+    """
+    routine_ids = [0, 5, 1, 2, 0]
+    assert resolve_brushing_mode(routine_ids, 0) == (0, "clean")
+    assert resolve_brushing_mode(routine_ids, 1) == (5, "sensitive")
+    assert resolve_brushing_mode(routine_ids, 2) == (1, "white")
+    assert resolve_brushing_mode(routine_ids, 3) == (2, "gum_care")
+
+
+def test_resolve_brushing_mode_unresolvable():
+    """Unknown list or out-of-range position resolves to None so the caller
+    leaves the label unset rather than guessing.
+    """
+    assert resolve_brushing_mode(None, 1) is None
+    assert resolve_brushing_mode([], 0) is None
+    assert resolve_brushing_mode([0, 5, 1, 2, 0], 9) is None
+    assert resolve_brushing_mode([0, 5, 1, 2, 0], None) is None

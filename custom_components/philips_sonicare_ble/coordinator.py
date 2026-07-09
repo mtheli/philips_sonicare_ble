@@ -26,6 +26,7 @@ except ImportError:
 
 from .transport import BleakTransport, EspBridgeTransport, SonicareTransport
 from .exceptions import TransportError
+from .condor_adapter import resolve_brushing_mode
 from .const import (
     DOMAIN,
     SVC_CONDOR,
@@ -437,6 +438,18 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         old = self.data or {}
         new_data = old.copy()
         new_data.update(parsed)
+
+        # Condor RoutineStatus.Mode is a position into the device's static
+        # RoutineIDs list, not a routine id — resolve it against the list we
+        # learned from the Sonicare port (persisted in new_data). Translate
+        # only a freshly-arrived position from ``parsed`` so we never re-index
+        # an already-resolved routine id on a later delta.
+        if self._use_condor and "brushing_mode_value" in parsed:
+            resolved = resolve_brushing_mode(
+                new_data.get("routine_ids"), parsed["brushing_mode_value"]
+            )
+            if resolved is not None:
+                new_data["brushing_mode_value"], new_data["brushing_mode"] = resolved
 
         # Sensor stream gates on brushing_state — Classic only, since
         # Condor never emits this key (its sensor stream rides a separate

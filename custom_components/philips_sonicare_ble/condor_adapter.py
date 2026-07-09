@@ -43,6 +43,24 @@ CONDOR_BRUSHING_MODES: dict[int, str] = {
 }
 
 
+def resolve_brushing_mode(
+    routine_ids: list[int] | None, mode_pos: int | None
+) -> tuple[int, str | None] | None:
+    """Resolve ``RoutineStatus.Mode`` to a (routine_id, label) pair.
+
+    ``Mode`` is a **position** into the device's static ``RoutineIDs`` list
+    (from the ``Sonicare`` port), not a routine id — the same numeric axis
+    ``CONDOR_BRUSHING_MODES`` labels. Decoding ``Mode`` directly shows the
+    wrong mode (e.g. a brush whose slot 1 is Sensitive reports Mode 1, which
+    naively reads as "white"). Returns ``None`` when the list isn't known yet
+    or the position is out of range, so the caller can leave the label unset.
+    """
+    if not routine_ids or mode_pos is None or not (0 <= mode_pos < len(routine_ids)):
+        return None
+    routine_id = routine_ids[mode_pos]
+    return routine_id, CONDOR_BRUSHING_MODES.get(routine_id)
+
+
 def map_port_props(port: str, props: dict[str, Any]) -> dict[str, Any]:
     """Translate one port's JSON properties into coordinator-data keys.
 
@@ -83,22 +101,23 @@ def _map_sonicare(props: dict[str, Any], out: dict[str, Any]) -> None:
     # go into ``handle_time`` as-is; a future refactor could split them.
     if (v := props.get("HandleTime")) is not None:
         out["handle_time"] = v
+    # The device's mode-slot configuration: a static list mapping each UI
+    # position to a routine id. Kept so RoutineStatus.Mode (a position) can be
+    # resolved to the real mode — see resolve_brushing_mode. Not user-facing.
+    if isinstance(v := props.get("RoutineIDs"), list):
+        out["routine_ids"] = list(v)
 
 
 def _map_routine_status(props: dict[str, Any], out: dict[str, Any]) -> None:
     """Port ``RoutineStatus`` — the live brushing session."""
     if (v := props.get("SessionID")) is not None:
         out["session_id"] = v
-    # ``Mode`` is the routine id currently running — an ordinal 0..5 on
-    # the universal numeric axis shared by every Condor device,
-    # regardless of which modes a specific model exposes in its UI.
-    # One shared label table (``CONDOR_BRUSHING_MODES``) is enough.
+    # ``Mode`` is a position into the device's ``RoutineIDs`` list, not a
+    # routine id. We can't resolve the label here (RoutineIDs lives on the
+    # ``Sonicare`` port); expose the raw position and let the coordinator
+    # translate it once both are merged — see resolve_brushing_mode.
     if (v := props.get("Mode")) is not None:
         out["brushing_mode_value"] = v
-        mapped = CONDOR_BRUSHING_MODES.get(v)
-        if mapped is None:
-            _LOGGER.warning("Condor RoutineStatus.Mode unknown: %d", v)
-        out["brushing_mode"] = mapped
     if (v := props.get("Duration")) is not None:
         out["brushing_time"] = v
     if (v := props.get("Length")) is not None:
