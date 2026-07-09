@@ -528,7 +528,13 @@ class CondorProtocol(SonicareProtocol):
         self._live_callback = None
         ports = self._subscribed_ports
         self._subscribed_ports = []
-        if not self._connected:
+        # Skip the graceful unsubscribe when the link is already gone: the
+        # writes would each time out (3 s) against a dead connection — 15 s of
+        # stalled teardown that delays the reconnect — and the device already
+        # dropped its subscriptions on disconnect. Gate on the real transport
+        # link, not our own session flag, which stays True until disconnect()
+        # runs after this on the drop path.
+        if not self._connected or not self._transport.is_connected:
             return
         for prod, port in ports:
             try:
