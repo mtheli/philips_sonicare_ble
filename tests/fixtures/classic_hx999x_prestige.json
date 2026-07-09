@@ -1,0 +1,768 @@
+{
+  "captured_at": "2026-07-09T19:19:16",
+  "address": "24:E5:AA:00:00:04",
+  "adv_name": "Philips Sonicare",
+  "protocol": "Legacy (supported by philips_sonicare_ble)",
+  "device_info": {
+    "Manufacturer Name": "Philips OHC",
+    "IEEE Regulatory Cert": "00",
+    "PnP ID": "01dd010f0f0000",
+    "Hardware Revision": "",
+    "System ID": "0000000000000000",
+    "Software Revision": "",
+    "Firmware Revision": "1.15.4",
+    "Model Number": "HX999X",
+    "Serial Number": "0000000000",
+    "Battery Level": "."
+  },
+  "condor": {},
+  "gatt_services": [
+    {
+      "uuid": "a651fff1-4074-4131-bce9-56d4261bc7b1",
+      "characteristics": [
+        {
+          "uuid": "a6510001-4074-4131-bce9-56d4261bc7b1",
+          "name": null,
+          "properties": [
+            "write-without-response"
+          ],
+          "handle": 174,
+          "value_hex": null,
+          "value_text": null
+        },
+        {
+          "uuid": "a6510004-4074-4131-bce9-56d4261bc7b1",
+          "name": null,
+          "properties": [
+            "write-without-response"
+          ],
+          "handle": 185,
+          "value_hex": null,
+          "value_text": null
+        },
+        {
+          "uuid": "a6510003-4074-4131-bce9-56d4261bc7b1",
+          "name": null,
+          "properties": [
+            "notify"
+          ],
+          "handle": 181,
+          "value_hex": null,
+          "value_text": null
+        },
+        {
+          "uuid": "a6510002-4074-4131-bce9-56d4261bc7b1",
+          "name": null,
+          "properties": [
+            "notify"
+          ],
+          "handle": 177,
+          "value_hex": null,
+          "value_text": null
+        },
+        {
+          "uuid": "a6510005-4074-4131-bce9-56d4261bc7b1",
+          "name": null,
+          "properties": [
+            "read"
+          ],
+          "handle": 188,
+          "value_hex": "031414",
+          "value_text": null
+        }
+      ]
+    },
+    {
+      "uuid": "477ea600-a260-11e4-ae37-0002a5d50005",
+      "characteristics": [
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54120",
+          "name": "Sensor Enable",
+          "properties": [
+            "read",
+            "write"
+          ],
+          "handle": 104,
+          "value_hex": "0000",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54140",
+          "name": "Sensor Unknown 4140",
+          "properties": [
+            "write",
+            "notify"
+          ],
+          "handle": 110,
+          "value_hex": null,
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54130",
+          "name": "Sensor Data",
+          "properties": [
+            "notify"
+          ],
+          "handle": 107,
+          "value_hex": null,
+          "value_text": null
+        }
+      ]
+    },
+    {
+      "uuid": "477ea600-a260-11e4-ae37-0002a5d50008",
+      "characteristics": [
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54430",
+          "name": null,
+          "properties": [
+            "read",
+            "write"
+          ],
+          "handle": 167,
+          "value_hex": "80ffb0",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54410",
+          "name": "Extended Unknown 4410",
+          "properties": [
+            "read",
+            "write"
+          ],
+          "handle": 163,
+          "value_hex": "0000",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54432",
+          "name": null,
+          "properties": [
+            "read",
+            "write"
+          ],
+          "handle": 171,
+          "value_hex": "3000d0",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54431",
+          "name": null,
+          "properties": [
+            "read",
+            "write"
+          ],
+          "handle": 169,
+          "value_hex": "ff9900",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54420",
+          "name": "Settings",
+          "properties": [
+            "read",
+            "write"
+          ],
+          "handle": 165,
+          "value_hex": "001a0000",
+          "value_text": null
+        }
+      ]
+    },
+    {
+      "uuid": "00001801-0000-1000-8000-00805f9b34fb",
+      "characteristics": [
+        {
+          "uuid": "00002a05-0000-1000-8000-00805f9b34fb",
+          "name": "Service Changed",
+          "properties": [
+            "indicate"
+          ],
+          "handle": 11,
+          "value_hex": null,
+          "value_text": null
+        }
+      ]
+    },
+    {
+      "uuid": "477ea600-a260-11e4-ae37-0002a5d50007",
+      "characteristics": [
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54340",
+          "name": null,
+          "properties": [
+            "read"
+          ],
+          "handle": 154,
+          "value_hex": "00ef4015",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54310",
+          "name": "Error Persistent",
+          "properties": [
+            "read"
+          ],
+          "handle": 150,
+          "value_hex": "24200040",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54370",
+          "name": null,
+          "properties": [
+            "read"
+          ],
+          "handle": 160,
+          "value_hex": "5354726967203532330a5054726967203336320a535050203336300a505350203130300a5342617365203334340a50426173652038390a43616c537473203078330a5343616c52736c74203078330a5043616c52736c74203078330a53446576494420307833390a5044657649442030783339",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54350",
+          "name": null,
+          "properties": [
+            "read"
+          ],
+          "handle": 156,
+          "value_hex": "01",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54320",
+          "name": "Error Volatile",
+          "properties": [
+            "read"
+          ],
+          "handle": 152,
+          "value_hex": "04000040",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54360",
+          "name": "Diag Unknown 4360",
+          "properties": [
+            "read"
+          ],
+          "handle": 158,
+          "value_hex": "9b0e0000",
+          "value_text": null
+        }
+      ]
+    },
+    {
+      "uuid": "477ea600-a260-11e4-ae37-0002a5d50001",
+      "characteristics": [
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54020",
+          "name": "Available Routines",
+          "properties": [
+            "read"
+          ],
+          "handle": 43,
+          "value_hex": "0101",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54030",
+          "name": "Unknown 4030",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "handle": 47,
+          "value_hex": "030d1a16",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54010",
+          "name": "Handle State",
+          "properties": [
+            "read",
+            "write",
+            "indicate"
+          ],
+          "handle": 39,
+          "value_hex": "02",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54022",
+          "name": "Available Routine IDs",
+          "properties": [
+            "read",
+            "write"
+          ],
+          "handle": 45,
+          "value_hex": "00",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54040",
+          "name": "Motor Runtime",
+          "properties": [
+            "read"
+          ],
+          "handle": 50,
+          "value_hex": "534d0000",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54050",
+          "name": "Handle Time",
+          "properties": [
+            "read",
+            "write"
+          ],
+          "handle": 52,
+          "value_hex": "f0395a00",
+          "value_text": null
+        }
+      ]
+    },
+    {
+      "uuid": "0000180a-0000-1000-8000-00805f9b34fb",
+      "characteristics": [
+        {
+          "uuid": "00002a29-0000-1000-8000-00805f9b34fb",
+          "name": "Manufacturer Name",
+          "properties": [
+            "read"
+          ],
+          "handle": 19,
+          "value_hex": "5068696c697073204f4843",
+          "value_text": "Philips OHC"
+        },
+        {
+          "uuid": "00002a2a-0000-1000-8000-00805f9b34fb",
+          "name": "IEEE Regulatory Cert",
+          "properties": [
+            "read"
+          ],
+          "handle": 33,
+          "value_hex": "00",
+          "value_text": null
+        },
+        {
+          "uuid": "00002a50-0000-1000-8000-00805f9b34fb",
+          "name": "PnP ID",
+          "properties": [
+            "read"
+          ],
+          "handle": 35,
+          "value_hex": "01dd010f0f0000",
+          "value_text": null
+        },
+        {
+          "uuid": "00002a27-0000-1000-8000-00805f9b34fb",
+          "name": "Hardware Revision",
+          "properties": [
+            "read"
+          ],
+          "handle": 25,
+          "value_hex": "",
+          "value_text": ""
+        },
+        {
+          "uuid": "00002a23-0000-1000-8000-00805f9b34fb",
+          "name": "System ID",
+          "properties": [
+            "read"
+          ],
+          "handle": 31,
+          "value_hex": "0000000000000000",
+          "value_text": null
+        },
+        {
+          "uuid": "00002a28-0000-1000-8000-00805f9b34fb",
+          "name": "Software Revision",
+          "properties": [
+            "read"
+          ],
+          "handle": 29,
+          "value_hex": "",
+          "value_text": ""
+        },
+        {
+          "uuid": "00002a26-0000-1000-8000-00805f9b34fb",
+          "name": "Firmware Revision",
+          "properties": [
+            "read"
+          ],
+          "handle": 27,
+          "value_hex": "312e31352e34",
+          "value_text": "1.15.4"
+        },
+        {
+          "uuid": "00002a24-0000-1000-8000-00805f9b34fb",
+          "name": "Model Number",
+          "properties": [
+            "read"
+          ],
+          "handle": 21,
+          "value_hex": "485839393958",
+          "value_text": "HX999X"
+        },
+        {
+          "uuid": "00002a25-0000-1000-8000-00805f9b34fb",
+          "name": "Serial Number",
+          "properties": [
+            "read"
+          ],
+          "handle": 23,
+          "value_hex": "30303030303030303030",
+          "value_text": "0000000000"
+        }
+      ]
+    },
+    {
+      "uuid": "0000180f-0000-1000-8000-00805f9b34fb",
+      "characteristics": [
+        {
+          "uuid": "00002a19-0000-1000-8000-00805f9b34fb",
+          "name": "Battery Level",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "handle": 15,
+          "value_hex": "2e",
+          "value_text": "."
+        }
+      ]
+    },
+    {
+      "uuid": "477ea600-a260-11e4-ae37-0002a5d50006",
+      "characteristics": [
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54280",
+          "name": "Brushhead Lifetime Limit",
+          "properties": [
+            "read"
+          ],
+          "handle": 131,
+          "value_hex": "6054",
+          "value_text": "`T"
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d542a2",
+          "name": "Brushhead Unknown 42A2",
+          "properties": [
+            "read"
+          ],
+          "handle": 138,
+          "value_hex": "00",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d542a6",
+          "name": "Brushhead Unknown 42A6",
+          "properties": [
+            "read",
+            "write",
+            "notify"
+          ],
+          "handle": 142,
+          "value_hex": "00",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54270",
+          "name": "Brushhead Unknown 4270",
+          "properties": [
+            "read"
+          ],
+          "handle": 129,
+          "value_hex": "00",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d542a4",
+          "name": "Brushhead Unknown 42A4",
+          "properties": [
+            "read"
+          ],
+          "handle": 140,
+          "value_hex": "00000000",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54220",
+          "name": "Brushhead Type",
+          "properties": [
+            "read"
+          ],
+          "handle": 116,
+          "value_hex": "00",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54260",
+          "name": "Brushhead Unknown 4260",
+          "properties": [
+            "read"
+          ],
+          "handle": 127,
+          "value_hex": "00",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54210",
+          "name": "Brushhead NFC Version",
+          "properties": [
+            "read"
+          ],
+          "handle": 114,
+          "value_hex": "0201",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54290",
+          "name": "Brushhead Lifetime Usage",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "handle": 133,
+          "value_hex": "7707",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d542a0",
+          "name": "Brushhead Unknown 42A0",
+          "properties": [
+            "read"
+          ],
+          "handle": 136,
+          "value_hex": "01",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54254",
+          "name": "Brushhead Unknown 4254",
+          "properties": [
+            "read"
+          ],
+          "handle": 125,
+          "value_hex": "00",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d542b0",
+          "name": "Brushhead Payload",
+          "properties": [
+            "read"
+          ],
+          "handle": 145,
+          "value_hex": "68747470733a2f2f7777772e7068696c6970732e636f6d2f6e6663627275736868656164746170",
+          "value_text": "https://www.philips.com/nfcbrushheadtap"
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d542c0",
+          "name": "Brushhead Ring ID",
+          "properties": [
+            "read"
+          ],
+          "handle": 147,
+          "value_hex": "0200",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54230",
+          "name": "Brushhead Serial",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "handle": 118,
+          "value_hex": "04506dd2ae2291",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54240",
+          "name": "Brushhead Date",
+          "properties": [
+            "read"
+          ],
+          "handle": 121,
+          "value_hex": "3236303332322034334d",
+          "value_text": "260322 43M"
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54250",
+          "name": "Brushhead Unknown 4250",
+          "properties": [
+            "read"
+          ],
+          "handle": 123,
+          "value_hex": "00",
+          "value_text": null
+        }
+      ]
+    },
+    {
+      "uuid": "477ea600-a260-11e4-ae37-0002a5d50002",
+      "characteristics": [
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d540a0",
+          "name": "Unknown 40A0",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "handle": 71,
+          "value_hex": "01",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54070",
+          "name": "Session ID",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "handle": 55,
+          "value_hex": "f600",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54091",
+          "name": "Routine Length",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "handle": 68,
+          "value_hex": "7800",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54082",
+          "name": "Brushing State",
+          "properties": [
+            "read",
+            "write",
+            "notify"
+          ],
+          "handle": 62,
+          "value_hex": "01",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d540b0",
+          "name": "Intensity",
+          "properties": [
+            "read",
+            "write",
+            "notify"
+          ],
+          "handle": 75,
+          "value_hex": "00",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d540c0",
+          "name": "Unknown 40C0",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "handle": 79,
+          "value_hex": "00",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54090",
+          "name": "Brushing Time",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "handle": 65,
+          "value_hex": "1b00",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54080",
+          "name": "Brushing Mode",
+          "properties": [
+            "read",
+            "indicate"
+          ],
+          "handle": 59,
+          "value_hex": "00",
+          "value_text": null
+        }
+      ]
+    },
+    {
+      "uuid": "477ea600-a260-11e4-ae37-0002a5d50004",
+      "characteristics": [
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d540d2",
+          "name": "Session Count",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "handle": 100,
+          "value_hex": "f600",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54100",
+          "name": "Session Data",
+          "properties": [
+            "notify"
+          ],
+          "handle": 94,
+          "value_hex": null,
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d54110",
+          "name": "Session Action",
+          "properties": [
+            "write",
+            "notify"
+          ],
+          "handle": 97,
+          "value_hex": null,
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d540d0",
+          "name": "Latest Session ID",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "handle": 84,
+          "value_hex": "f500",
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d540e0",
+          "name": "Active Session ID",
+          "properties": [
+            "write",
+            "notify"
+          ],
+          "handle": 91,
+          "value_hex": null,
+          "value_text": null
+        },
+        {
+          "uuid": "477ea600-a260-11e4-ae37-0002a5d540d5",
+          "name": "Session Type",
+          "properties": [
+            "read",
+            "write"
+          ],
+          "handle": 87,
+          "value_hex": "00",
+          "value_text": null
+        }
+      ]
+    }
+  ]
+}

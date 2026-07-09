@@ -39,3 +39,17 @@ jobs:
           python-version: "3.12"
       - name: Check translations/en.json is in sync with strings.json
         run: python3 scripts/sync_translations.py --check
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: pip install -r requirements_test.txt
+      - name: Run pytest
+        run: pytest

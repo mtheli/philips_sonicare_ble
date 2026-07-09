@@ -16,3 +16,9 @@ NOTES.md
 
 # Generated artifact from scripts/render_config_flow.py — regenerable
 docs/config_flow.html
+
+# Raw device captures from scripts/sonicare_scan.py --json (may contain real
+# serials/MACs). Anonymised copies live under tests/fixtures/ and are tracked.
+scripts/*_capture.json
+scripts/*_live.json
+.pytest_cache/
