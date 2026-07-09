@@ -1,1 +1,5 @@
 pytest-homeassistant-custom-component==0.13.205
+# Importing the integration pulls homeassistant.components.bluetooth, which
+# imports the usb component's module-level `from serial.tools.list_ports` —
+# so the test collection needs pyserial even though nothing here uses it.
+pyserial==3.5
