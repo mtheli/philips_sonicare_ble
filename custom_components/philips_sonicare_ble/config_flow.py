@@ -19,6 +19,7 @@ from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import Event, callback
 from homeassistant.data_entry_flow import AbortFlow, FlowResult
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
@@ -79,6 +80,14 @@ _LOGGER = logging.getLogger(__name__)
 # Picked when the user wants to type a MAC manually (e.g. an RPA-rotating
 # brush whose current address is not the freshest one in the discovery list).
 _MANUAL_ADDRESS = "__manual__"
+
+# Condor brushes advertise a resolvable private address that rotates on every
+# wake, so each wake spawns a fresh discovery flow while the previous address
+# never returns. We drop a sibling Condor discovery flow once its address has
+# not been advertised for this long, keeping the list to the currently-present
+# devices (a neighbour's brush advertises every ~1-2 s while awake, so its flow
+# survives; it is only pruned once that brush has actually gone quiet).
+_CONDOR_FLOW_STALE_SECONDS = 120
 
 # Max age of the last *connectable* advertisement before we treat the brush as
 # asleep. habluetooth keeps returning a connectable BLEDevice for up to ~195 s
@@ -196,6 +205,48 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     # ------------------------------------------------------------------
     # Duplicate check
     # ------------------------------------------------------------------
+    @staticmethod
+    def _is_condor_rpa(discovery_info: BluetoothServiceInfoBleak) -> bool:
+        """True for a Condor brush seen under a rotating private address.
+
+        The Philips public identity (OUI ``24:E5:AA``) is excluded — that is
+        the stable address the config entry is keyed on and is handled by the
+        normal already-configured check.
+        """
+        if discovery_info.address.upper().startswith("24:E5:AA"):
+            return False
+        uuids = {u.lower() for u in (discovery_info.service_uuids or ())}
+        name = discovery_info.name or ""
+        return SVC_CONDOR.lower() in uuids or name.startswith("Philips Sonicare")
+
+    def _prune_stale_condor_flows(self) -> None:
+        """Abort sibling Condor RPA discovery flows that have gone stale.
+
+        Triggered when a fresh Condor advertisement arrives. A flow is dropped
+        once its address has not been advertised for ``_CONDOR_FLOW_STALE_
+        SECONDS`` — a rotated-away RPA never returns, so its flow would linger
+        forever otherwise. Flows for still-advertising addresses (e.g. a
+        neighbour's brush) are kept.
+        """
+        now = time.monotonic()
+        flow_mgr = self.hass.config_entries.flow
+        for flow in flow_mgr.async_progress_by_handler(DOMAIN):
+            if flow["flow_id"] == self.flow_id:
+                continue
+            address = flow.get("context", {}).get("condor_rpa_address")
+            if not address:
+                continue
+            info = async_last_service_info(self.hass, address, connectable=False)
+            if info is not None and (now - info.time) < _CONDOR_FLOW_STALE_SECONDS:
+                continue
+            try:
+                flow_mgr.async_abort(flow["flow_id"])
+                _LOGGER.debug(
+                    "Pruned stale Condor discovery flow for %s", address
+                )
+            except Exception:  # noqa: BLE001 — flow may have just finished
+                pass
+
     def _abort_if_already_configured(self) -> None:
         """Abort with detailed message if this unique_id is already configured."""
         for entry in self._async_current_entries():
@@ -1002,9 +1053,20 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._address = discovery_info.address
         self._name = discovery_info.name or "Philips Sonicare"
 
-        self.context["title_placeholders"] = {
-            "name": f"Bluetooth ({discovery_info.address})"
-        }
+        if self._is_condor_rpa(discovery_info):
+            # Tag the flow so siblings can find it, drop any that have gone
+            # stale, and stamp the discovery time into the title so the user
+            # can tell which entry is the freshest (RPAs rotate per wake).
+            self.context["condor_rpa_address"] = discovery_info.address
+            self._prune_stale_condor_flows()
+            seen = dt_util.now().strftime("%H:%M:%S")
+            self.context["title_placeholders"] = {
+                "name": f"Philips Sonicare (Condor, seen {seen})"
+            }
+        else:
+            self.context["title_placeholders"] = {
+                "name": f"Bluetooth ({discovery_info.address})"
+            }
         return await self.async_step_bluetooth_confirm()
 
     async def _find_esp_bridge_for_mac(
