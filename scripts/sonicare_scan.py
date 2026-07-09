@@ -13,6 +13,7 @@ Requirements:
 """
 
 import asyncio
+import contextlib
 import json
 import struct
 import argparse
@@ -302,6 +303,12 @@ class NewerProtocolProbe:
         self.max_packet_size = self.DEFAULT_PACKET_SIZE
         # ChangeIndication counter for the listen summary.
         self.indication_count: dict[tuple[str, str], int] = {}
+        # Structured snapshot of the probe, filled during run(). Shape:
+        #   {"<product_id>": {"name": str, "ports": {"<port>": <props|None>}}}
+        # Each port's value is the decoded GenericResp JSON — exactly the dict
+        # that condor_adapter.map_port_props(port, props) consumes, so a saved
+        # capture doubles as a test fixture.
+        self.capture: dict[str, dict] = {}
 
     # --- Transport (1-byte header + payload) ----------------------------
 
@@ -707,6 +714,12 @@ class NewerProtocolProbe:
         print("\n  -- Get products --")
         prods_resp = await self._send_and_wait(MSG_GET_PRODS)
         prod_ids = _parse_json_ids(prods_resp)
+        prods_meta = _parse_generic_resp_json(prods_resp) or {}
+        for pid in prod_ids:
+            name = ""
+            if isinstance(prods_meta.get(pid), dict):
+                name = prods_meta[pid].get("name", "")
+            self.capture[pid] = {"name": name, "ports": {}}
         await asyncio.sleep(0.3)
 
         product_ports: dict[str, list[str]] = {}
@@ -721,9 +734,13 @@ class NewerProtocolProbe:
         if product_ports:
             print("\n  -- Get properties --")
             for prod_id, ports in product_ports.items():
+                entry = self.capture.setdefault(prod_id, {"name": "", "ports": {}})
                 for port in ports:
                     payload = prod_id.encode() + b"\x00" + port.encode() + b"\x00"
-                    await self._send_and_wait(MSG_GET_PROPS, payload, timeout=3.0)
+                    resp = await self._send_and_wait(MSG_GET_PROPS, payload, timeout=3.0)
+                    # Binary ports (*.b) return an empty body — record null so
+                    # the fixture still lists the port without inventing props.
+                    entry["ports"][port] = _parse_generic_resp_json(resp)
                     await asyncio.sleep(0.2)
 
         if self.listen_seconds > 0:
@@ -805,7 +822,14 @@ def _adv_summary(adv) -> str:
 
 
 async def find_sonicare():
-    """Scan for any Sonicare toothbrush nearby. Returns (address, adv)."""
+    """Scan for any Sonicare toothbrush nearby. Returns (BLEDevice, adv).
+
+    Returns the BLEDevice object (not just the address): connecting via the
+    discovered device object is bleak's recommended path and avoids the
+    "device not found" failure that a bare address string hits when the
+    device's BlueZ object has just been dropped (e.g. right after a bond
+    removal) or when it advertises rotating RPAs.
+    """
     print("Scanning for Sonicare devices (20s)...")
     print("Tip: Wake up the brush by pressing the power button or placing it on the charger.\n")
 
@@ -826,7 +850,7 @@ async def find_sonicare():
     if len(found) == 1:
         device, adv = found[0]
         print(f"Found: {device.name} ({device.address}), RSSI={adv.rssi}{_adv_summary(adv)}")
-        return device.address, adv
+        return device, adv
 
     print(f"Found {len(found)} Sonicare devices:")
     for i, (device, adv) in enumerate(found):
@@ -836,7 +860,7 @@ async def find_sonicare():
     try:
         idx = int(choice) - 1
         if 0 <= idx < len(found):
-            return found[idx][0].address, found[idx][1]
+            return found[idx][0], found[idx][1]
     except ValueError:
         pass
     print("Invalid selection.")
@@ -864,16 +888,198 @@ async def _negotiate_mtu(client: BleakClient, requested: int | None) -> None:
         print(f"MTU auto-exchange failed: {e}")
 
 
-def _remove_sonicare_bonds() -> list[str]:
+AGENT_PATH = "/org/bluez/agent/sonicare_scan"
+AGENT_CAPABILITY = "KeyboardDisplay"
+PAIR_TIMEOUT = 30  # seconds
+
+
+@contextlib.asynccontextmanager
+async def _bluez_agent():
+    """Register a BlueZ auto-confirm pairing agent for the duration of the block.
+
+    The agent must exist BEFORE we connect, not just around an explicit
+    ``client.pair()``. Two reasons:
+
+    * The newer (e50b) brushes reject notify subscriptions until bonded, and
+      their Just-Works / Secure-Connections handshake needs an agent to answer
+      ``RequestConfirmation`` / ``RequestAuthorization``.
+    * Bonded Classic brushes (HX999X Prestige) demand encryption during
+      *service discovery* — BlueZ auto-triggers SMP inside ``connect()``. With
+      no agent registered yet, that SMP fails and the device drops the link
+      ("failed to discover services, device disconnected").
+
+    Yields True if an agent is registered, False otherwise (non-Linux, missing
+    dbus_fast). dbus_fast ships with bleak, so this needs no extra dependency.
+    """
+    if sys.platform != "linux":
+        yield False
+        return
+
+    try:
+        from dbus_fast import BusType
+        from dbus_fast.aio import MessageBus
+        from dbus_fast.errors import DBusError
+        from dbus_fast.service import ServiceInterface, method
+    except ImportError:
+        print("  dbus_fast unavailable — pairing agent disabled")
+        yield False
+        return
+
+    class _AutoConfirmAgent(ServiceInterface):
+        """BlueZ Agent1 that auto-confirms pairing requests."""
+
+        def __init__(self) -> None:
+            super().__init__("org.bluez.Agent1")
+
+        @method()
+        def Release(self) -> None:  # noqa: N802
+            pass
+
+        @method()
+        def RequestConfirmation(self, device: "o", passkey: "u") -> None:  # noqa: N802,F821
+            print(f"  Auto-confirming pairing for {device} (passkey {passkey:06d})")
+
+        @method()
+        def RequestAuthorization(self, device: "o") -> None:  # noqa: N802,F821
+            pass
+
+        @method()
+        def AuthorizeService(self, device: "o", uuid: "s") -> None:  # noqa: N802,F821
+            pass
+
+        @method()
+        def Cancel(self) -> None:  # noqa: N802
+            print("  Pairing cancelled by BlueZ")
+
+    bus = None
+    agent_registered = False
+    try:
+        bus = MessageBus(bus_type=BusType.SYSTEM)
+        await bus.connect()
+
+        agent = _AutoConfirmAgent()
+        bus.export(AGENT_PATH, agent)
+
+        bluez_intro = await bus.introspect("org.bluez", "/org/bluez")
+        bluez_proxy = bus.get_proxy_object("org.bluez", "/org/bluez", bluez_intro)
+        agent_mgr = bluez_proxy.get_interface("org.bluez.AgentManager1")
+
+        try:
+            await agent_mgr.call_register_agent(AGENT_PATH, AGENT_CAPABILITY)
+            agent_registered = True
+        except DBusError as err:
+            if "AlreadyExists" not in str(err):
+                print(f"  Could not register pairing agent: {err}")
+                yield False
+                return
+            agent_registered = True
+        try:
+            await agent_mgr.call_request_default_agent(AGENT_PATH)
+        except DBusError:
+            pass
+
+        yield True
+    finally:
+        if bus and bus.connected:
+            if agent_registered:
+                try:
+                    intro = await bus.introspect("org.bluez", "/org/bluez")
+                    proxy = bus.get_proxy_object("org.bluez", "/org/bluez", intro)
+                    mgr = proxy.get_interface("org.bluez.AgentManager1")
+                    await mgr.call_unregister_agent(AGENT_PATH)
+                except Exception:
+                    pass
+            try:
+                bus.unexport(AGENT_PATH)
+            except Exception:
+                pass
+            bus.disconnect()
+
+
+async def _client_pair(client: BleakClient) -> bool:
+    """Run ``client.pair()`` on the live connection. A BlueZ auto-confirm agent
+    must already be registered (see ``_bluez_agent``). Returns True on success.
+    """
+    try:
+        await asyncio.wait_for(client.pair(), timeout=PAIR_TIMEOUT)
+    except asyncio.TimeoutError:
+        print(f"  Pairing timed out after {PAIR_TIMEOUT}s")
+        return False
+    except Exception as err:
+        print(f"  Pairing failed: {err}")
+        return False
+    print("  Paired (bonded via auto-confirm agent)")
+    return True
+
+
+# ATT/BlueZ error fragments that mean "this read needs a bond/encryption".
+_AUTH_ERROR_HINTS = (
+    "insufficient", "authentication", "encryption", "not permitted",
+    "not paired", "not authorized", "0x05", "0x0f",
+)
+
+
+def _is_auth_error(msg: str) -> bool:
+    low = msg.lower()
+    return any(hint in low for hint in _AUTH_ERROR_HINTS)
+
+
+async def _read_char(client, char, char_entry, char_info, device_info) -> str:
+    """Read one characteristic into ``char_entry``. Returns a status string:
+    "ok", "auth" (needs bonding), or "error" (other failure/disconnect).
+    """
+    try:
+        value = await client.read_gatt_char(char)
+    except Exception as e:
+        msg = str(e)
+        print(f"    Read error: {msg}")
+        return "auth" if _is_auth_error(msg) else "error"
+
+    hex_str = value.hex()
+    char_entry["value_hex"] = hex_str
+    text = None
+    try:
+        decoded = value.decode("utf-8")
+        if decoded.isprintable():
+            text = decoded
+            print(f"    Value: {hex_str} = \"{decoded}\"")
+        else:
+            print(f"    Value: {hex_str}")
+    except (UnicodeDecodeError, ValueError):
+        print(f"    Value: {hex_str}")
+    char_entry["value_text"] = text
+
+    if char_info and char_info[1] in ("device_info", "standard_ble"):
+        device_info[char_info[0]] = text if text is not None else hex_str
+
+    if char.uuid.lower() == "00002a24-0000-1000-8000-00805f9b34fb":
+        try:
+            model_number = value.decode("utf-8", errors="replace").strip()
+            mode = "YES" if _supports_mode_write(model_number) else "NO"
+            settings = "YES" if _supports_settings_write(model_number) else "NO"
+            print(f"    HA: mode write={mode}, settings write={settings}")
+        except Exception:
+            pass
+    return "ok"
+
+
+def _remove_sonicare_bonds(skip: str | None = None) -> list[str]:
     """Remove paired Sonicare / Philips OHC devices from BlueZ (Linux only).
 
     Stale bonds are a common cause of subscribe timeouts: BlueZ reports the
     device as paired, but the brush has forgotten the link key, so any
     encrypted operation fails silently. Starting from a clean slate avoids
     that failure mode.
+
+    ``skip`` is the address we are about to connect to — never remove its
+    bond. Removing the target's own (good) bond immediately before connecting
+    drops its BlueZ object and yields "device not found", which is exactly
+    what happens when a Condor brush advertises its public identity MAC that
+    a prior run already bonded.
     """
     if sys.platform != "linux":
         return []
+    skip_upper = skip.upper() if skip else None
     try:
         listing = subprocess.run(
             ["bluetoothctl", "devices", "Paired"],
@@ -888,6 +1094,8 @@ def _remove_sonicare_bonds() -> list[str]:
         if len(parts) < 3 or parts[0] != "Device":
             continue
         mac, name = parts[1], parts[2]
+        if skip_upper and mac.upper() == skip_upper:
+            continue
         low = name.lower()
         if not any(tag in low for tag in ("sonicare", "philips ohc", "philips sonic")):
             continue
@@ -907,26 +1115,30 @@ async def scan_device(
     mtu: int | None = None,
     listen_seconds: int = 0,
     subscribe_binary: bool = False,
+    json_path: str | None = None,
+    adv_name: str | None = None,
+    connect_target=None,
 ):
-    """Connect to a Sonicare and dump all GATT services."""
-    removed = _remove_sonicare_bonds()
+    """Connect to a Sonicare and dump all GATT services.
+
+    ``connect_target`` is the discovered BLEDevice when available; connecting
+    to the object rather than the address string is more robust for devices
+    that rotate their advertisement address. Falls back to ``address``.
+    """
+    removed = _remove_sonicare_bonds(skip=address)
     if removed:
         print("Removed stale bonds before connecting:")
         for entry in removed:
             print(f"  - {entry}")
         print()
 
+    target = connect_target if connect_target is not None else address
     print(f"Connecting to {address} ...")
-    async with BleakClient(address, timeout=30) as client:
+    # Register the pairing agent BEFORE connecting: bonded Classic brushes
+    # (HX999X Prestige) trigger SMP during service discovery, which fails and
+    # drops the link if no agent is present yet.
+    async with _bluez_agent(), BleakClient(target, timeout=30) as client:
         print(f"Connected: {client.is_connected}")
-
-        # Some models require BLE pairing before CCCD writes are accepted.
-        # Try pairing unconditionally; failures are non-fatal for read-only probes.
-        try:
-            result = await client.pair()
-            print(f"Paired: {result}")
-        except Exception as e:
-            print(f"Pairing skipped: {e}")
 
         await _negotiate_mtu(client, mtu)
         with warnings.catch_warnings():
@@ -934,14 +1146,32 @@ async def scan_device(
             mtu_actual = client.mtu_size
         print(f"MTU: {mtu_actual}\n")
 
-        has_legacy = False
-        has_newer = False
+        # Snapshot the service table into plain Python objects up front. If a
+        # brush drops the link mid-scan (open-GATT models do this when probed
+        # wrong), iterating the live ``client.services`` property would raise
+        # "Service Discovery has not been performed yet"; a snapshot keeps the
+        # structure usable and lets us still write the JSON we gathered.
+        services = list(client.services)
+        has_legacy = any(s.uuid.startswith(LEGACY_PREFIX) for s in services)
+        has_newer = any(s.uuid.startswith(NEWER_PREFIX) for s in services)
 
-        for service in client.services:
-            if service.uuid.startswith(LEGACY_PREFIX):
-                has_legacy = True
-            if service.uuid.startswith(NEWER_PREFIX):
-                has_newer = True
+        # Pairing strategy: only the newer (Condor) probe needs a bond up
+        # front. Legacy brushes are mixed — some are open GATT (Kids, HX992X)
+        # and DROP the link if forced to pair, others bond (HX9992). So for
+        # Legacy we pair reactively: read unencrypted, and pair only when a
+        # read comes back with an auth/encryption error.
+        paired = False
+        if has_newer:
+            print("Pairing (required for newer-protocol probe) ...")
+            paired = await _client_pair(client)
+            print()
+
+        gatt_services: list[dict] = []
+        device_info: dict[str, str] = {}
+
+        for service in services:
+            svc_entry = {"uuid": service.uuid, "characteristics": []}
+            gatt_services.append(svc_entry)
 
             print(f"Service: {service.uuid}")
             if service.description and service.description != service.uuid:
@@ -951,31 +1181,28 @@ async def scan_device(
                 char_info = KNOWN_CHARS.get(char.uuid.lower())
                 char_label = f"  [{char_info[0]}]" if char_info else ""
                 print(f"  Char: {char.uuid}  [{props}]  handle=0x{char.handle:04X}{char_label}")
-                if "read" in char.properties:
-                    try:
-                        value = await client.read_gatt_char(char)
-                        hex_str = value.hex()
-                        try:
-                            text = value.decode("utf-8")
-                            if text.isprintable():
-                                print(f"    Value: {hex_str} = \"{text}\"")
-                            else:
-                                print(f"    Value: {hex_str}")
-                        except (UnicodeDecodeError, ValueError):
-                            print(f"    Value: {hex_str}")
-
-                        # Print feature flags when model number is read
-                        if char.uuid.lower() == "00002a24-0000-1000-8000-00805f9b34fb":
-                            try:
-                                model_number = value.decode("utf-8", errors="replace").strip()
-                                mode = "YES" if _supports_mode_write(model_number) else "NO"
-                                settings = "YES" if _supports_settings_write(model_number) else "NO"
-                                print(f"    HA: mode write={mode}, settings write={settings}")
-                            except Exception:
-                                pass
-
-                    except Exception as e:
-                        print(f"    Read error: {e}")
+                char_entry = {
+                    "uuid": char.uuid,
+                    "name": char_info[0] if char_info else None,
+                    "properties": list(char.properties),
+                    "handle": char.handle,
+                    "value_hex": None,
+                    "value_text": None,
+                }
+                svc_entry["characteristics"].append(char_entry)
+                if "read" in char.properties and client.is_connected:
+                    status = await _read_char(
+                        client, char, char_entry, char_info, device_info
+                    )
+                    # First auth failure on a Legacy brush → it wants a bond.
+                    # Pair once (agent), then retry this read and continue.
+                    if status == "auth" and not paired and not has_newer:
+                        print("    → read needs encryption, pairing ...")
+                        paired = await _client_pair(client)
+                        if paired and client.is_connected:
+                            await _read_char(
+                                client, char, char_entry, char_info, device_info
+                            )
                 for desc in char.descriptors:
                     print(f"    Desc: {desc.uuid}  handle=0x{desc.handle:04X}")
             print()
@@ -990,17 +1217,65 @@ async def scan_device(
         else:
             protocol = "Unknown"
         print(f"Protocol: {protocol}")
-        print(f"Total services: {sum(1 for _ in client.services)}")
+        print(f"Total services: {len(services)}")
         print("=" * 60)
 
-        # Probe newer protocol if detected
-        if has_newer:
+        # Probe newer protocol if detected and still connected
+        condor_capture: dict = {}
+        if has_newer and client.is_connected:
             probe = NewerProtocolProbe(
                 client,
                 listen_seconds=listen_seconds,
                 subscribe_binary=subscribe_binary,
             )
             await probe.run()
+            condor_capture = probe.capture
+
+        if json_path:
+            _write_capture(
+                json_path,
+                address=address,
+                adv_name=adv_name,
+                protocol=protocol,
+                device_info=device_info,
+                gatt_services=gatt_services,
+                condor=condor_capture,
+            )
+
+
+def _write_capture(
+    path: str,
+    *,
+    address: str,
+    adv_name: str | None,
+    protocol: str,
+    device_info: dict,
+    gatt_services: list,
+    condor: dict,
+) -> None:
+    """Write a structured snapshot of the probe to a JSON file.
+
+    The ``condor`` section mirrors what ``condor_adapter.map_port_props``
+    consumes: ``condor[product_id]["ports"][port]`` is the decoded property
+    dict (or null for binary/empty ports), so a saved capture is directly
+    usable as a fixture for adapter tests.
+    """
+    snapshot = {
+        "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "address": address,
+        "adv_name": adv_name,
+        "protocol": protocol,
+        "device_info": device_info,
+        "condor": condor,
+        "gatt_services": gatt_services,
+    }
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(snapshot, fh, indent=2, ensure_ascii=False, sort_keys=False)
+            fh.write("\n")
+        print(f"\nCapture written to {path}")
+    except OSError as e:
+        print(f"\n!!! Could not write capture to {path}: {e}")
 
 
 async def main():
@@ -1034,8 +1309,20 @@ async def main():
             "high-rate — use only when investigating live sensor data."
         ),
     )
+    parser.add_argument(
+        "--json",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Write a structured snapshot (device info, GATT map, and — for "
+            "the newer protocol — every product/port/property as decoded "
+            "JSON) to PATH. The condor section is shaped for direct use as a "
+            "condor_adapter test fixture."
+        ),
+    )
     args = parser.parse_args()
 
+    adv_name = None
     if args.mac:
         print(f"Scanning for {args.mac} (10s)...")
         device = await BleakScanner.find_device_by_address(args.mac, timeout=10)
@@ -1043,17 +1330,23 @@ async def main():
             print(f"Device {args.mac} not found. If it is connected to another process (e.g. bluetoothctl),")
             sys.exit(1)
         print(f"Found: {device.name} ({device.address})")
+        adv_name = device.name
         address = args.mac
     else:
-        address, _adv = await find_sonicare()
-        if not address:
+        device, _adv = await find_sonicare()
+        if not device:
             sys.exit(1)
+        address = device.address
+        adv_name = device.name or "Philips Sonicare"
 
     await scan_device(
         address,
         mtu=args.mtu,
         listen_seconds=args.listen,
         subscribe_binary=args.subscribe_binary,
+        json_path=args.json,
+        adv_name=adv_name,
+        connect_target=device,
     )
 
 
