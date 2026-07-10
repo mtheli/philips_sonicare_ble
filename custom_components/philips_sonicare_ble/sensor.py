@@ -124,6 +124,15 @@ async def async_setup_entry(
             SonicarePressureStateSensor(coordinator, entry),
             SonicareTemperatureSensor(coordinator, entry),
         ])
+    elif is_condor:
+        # Condor exposes the same pressure-state and temperature telemetry
+        # through the SensorData.b port, but not the raw pressure grams value
+        # (its firmware streams the on-change state frame only), so the raw
+        # pressure sensor is omitted here.
+        entities.extend([
+            SonicarePressureStateSensor(coordinator, entry),
+            SonicareTemperatureSensor(coordinator, entry),
+        ])
 
     # Brush head sub-device sensors (NFC brush head detection).
     #

@@ -26,7 +26,7 @@ import logging
 import struct
 from typing import Any
 
-from .condor_adapter import map_port_props
+from .condor_adapter import map_port_props, map_sensor_frame
 from .const import (
     CHAR_CLIENT_CFG,
     CHAR_PROTO_CFG,
@@ -296,13 +296,27 @@ class CondorProtocol(SonicareProtocol):
             _LOGGER.debug("Condor ChangeInd non-ascii header: %s", parts[0].hex())
             return
         prod, port = header.split("/", 1)
-        raw_body = parts[1].rstrip(b"\x00")
         if port.endswith(".b"):
+            # SensorData.b carries the pressure/temperature telemetry stream;
+            # other binary ports stay unhandled. The body runs from the byte
+            # after the header NUL to the exact end of the frame — the frame's
+            # own length field delimits it, so there is no trailing terminator
+            # to strip (stripping one would corrupt a frame ending in 0x00).
+            binary_body = parts[1]
+            if port == "SensorData.b":
+                delta = map_sensor_frame(binary_body)
+                if delta:
+                    try:
+                        self._live_callback(delta)
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.exception("Condor sensor callback failed: %s", err)
+                return
             _LOGGER.debug(
                 "Condor ChangeInd binary port %s/%s (%dB) — skipped",
-                prod, port, len(raw_body),
+                prod, port, len(binary_body),
             )
             return
+        raw_body = parts[1].rstrip(b"\x00")
         if not raw_body:
             return
         try:
@@ -331,8 +345,12 @@ class CondorProtocol(SonicareProtocol):
             _LOGGER.debug("Condor TX_ACK write failed: %s", e)
 
     async def _send_change_ind_ack(self) -> None:
+        # The ChangeIndicationResponse payload is two bytes: a status byte
+        # (NoError) followed by a reserved zero. The handle tolerates a
+        # single status byte, but matching the exact two-byte payload keeps
+        # us spec-conformant.
         try:
-            await self._send_msg(MSG_CHANGE_IND_RESP, bytes([STATUS_OK]))
+            await self._send_msg(MSG_CHANGE_IND_RESP, bytes([STATUS_OK, 0]))
         except Exception as e:  # noqa: BLE001
             _LOGGER.debug("Condor ChangeInd ACK send failed: %s", e)
 
@@ -454,6 +472,72 @@ class CondorProtocol(SonicareProtocol):
                 f"GetProps({product_id}/{port}) failed: {_status_name(status)}"
             )
         return data if isinstance(data, dict) else {}
+
+    async def put_props(
+        self, product_id: str, port: str, props: dict[str, Any],
+    ) -> bool:
+        """Write properties to a port. Returns True on a NoError response.
+
+        Payload mirrors GetProps but appends a compact JSON body:
+        ``product\\0port\\0{json}``.
+        """
+        if not self._connected:
+            raise TransportError("Condor session not established")
+        body = json.dumps(props, separators=(",", ":")).encode("utf-8")
+        payload = (
+            product_id.encode("ascii") + b"\x00" + port.encode("ascii") + b"\x00" + body
+        )
+        resp = await self._send_and_wait(MSG_PUT_PROPS, payload)
+        status, _ = _parse_generic_resp(resp)
+        if status != STATUS_OK:
+            _LOGGER.debug(
+                "Condor PutProps(%s/%s) status=%s", product_id, port, _status_name(status),
+            )
+        return status == STATUS_OK
+
+    # --- Live sensor stream (pressure / temperature) ----------------------
+    # The pressure/temperature telemetry rides the ``SensorData.b`` binary
+    # port. It only streams once the enable register on the ``SensorData``
+    # JSON port is set, so enabling must precede the subscribe and the
+    # register is cleared again on stop. Frames are decoded by
+    # ``map_sensor_frame`` inside ``_route_change_indication`` and delivered
+    # through the change-indication callback already registered by
+    # ``start_live_updates`` — the ``callback`` argument (the Classic char
+    # signature) is accepted for interface parity but unused here.
+
+    async def start_sensor_stream(
+        self, enable_mask: int, callback: object = None,
+    ) -> bool:
+        """Enable the sensor frontend and subscribe to its binary stream.
+
+        Subscribe to ``SensorData.b`` *before* writing the enable register so
+        no frames are emitted before we're listening — the enable write is
+        best-effort (some firmwares stream regardless of a stale register),
+        but a failed subscribe means no telemetry arrives. Returns True if
+        the subscribe succeeded.
+        """
+        if not self._connected:
+            return False
+        try:
+            ok = await self._subscribe_port("1", "SensorData.b")
+        except TransportError as err:
+            _LOGGER.warning("Condor SensorData.b subscribe failed: %s", err)
+            return False
+        try:
+            await self.put_props("1", "SensorData", {"Sensors": enable_mask})
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Condor sensor enable write failed: %s", err)
+        return ok
+
+    async def stop_sensor_stream(self) -> None:
+        """Unsubscribe the binary stream. Best-effort — a transport teardown
+        may already have invalidated the subscription. The enable register is
+        left as-is; the handle powers its sensor frontend down on its own when
+        the session ends."""
+        try:
+            await self._unsubscribe_port("1", "SensorData.b")
+        except Exception:  # noqa: BLE001
+            pass
 
     # --- SonicareProtocol surface ------------------------------------------
 

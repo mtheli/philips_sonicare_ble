@@ -95,6 +95,20 @@ def test_unknown_port_returns_empty(condor_hx742x):
     assert map_port_props("NoSuchPort", {"whatever": 1}) == {}
 
 
+@pytest.mark.parametrize(
+    "props",
+    [
+        {"Sensors": 7, "Types": 3, "Control": 1},  # SenseIQ sensors enabled
+        {"Sensors": 0, "Types": 3, "Control": 1},  # sensors disabled
+    ],
+)
+def test_sensordata_props_stay_unmapped(props):
+    """SensorData JSON props are control state, not telemetry (see mapper
+    table) — both enable-mask variants observed on HX742X handles in the
+    field (issues #13, #23) must map to no coordinator keys."""
+    assert map_port_props("SensorData", props) == {}
+
+
 def test_partial_props_merge_cleanly(condor_hx742x):
     """A ChangeIndication delta carries only changed keys; the mapper must
     emit only those, so callers can merge it over prior state.
@@ -138,3 +152,43 @@ def test_resolve_brushing_mode_unresolvable():
     assert resolve_brushing_mode([], 0) is None
     assert resolve_brushing_mode([0, 5, 1, 2, 0], 9) is None
     assert resolve_brushing_mode([0, 5, 1, 2, 0], None) is None
+
+
+# --- SensorData.b binary telemetry decode ---------------------------------
+# Golden inputs are real frames captured live from an HX742A over the
+# SensorData.b port (little-endian). Synthetic 7-byte frames cover the
+# value-carrying variant that on-change firmwares don't emit.
+
+from custom_components.philips_sonicare_ble.condor_adapter import map_sensor_frame
+
+
+@pytest.mark.parametrize(
+    "frame_hex, expected",
+    [
+        # Temperature (type 2): whole degrees in byte 5. Real captures.
+        ("02000000001b", {"temperature": 27}),
+        ("020012000_1c".replace("_", "0"), {"temperature": 28}),
+        ("02002d00001e", {"temperature": 30}),
+        # Signed temperature — a sub-zero reading stays negative.
+        ("0200000000ec", {"temperature": -20}),
+        # Pressure on-change frame (5 bytes): state at byte 4, no value.
+        # 0x02 is the over-pressure ("too hard") signal.
+        ("0100010002", {"pressure_alarm": 2, "pressure_state": "too_high"}),
+        ("0100330002", {"pressure_alarm": 2, "pressure_state": "too_high"}),
+        # Pressure value frame (7 bytes): value at 4-5, state at 6.
+        ("0100000_2c0102".replace("_", "0"), {"pressure": 300, "pressure_alarm": 2, "pressure_state": "too_high"}),
+        # A 7-byte "ok" frame ending in 0x00 keeps its length and reads ok.
+        ("01000000050000", {"pressure": 5, "pressure_alarm": 0, "pressure_state": "ok"}),
+        # Counter-only 3-byte heartbeat — discarded.
+        ("010002", {}),
+        # Too short to carry a type.
+        ("01", {}),
+        ("", {}),
+        # IMU (type 4) is not surfaced as a HA sensor.
+        ("0400" + "00" * 14, {}),
+        # Unknown frame type.
+        ("0900abcd", {}),
+    ],
+)
+def test_map_sensor_frame(frame_hex, expected):
+    assert map_sensor_frame(bytes.fromhex(frame_hex)) == expected

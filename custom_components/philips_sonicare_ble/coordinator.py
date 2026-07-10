@@ -451,10 +451,11 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if resolved is not None:
                 new_data["brushing_mode_value"], new_data["brushing_mode"] = resolved
 
-        # Sensor stream gates on brushing_state — Classic only, since
-        # Condor never emits this key (its sensor stream rides a separate
-        # Subscribe on the ``SensorData.b`` port instead of CCCD).
-        if not self._use_condor and "brushing_state" in parsed:
+        # Sensor stream gates on brushing_state for both protocols. Classic
+        # toggles the CCCD subscribe on the sensor char; Condor toggles the
+        # enable register plus a Subscribe on the ``SensorData.b`` port — both
+        # behind the same session gate via ``start_sensor_stream``.
+        if "brushing_state" in parsed:
             old_state = old.get("brushing_state")
             new_state = parsed["brushing_state"]
             if new_state != old_state:
@@ -1228,7 +1229,12 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _subscribe_sensor_data(self) -> None:
         """Enable sensors and subscribe to sensor data stream."""
-        if self._sensor_subscribed or not self.transport.is_connected or not self._live_cb:
+        if self._sensor_subscribed or not self.transport.is_connected:
+            return
+        # Classic delivers the stream through the char callback; Condor routes
+        # it through the change-indication callback set at connect, so it does
+        # not need ``_live_cb``.
+        if not self._use_condor and not self._live_cb:
             return
         mask = self._compute_sensor_enable_mask()
         if mask == 0:

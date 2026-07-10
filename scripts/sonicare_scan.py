@@ -40,6 +40,7 @@ CHAR_CLIENT_CFG = "e50b0007-af04-4564-92ad-fef019489de6"
 # --- Newer protocol message types ---
 MSG_INITIALIZE_REQ = 1
 MSG_INITIALIZE_RESP = 2
+MSG_PUT_PROPS = 3
 MSG_GET_PROPS = 4
 MSG_SUBSCRIBE = 5
 MSG_UNSUBSCRIBE = 6
@@ -133,6 +134,43 @@ def _dec_sensor_enable(d):
     if v & 2: parts.append("temperature")
     if v & 4: parts.append("gyroscope")
     return f"0x{v:02X} → [{', '.join(parts) or 'none'}]"
+
+
+def _decode_sensor_frame(b: bytes) -> str:
+    """Best-effort decode of a SensorData.b binary frame, printed alongside
+    the raw hex so a live capture immediately shows the interpreted values.
+
+    Layout (little-endian): bytes 0-1 = packet type. Type-specific tail:
+      1 Pressure    : len==7 → value=u16LE@4, state=u8@6 ; else state=u8@4
+      2 Temperature : temp = u8@4/256 + s8@5  (≈ degrees C in byte 5)
+      4 IMU (≥16 B) : gyro xyz = s16LE @4/@6/@8, accel xyz = s16LE @10/@12/@14
+    """
+    if len(b) < 2:
+        return f"type=? raw={b.hex()} (too short)"
+    ptype = int.from_bytes(b[0:2], "little")
+    ctr = b[2] if len(b) > 2 else None  # byte2 = per-type sample counter
+    u16 = lambda o: int.from_bytes(b[o:o+2], "little") if len(b) >= o + 2 else None
+    s16 = lambda o: int.from_bytes(b[o:o+2], "little", signed=True) if len(b) >= o + 2 else None
+    if ptype == 1:
+        # HX742A live (2026-07-10): 5B frames carry a state byte at @4, 3B
+        # frames are counter-only. App spec: len==7 → value=u16LE@4, state@6.
+        if len(b) >= 7:
+            return f"type=1 PRESSURE ctr={ctr} value={u16(4)} state={b[6]}"
+        if len(b) >= 5:
+            return f"type=1 PRESSURE ctr={ctr} state={b[4]}"
+        return f"type=1 PRESSURE ctr={ctr} (counter-only)"
+    if ptype == 2:
+        if len(b) >= 6:
+            frac = b[4] / 256.0
+            whole = int.from_bytes(b[5:6], "little", signed=True)
+            return f"type=2 TEMP ctr={ctr} ≈{whole + frac:.2f}°C (byte5={whole} byte4={b[4]})"
+        return f"type=2 TEMP ctr={ctr} raw={b.hex()} (short)"
+    if ptype == 4 and len(b) >= 16:
+        return (
+            f"type=4 IMU ctr={ctr} gyro=({s16(4)},{s16(6)},{s16(8)}) "
+            f"accel=({s16(10)},{s16(12)},{s16(14)})"
+        )
+    return f"type={ptype} raw={b.hex()} (unrecognized / sensors off?)"
 
 
 # UUID → (display_name, category, decode_fn_or_None)
@@ -283,10 +321,13 @@ class NewerProtocolProbe:
         client: BleakClient,
         listen_seconds: int = 0,
         subscribe_binary: bool = False,
+        enable_sensors: int | None = None,
     ):
         self.client = client
         self.listen_seconds = listen_seconds
-        self.subscribe_binary = subscribe_binary
+        # Enabling the sensor streams implies we want their binary payloads.
+        self.enable_sensors = enable_sensors
+        self.subscribe_binary = subscribe_binary or enable_sensors is not None
         # Outgoing data packets are sequenced 1..63, 0, 1, ...; seq 0 with
         # BIT_START is reserved for the channel-open handshake.
         self.next_data_seq = 1
@@ -303,6 +344,11 @@ class NewerProtocolProbe:
         self.max_packet_size = self.DEFAULT_PACKET_SIZE
         # ChangeIndication counter for the listen summary.
         self.indication_count: dict[tuple[str, str], int] = {}
+        # Every SensorData.b frame, timestamped, so a full capture survives
+        # even if the terminal scrolls or the link drops mid-window.
+        self.sensor_frames: list[dict] = []
+        # Last pressure-state byte seen, to flag transitions live.
+        self._last_pressure_state: int | None = None
         # Structured snapshot of the probe, filled during run(). Shape:
         #   {"<product_id>": {"name": str, "ports": {"<port>": <props|None>}}}
         # Each port's value is the decoded GenericResp JSON — exactly the dict
@@ -472,12 +518,30 @@ class NewerProtocolProbe:
         while body.endswith(b"\x00"):
             body = body[:-1]
 
+        # Ack FIRST, before any decode/log/print work, so the response goes
+        # out as early as possible. The brush tears the link down (reason
+        # 0x13) if the ChangeIndication ack slips past ~250 ms — decoding and
+        # printing must not sit in front of it.
+        asyncio.get_event_loop().create_task(self._send_change_ind_ack())
+
         key = (prod, port)
         self.indication_count[key] = self.indication_count.get(key, 0) + 1
 
         is_binary = port.endswith(".b")
         if is_binary:
             summary = f"{len(body)}B: {body.hex()}"
+            if port == "SensorData.b" and body:
+                summary += f"  ⟶ {_decode_sensor_frame(body)}"
+                # Flag pressure-state transitions live so they can be
+                # correlated with the brush's over-pressure vibration.
+                if int.from_bytes(body[0:2], "little") == 1 and len(body) >= 5:
+                    state = body[4]
+                    if state != self._last_pressure_state:
+                        print(
+                            f"  [{stamp}] ⚠  PRESSURE STATE "
+                            f"{self._last_pressure_state} → {state}"
+                        )
+                        self._last_pressure_state = state
         else:
             try:
                 decoded = body.decode("utf-8")
@@ -485,9 +549,13 @@ class NewerProtocolProbe:
             except UnicodeDecodeError:
                 summary = f"(non-utf8 {len(body)}B) {body.hex()}"
 
-        print(f"  [{stamp}] <<< ChangeInd prod={prod} port={port}: {summary}")
+        # Record every indication (JSON ports too) so one capture shows which
+        # field carries the pressure state — it is not in SensorData.b byte4.
+        self.sensor_frames.append(
+            {"t": stamp, "port": port, "body": body.hex(), "summary": summary}
+        )
 
-        asyncio.get_event_loop().create_task(self._send_change_ind_ack())
+        print(f"  [{stamp}] <<< ChangeInd prod={prod} port={port}: {summary}")
 
     async def _send_change_ind_ack(self):
         """Acknowledge a ChangeIndication with a single status byte (NoError)."""
@@ -505,6 +573,25 @@ class NewerProtocolProbe:
         if not resp:
             return False
         status = resp[0] if resp else 255
+        return status == 0
+
+    async def _put_props(self, prod: str, port: str, props: dict) -> bool:
+        """Write properties to a port (PutProps). Returns True on NoError.
+
+        Payload: ``product\\0port\\0{json}`` — same framing as GetProps but
+        with a JSON body. Used to flip the SensorData enable register so the
+        device starts streaming its pressure/temperature binary substream.
+        """
+        body = json.dumps(props, separators=(",", ":")).encode("utf-8")
+        payload = prod.encode() + b"\x00" + port.encode() + b"\x00" + body
+        print(f"\n  -- PutProps prod={prod} port={port} {props} --")
+        resp = await self._send_and_wait(MSG_PUT_PROPS, payload, timeout=5.0)
+        if not resp:
+            print("      !!! No PutProps response")
+            return False
+        status = resp[0] if resp else 255
+        if status != 0:
+            print(f"      !!! PutProps status={status} ({STATUS_NAMES.get(status, '?')})")
         return status == 0
 
     async def _unsubscribe_port(self, prod: str, port: str) -> None:
@@ -777,12 +864,30 @@ class NewerProtocolProbe:
             print("\n  No ports subscribed — nothing to listen for.")
             return
 
+        # Flip the SensorData enable register so the device starts streaming
+        # its pressure/temperature binary substream. Subscribe the binary port
+        # first (done above), then write {"Sensors": mask}; without this write
+        # the SensorData.b port only emits an idle default, not real telemetry.
+        # Bit0=pressure, bit1=temperature, bit2=gyroscope.
+        if self.enable_sensors is not None:
+            if "SensorData" in discovered_ports.get("1", []):
+                await self._put_props("1", "SensorData", {"Sensors": self.enable_sensors})
+            else:
+                print("  -- Skip sensor enable (no SensorData port on device) --")
+
         print(
             f"\n  Listening for {self.listen_seconds}s on {len(subscribed)} port(s). "
             "Press the brush power button, switch modes, start/stop a session…"
         )
         try:
-            await asyncio.sleep(self.listen_seconds)
+            # Poll instead of one long sleep so we exit promptly when the
+            # brush is switched off (link drops) rather than looking frozen
+            # for the rest of the window.
+            for _ in range(self.listen_seconds):
+                await asyncio.sleep(1)
+                if not self.client.is_connected:
+                    print("\n  Link dropped (brush switched off?) — ending listen.")
+                    break
         except asyncio.CancelledError:
             print("\n  Listen interrupted.")
 
@@ -793,12 +898,28 @@ class NewerProtocolProbe:
         else:
             print("  No ChangeIndications received.")
 
+        self._dump_sensor_frames()
+
         print("\n--- Cleaning up subscriptions ---")
         for prod, port in subscribed:
             if not self.client.is_connected:
                 break
             await self._unsubscribe_port(prod, port)
             await asyncio.sleep(0.1)
+
+    def _dump_sensor_frames(self) -> None:
+        """Persist every captured SensorData.b frame to a JSONL file so a
+        full run survives even if the terminal scrolls or the link drops."""
+        if not self.sensor_frames:
+            return
+        path = f"condor_sensordata_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                for frame in self.sensor_frames:
+                    fh.write(json.dumps(frame, ensure_ascii=False) + "\n")
+            print(f"\n  {len(self.sensor_frames)} SensorData.b frame(s) written to {path}")
+        except OSError as e:
+            print(f"\n  !!! Could not write SensorData.b capture: {e}")
 
 
 # =====================================================================
@@ -1115,6 +1236,7 @@ async def scan_device(
     mtu: int | None = None,
     listen_seconds: int = 0,
     subscribe_binary: bool = False,
+    enable_sensors: int | None = None,
     json_path: str | None = None,
     adv_name: str | None = None,
     connect_target=None,
@@ -1227,6 +1349,7 @@ async def scan_device(
                 client,
                 listen_seconds=listen_seconds,
                 subscribe_binary=subscribe_binary,
+                enable_sensors=enable_sensors,
             )
             await probe.run()
             condor_capture = probe.capture
@@ -1310,6 +1433,20 @@ async def main():
         ),
     )
     parser.add_argument(
+        "--enable-sensors",
+        type=lambda s: int(s, 0),
+        default=None,
+        metavar="MASK",
+        help=(
+            "Before listening, write {\"Sensors\": MASK} to the SensorData "
+            "port to switch on the telemetry substream, then log the raw "
+            "SensorData.b frames. MASK is a bitmask: 1=pressure, 2=temperature, "
+            "4=gyroscope (e.g. 3 for pressure+temperature, 7 for all). Implies "
+            "--subscribe-binary. Run a session and apply brush-head pressure "
+            "during the --listen window to capture real frames."
+        ),
+    )
+    parser.add_argument(
         "--json",
         metavar="PATH",
         default=None,
@@ -1344,6 +1481,7 @@ async def main():
         mtu=args.mtu,
         listen_seconds=args.listen,
         subscribe_binary=args.subscribe_binary,
+        enable_sensors=args.enable_sensors,
         json_path=args.json,
         adv_name=adv_name,
         connect_target=device,

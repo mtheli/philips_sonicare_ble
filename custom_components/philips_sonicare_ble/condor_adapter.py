@@ -20,11 +20,62 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from .const import HANDLE_STATES, INTENSITIES
+from .const import (
+    HANDLE_STATES,
+    INTENSITIES,
+    PRESSURE_ALARM_STATES,
+    SENSOR_FRAME_GYROSCOPE,
+    SENSOR_FRAME_PRESSURE,
+    SENSOR_FRAME_TEMPERATURE,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 _PortMapper = Callable[[dict[str, Any], dict[str, Any]], None]
+
+
+def map_sensor_frame(body: bytes) -> dict[str, Any]:
+    """Decode one ``SensorData.b`` binary telemetry frame into coordinator keys.
+
+    The frame type is a little-endian u16 at offset 0 and the tail is
+    type-specific:
+
+    * **Pressure** (type 1): a 7-byte frame carries a raw value at bytes 4-5
+      (little-endian grams) and the state at byte 6; the shorter on-change
+      frame most Condor firmwares actually send carries only the state at
+      byte 4 and no value. Frames below 5 bytes are counter-only heartbeats
+      and map to nothing.
+    * **Temperature** (type 2): degrees Celsius as a signed byte at offset 5.
+      Byte 4 is a ``/256`` fraction that truncates to zero, so byte 5 is the
+      whole value.
+    * **IMU** (type 4): not surfaced — the pressure-only Condor models expose
+      no gyroscope, and the stream is high-rate telemetry, not a HA sensor.
+
+    ``pressure_state`` reuses ``PRESSURE_ALARM_STATES``: value ``2`` is the
+    over-pressure ("too hard") signal, everything else reads as ok.
+    """
+    if len(body) < 2:
+        return {}
+    frame_type = int.from_bytes(body[0:2], "little")
+    out: dict[str, Any] = {}
+    if frame_type == SENSOR_FRAME_PRESSURE:
+        if len(body) >= 7:
+            out["pressure"] = int.from_bytes(body[4:6], "little", signed=True)
+            state = body[6]
+        elif len(body) >= 5:
+            state = body[4]
+        else:
+            return {}
+        out["pressure_alarm"] = state
+        out["pressure_state"] = PRESSURE_ALARM_STATES.get(state)
+    elif frame_type == SENSOR_FRAME_TEMPERATURE:
+        if len(body) >= 6:
+            out["temperature"] = int.from_bytes(body[5:6], "little", signed=True)
+    elif frame_type == SENSOR_FRAME_GYROSCOPE:
+        # Present in the format for completeness; pressure-only Condor models
+        # never send it and we expose no IMU entities for them.
+        return {}
+    return out
 
 
 # Universal routine-id → mode-label table used by all Condor devices.
