@@ -286,11 +286,18 @@ def number_of_sectors_for_model(model: str) -> int:
 # Mode-specific sector visit sequences for premium handles.
 # Values are 1-indexed anatomical sector IDs. White+ and Gum Health revisit
 # the front-teeth sectors (2, 5) after the initial sweep.
+# Condor devices report the same routines under different labels
+# (white / gum_care / deep_clean, see CONDOR_BRUSHING_MODES) — both label
+# sets must be present here, otherwise those modes fall back to the uniform
+# 6-sector split and the sector changes lag the handle's pacing.
 MODE_SECTOR_SEQUENCES: dict[str, list[int]] = {
     "clean":           [1, 2, 3, 4, 5, 6],
     "white_plus":      [1, 2, 3, 4, 5, 6, 2, 5],
+    "white":           [1, 2, 3, 4, 5, 6, 2, 5],
     "gum_health":      [1, 2, 3, 4, 5, 6, 1, 3, 4, 6],
+    "gum_care":        [1, 2, 3, 4, 5, 6, 1, 3, 4, 6],
     "deep_clean_plus": [1, 2, 3, 4, 5, 6],
+    "deep_clean":      [1, 2, 3, 4, 5, 6],
     "sensitive":       [1, 2, 3, 4, 5, 6],
     "tongue_care":     [],
 }

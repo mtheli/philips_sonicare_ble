@@ -12,8 +12,14 @@ from __future__ import annotations
 import pytest
 
 from custom_components.philips_sonicare_ble.condor_adapter import (
+    CONDOR_BRUSHING_MODES,
     map_port_props,
     resolve_brushing_mode,
+)
+from custom_components.philips_sonicare_ble.const import (
+    BRUSHING_MODES,
+    MODE_SECTOR_SEQUENCES,
+    current_sector,
 )
 
 # Golden mapping of every port present in the fixture to the flat
@@ -192,3 +198,39 @@ from custom_components.philips_sonicare_ble.condor_adapter import map_sensor_fra
 )
 def test_map_sensor_frame(frame_hex, expected):
     assert map_sensor_frame(bytes.fromhex(frame_hex)) == expected
+
+
+# ---------------------------------------------------------------------------
+# Sector derivation — Condor mode labels
+# ---------------------------------------------------------------------------
+
+
+def test_every_mode_label_has_a_sector_sequence():
+    """Every label either adapter can emit must resolve in the sequence
+    table — a missing key silently degrades to the uniform 6-sector split,
+    which lags the handle's pacing on multi-step routines (White/Gum Care).
+    """
+    labels = set(BRUSHING_MODES.values()) | set(CONDOR_BRUSHING_MODES.values())
+    assert labels <= MODE_SECTOR_SEQUENCES.keys()
+
+
+@pytest.mark.parametrize(
+    "mode, elapsed, routine, expected",
+    [
+        # White: 8 × 20 s steps over 160 s — sector 2 starts at 20 s, and
+        # the last two steps revisit the front-teeth sectors 2 and 5.
+        ("white", 19, 160, 1),
+        ("white", 20, 160, 2),
+        ("white", 125, 160, 2),
+        ("white", 145, 160, 5),
+        # Gum Care: 10 × 20 s steps over 200 s, revisiting 1/3/4/6 at the end.
+        ("gum_care", 20, 200, 2),
+        ("gum_care", 120, 200, 1),
+        ("gum_care", 199, 200, 6),
+        # Deep Clean: 6 × 30 s steps over 180 s.
+        ("deep_clean", 29, 180, 1),
+        ("deep_clean", 30, 180, 2),
+    ],
+)
+def test_current_sector_condor_labels(mode, elapsed, routine, expected):
+    assert current_sector("HX742X", mode, elapsed, routine) == expected
