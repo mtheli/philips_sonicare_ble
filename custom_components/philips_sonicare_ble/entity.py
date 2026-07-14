@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
 
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.components.bluetooth import async_last_service_info
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -25,13 +23,16 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
-class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator], RestoreEntity):
-    """Base class for all Philips Sonicare entities."""
+class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator]):
+    """Base class for all Philips Sonicare entities.
+
+    State restoration across restarts happens at the coordinator level (a
+    ``Store`` with native values), not per entity — see
+    ``PhilipsSonicareCoordinator.async_load_stored_data``.
+    """
 
     _attr_has_entity_name = True
     _data_key: str | None = None
-    _restore_type: type = str  # int, float, or str
-    _static_sensor: bool = False
 
     def __init__(
         self,
@@ -63,32 +64,6 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator], Resto
             suggested_area=entry.data.get(CONF_AREA) or None,
         )
 
-    async def async_added_to_hass(self) -> None:
-        """Restore last known state into coordinator data."""
-        await super().async_added_to_hass()
-        if self._data_key is None:
-            return
-        if self.coordinator.data and self.coordinator.data.get(self._data_key) is not None:
-            return
-        last_state = await self.async_get_last_state()
-        if not last_state or last_state.state in (None, "unknown", "unavailable"):
-            return
-        self._restore_from_state(last_state.state)
-
-    def _restore_from_state(self, state: str) -> None:
-        """Restore a coordinator data key from a state string."""
-        if self.coordinator.data is None:
-            self.coordinator.data = {}
-        try:
-            if self._restore_type is int:
-                self.coordinator.data[self._data_key] = int(state)
-            elif self._restore_type is float:
-                self.coordinator.data[self._data_key] = float(state)
-            else:
-                self.coordinator.data[self._data_key] = state
-        except (ValueError, TypeError):
-            _LOGGER.debug("Could not restore %s from '%s'", self._data_key, state)
-
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
@@ -109,38 +84,26 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator], Resto
 
     @property
     def available(self) -> bool:
-        """Return True if the device is reachable."""
-        # Static sensors stay available as long as they have data
-        if self._static_sensor and self._data_key:
-            if self.coordinator.data and self.coordinator.data.get(self._data_key) is not None:
-                return True
+        """Return True once the device has ever been seen.
 
-        # ESP bridge: use transport state and last_seen, no BLE advertisement check
-        if self._is_esp_bridge:
-            if self.coordinator.transport.is_connected:
-                return True
-            last_seen = self.coordinator.data.get("last_seen") if self.coordinator.data else None
-            if last_seen:
-                return (datetime.now(timezone.utc) - last_seen).total_seconds() < 600
-            return False
-
-        # Direct BLE: check if device is advertising
-        service_info = async_last_service_info(self.hass, self._device_id)
-        if service_info is not None:
+        The brush is a sleepy device — it is out of BLE reach between
+        sessions as its normal state, so availability can't hinge on being
+        currently reachable (same reasoning as core's Oral-B integration).
+        Once it has been seen — live or restored from storage — the last
+        known values stay available; live connectivity is exposed on the
+        Connection sub-device instead.
+        """
+        if self.coordinator.data and self.coordinator.data.get("last_seen"):
             return True
 
-        # Fallback: check last_seen freshness (10 min timeout)
-        last_seen = self.coordinator.data.get("last_seen") if self.coordinator.data else None
-        if last_seen:
-            return (datetime.now(timezone.utc) - last_seen).total_seconds() < 600
-
-        return False
+        # Never seen (fresh install): fall back to reachability
+        if self._is_esp_bridge:
+            return self.coordinator.transport.is_connected
+        return async_last_service_info(self.hass, self._device_id) is not None
 
 
 class PhilipsBrushHeadEntity(PhilipsSonicareEntity):
     """Base class for entities on the Brush Head sub-device."""
-
-    _static_sensor = True
 
     def __init__(
         self,

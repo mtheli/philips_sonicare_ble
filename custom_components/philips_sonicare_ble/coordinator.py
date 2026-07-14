@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.components import bluetooth as ha_bluetooth
@@ -90,6 +91,35 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 _RAW_LOGGER = logging.getLogger(__name__ + ".raw")
 _RAW_LOGGER.setLevel(logging.WARNING)  # silent unless explicitly enabled
+
+STORAGE_VERSION = 1
+# Debounced: brushing sessions update data every second, so the actual disk
+# write lands once, shortly after the burst ends. Store flushes any pending
+# save on HA shutdown by itself.
+STORAGE_SAVE_DELAY = 10
+
+# Live session state is not persisted — the brush is asleep again by the time
+# HA comes back up, so restoring "brushing" would be wrong and would unlock
+# the session-gated sensors (pressure/temperature) with stale values.
+UNPERSISTED_KEYS = {
+    "handle_state",
+    "handle_state_value",
+    "brushing_state",
+    "brushing_state_value",
+    "pressure",
+    "pressure_alarm",
+    "pressure_state",
+    "temperature",
+}
+
+
+def _storage_key(entry_id: str) -> str:
+    return f"{DOMAIN}.{entry_id}"
+
+
+async def async_remove_stored_data(hass: HomeAssistant, entry_id: str) -> None:
+    """Delete the persisted device data of a removed config entry."""
+    await Store(hass, STORAGE_VERSION, _storage_key(entry_id)).async_remove()
 
 
 class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -193,6 +223,13 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._sensor_subscribed = False
         self._brushhead_read_pending = False
         self._live_cb: Callable | None = None
+        # Persists the last known device data across HA restarts — the brush
+        # sleeps between sessions, so without this every entity would stay
+        # empty until the next time it is used (mirrors what core's
+        # bluetooth.passive_update_processor store does for passive devices).
+        self._store: Store[dict[str, Any]] = Store(
+            hass, STORAGE_VERSION, _storage_key(entry.entry_id)
+        )
 
         _LOGGER.debug(
             "Initializing coordinator for %s (transport: %s)",
@@ -252,6 +289,51 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "last_seen": None,
             "brushhead_counterfeit": False,
         }
+
+    # ------------------------------------------------------------------
+    # Persisted device data
+    # ------------------------------------------------------------------
+
+    async def async_load_stored_data(self) -> None:
+        """Merge the persisted device data into the initial dataset.
+
+        Called once during setup, before live monitoring starts, so the
+        entities come up with the last known values instead of empty ones.
+        Live reads overwrite these as soon as the brush is next seen.
+        """
+        stored = await self._store.async_load()
+        if not stored:
+            return
+        restored = {k: v for k, v in stored.items() if k not in UNPERSISTED_KEYS}
+        last_seen = restored.get("last_seen")
+        if isinstance(last_seen, str):
+            try:
+                restored["last_seen"] = datetime.fromisoformat(last_seen)
+            except ValueError:
+                restored.pop("last_seen")
+        self.data = {**(self.data or {}), **restored}
+        _LOGGER.debug(
+            "Restored %d stored values for %s", len(restored), self.address
+        )
+
+    @callback
+    def async_set_updated_data(self, data: dict[str, Any]) -> None:
+        """Publish new data and schedule a debounced save to disk."""
+        super().async_set_updated_data(data)
+        self._store.async_delay_save(self._data_to_save, STORAGE_SAVE_DELAY)
+
+    @callback
+    def _data_to_save(self) -> dict[str, Any]:
+        """Serialize the persistable subset of ``self.data`` for storage."""
+        data = self.data or {}
+        out = {
+            k: v
+            for k, v in data.items()
+            if not k.startswith("_") and k not in UNPERSISTED_KEYS
+        }
+        if isinstance(out.get("last_seen"), datetime):
+            out["last_seen"] = out["last_seen"].isoformat()
+        return out
 
     @property
     def supports_writes(self) -> bool:

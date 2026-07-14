@@ -30,7 +30,7 @@ from .const import (
     CHAR_SERVICE_MAP,
     SVC_CONDOR,
 )
-from .coordinator import PhilipsSonicareCoordinator
+from .coordinator import PhilipsSonicareCoordinator, async_remove_stored_data
 from .helpers import esphome_service_id
 from .transport import BleakTransport, EspBridgeTransport
 
@@ -225,7 +225,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Non-blocking first refresh — the toothbrush sleeps most of the time,
     # so blocking startup for a device that may not be reachable is not worth it.
-    # Sensors will show "Unknown" briefly until the device wakes up.
+    # Entities come up with the persisted last-known values (or "Unknown" on a
+    # fresh install) until the device next wakes up.
+    await coordinator.async_load_stored_data()
     coordinator.async_set_updated_data(coordinator.data or {})
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -443,6 +445,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     unreachable we log and return quietly — HA will delete the entry
     regardless of what this returns.
     """
+    await async_remove_stored_data(hass, entry.entry_id)
+
     transport = entry.data.get(CONF_TRANSPORT_TYPE)
 
     if transport == TRANSPORT_ESP_BRIDGE:

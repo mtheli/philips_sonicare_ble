@@ -187,7 +187,6 @@ class SonicareBatterySensor(PhilipsSonicareEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = PERCENTAGE
     _data_key = "battery"
-    _restore_type = int
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -344,7 +343,6 @@ class SonicareBrushingTimeSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_suggested_display_precision = 0
     _data_key = "brushing_time"
-    _restore_type = int
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -369,7 +367,6 @@ class SonicareRoutineLengthSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_native_unit_of_measurement = UnitOfTime.SECONDS
     _attr_suggested_display_precision = 0
     _data_key = "routine_length"
-    _restore_type = int
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -491,7 +488,6 @@ class SonicareSessionIdSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:identifier"
     _data_key = "session_id"
-    _restore_type = int
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -514,7 +510,6 @@ class SonicareLatestSessionIdSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:identifier"
     _data_key = "latest_session_id"
-    _restore_type = int
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -537,8 +532,6 @@ class SonicareSessionCountSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:counter"
     _data_key = "session_count"
-    _restore_type = int
-    _static_sensor = True
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -564,8 +557,6 @@ class SonicareMotorRuntimeSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_suggested_display_precision = 0
     _attr_icon = "mdi:engine"
     _data_key = "motor_runtime"
-    _restore_type = int
-    _static_sensor = True
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -589,7 +580,6 @@ class SonicareBrushHeadWearSensor(PhilipsBrushHeadEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:chart-donut"
     _data_key = "brushhead_wear_pct"
-    _restore_type = float
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -612,7 +602,6 @@ class SonicareBrushHeadUsageSensor(PhilipsBrushHeadEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:timer-sand"
     _data_key = "brushhead_lifetime_usage"
-    _restore_type = int
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -635,7 +624,6 @@ class SonicareBrushHeadLimitSensor(PhilipsBrushHeadEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:timer-sand-complete"
     _data_key = "brushhead_lifetime_limit"
-    _restore_type = int
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -702,7 +690,6 @@ class SonicareBrushHeadRingIdSensor(PhilipsBrushHeadEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:nfc-variant"
     _data_key = "brushhead_ring_id"
-    _restore_type = int
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -725,7 +712,6 @@ class SonicareBrushHeadNfcVersionSensor(PhilipsBrushHeadEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:nfc"
     _data_key = "brushhead_nfc_version"
-    _restore_type = int
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -749,7 +735,6 @@ class SonicareBrushHeadTypeSensor(PhilipsBrushHeadEntity, SensorEntity):
     _attr_options = list(BRUSHHEAD_TYPES.values())
     _attr_icon = "mdi:toothbrush"
     _data_key = "brushhead_type"
-    _restore_type = str
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -794,7 +779,6 @@ class SonicareModelNumberSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:information-outline"
     _data_key = "model_number"
-    _static_sensor = True
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -817,7 +801,6 @@ class SonicareFirmwareSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:chip"
     _data_key = "firmware"
-    _static_sensor = True
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -844,14 +827,6 @@ class SonicareLastSeenSensor(PhilipsConnectionEntity, SensorEntity):
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{self._device_id}_last_seen"
-
-    def _restore_from_state(self, state: str) -> None:
-        if self.coordinator.data is None:
-            self.coordinator.data = {}
-        try:
-            self.coordinator.data["last_seen"] = datetime.fromisoformat(state)
-        except (ValueError, TypeError):
-            pass
 
     @property
     def native_value(self) -> datetime | None:
@@ -933,7 +908,6 @@ class SonicarePressureSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "g"
     _data_key = "pressure"
-    _restore_type = int
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -963,7 +937,6 @@ class SonicareTemperatureSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_native_unit_of_measurement = "\u00b0C"
     _attr_state_class = SensorStateClass.MEASUREMENT
     _data_key = "temperature"
-    _restore_type = float
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
@@ -1025,8 +998,6 @@ class SonicareHandleTimeSensor(PhilipsSonicareEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:clock-outline"
     _data_key = "handle_time"
-    _restore_type = int
-    _static_sensor = True
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
