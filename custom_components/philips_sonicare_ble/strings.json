@@ -81,7 +81,7 @@
       },
       "not_paired": {
         "title": "BLE Pairing Required",
-        "description": "Your toothbrush at `{address}` requires **BLE bonding** before characteristics can be read. Auto-pairing was not successful.\n\nPlease pair manually via SSH:\n\n```\nbluetoothctl pair {address}\nbluetoothctl trust {address}\n```\n\nMake sure the toothbrush is **awake** (press button) while pairing. Then click **Retry**.",
+        "description": "Your toothbrush at `{address}` requires **BLE bonding** before characteristics can be read. Auto-pairing was not successful.\n\nPlease pair manually via SSH. Start `bluetoothctl` interactively and register a pairing agent first — a plain `bluetoothctl pair` registers no agent, and some models reject the pairing without one:\n\n```\nbluetoothctl\nagent NoInputNoOutput\ndefault-agent\npair {address}\ntrust {address}\nexit\n```\n\nMake sure the toothbrush is **awake** (press button) while pairing. Then click **Retry**.",
         "submit": "Retry"
       }
     },

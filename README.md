@@ -59,6 +59,7 @@ See [Configuration](#configuration) for setup instructions.
 | HX991B | :white_check_mark: | :white_check_mark: | Community ([#9](https://github.com/mtheli/philips_sonicare_ble/issues/9#issuecomment-4321642114), [#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)) |
 | HX991K | — | :white_check_mark: | Community ([#20](https://github.com/mtheli/philips_sonicare_ble/issues/20)) |
 | [HX991M](https://www.usa.philips.com/c-p/HX9911_91/9000-series-sonic-electric-toothbrush) | :white_check_mark: | :white_check_mark: | Community ([forum](http://community-smarthome.com/t/philips-sonicare-ble-zahnbuerste-in-home-assistant-mit-echtzeit-sensoren/10555/17), [#7](https://github.com/mtheli/philips_sonicare_ble/issues/7)) |
+| HX991X | :white_check_mark: | — | Community ([#25](https://github.com/mtheli/philips_sonicare_ble/issues/25)) |
 | **DiamondClean Prestige** | | | |
 | [HX999X](https://www.usa.philips.com/c-p/HX9990_11/sonicare-9900-prestige-power-toothbrush-with-senseiq) | :white_check_mark: | :white_check_mark: | Maintainer, Community ([forum](https://community.home-assistant.io/t/philips-sonicare-ble-toothbrush-integration-with-30-sensors/999515/5)) |
 | **Series 7100** | | | |
