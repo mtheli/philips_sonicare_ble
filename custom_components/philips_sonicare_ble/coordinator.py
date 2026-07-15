@@ -84,7 +84,6 @@ from .const import (
     DEFAULT_NOTIFY_THROTTLE,
     CONF_WARN_COUNTERFEIT,
     DEFAULT_WARN_COUNTERFEIT,
-    COUNTERFEIT_SERIAL,
     COUNTERFEIT_DETECTION_DELAY,
 )
 
@@ -575,7 +574,11 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         usage = new_data.get("brushhead_lifetime_usage")
         if limit and usage is not None and limit > 0:
             new_data["brushhead_wear_pct"] = min(round(usage / limit * 100, 1), 100.0)
-        elif usage == 0:
+        elif usage == 0 and self._is_valid_serial(
+            new_data.get("brushhead_serial")
+        ):
+            # usage 0 only means "brand-new head" while a head is actually
+            # attached (valid serial); a bare handle reports usage 0 too.
             new_data["brushhead_wear_pct"] = 0.0
 
         # Change detection: only update last_seen when data actually changed
@@ -619,8 +622,14 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ------------------------------------------------------------------
 
     def _is_valid_serial(self, serial: str | None) -> bool:
-        """True when the serial represents a successfully-read NFC chip."""
-        return serial is not None and serial != COUNTERFEIT_SERIAL
+        """True when the serial represents a successfully-read NFC chip.
+
+        An all-zero serial means no chip was read — either no head is
+        attached or the head carries no readable chip. Its byte length
+        varies per model (7 or 8 bytes), so match the pattern, not a
+        fixed string.
+        """
+        return serial is not None and any(c not in "0:" for c in serial)
 
     def _looks_counterfeit(self, data: dict) -> bool:
         """True when the serial indicates no valid NFC chip was read.
@@ -1089,6 +1098,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Clear all brush head data when head is removed (like OEM app)."""
         if not self.data:
             return
+        self.data["brushhead_serial"] = None
         self.data["brushhead_nfc_version"] = None
         self.data["brushhead_type"] = None
         self.data["brushhead_date"] = None

@@ -548,7 +548,5 @@ DEFAULT_SENSOR_GYROSCOPE = False
 
 CONF_WARN_COUNTERFEIT = "warn_counterfeit_brushhead"
 DEFAULT_WARN_COUNTERFEIT = True
-# All-zero serial reported when no valid NFC chip is detected on the brush head
-COUNTERFEIT_SERIAL = "00:00:00:00:00:00:00"
 # Seconds of active brushing before a missing/invalid serial raises an alert
 COUNTERFEIT_DETECTION_DELAY = 30
