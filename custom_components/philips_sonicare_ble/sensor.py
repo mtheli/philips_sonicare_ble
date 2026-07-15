@@ -27,6 +27,7 @@ from .const import (
     INTENSITIES,
     PRESSURE_ALARM_STATES,
     BRUSHHEAD_TYPES,
+    BRUSHHEAD_TYPE_FAMILY,
     CONF_TRANSPORT_TYPE,
     CONF_SERVICES,
     TRANSPORT_ESP_BRIDGE,
@@ -745,6 +746,14 @@ class SonicareBrushHeadTypeSensor(PhilipsBrushHeadEntity, SensorEntity):
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("brushhead_type")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str] | None:
+        family = BRUSHHEAD_TYPE_FAMILY.get(self.native_value)
+        if not family:
+            return None
+        letter, name = family
+        return {"family_letter": letter, "family_name": name}
 
 
 # ---------------------------------------------------------------------------
