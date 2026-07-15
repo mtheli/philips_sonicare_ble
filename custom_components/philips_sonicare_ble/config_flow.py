@@ -203,6 +203,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._address: str | None = None
         self._name: str | None = None
         self._fetched_data: dict[str, Any] | None = None
+        self._pair_error: str | None = None
         self._transport_type: str = TRANSPORT_BLEAK
         self._esp_device_name: str | None = None
         self._esp_bridge_id: str = ""
@@ -518,6 +519,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             return True
         except PairingError as err:
             _LOGGER.warning("Auto-pairing failed for %s: %s", address, err)
+            # Remember the reason so the not_paired step can show the user
+            # why pairing failed instead of a generic instruction wall.
+            self._pair_error = str(err)
             return False
 
     async def _fetch_with_pair_retry(self, address: str) -> dict[str, Any]:
@@ -2016,10 +2020,14 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "Open a terminal on the machine running Home Assistant "
                 "and run the pairing script:"
             )
+        pair_error = (
+            f"**Last attempt:** {self._pair_error}\n\n" if self._pair_error else ""
+        )
         return {
             "address": self._address or "",
             "pairing_help": pairing_help,
             "pair_cmd": pair_cmd,
+            "pair_error": pair_error,
         }
 
     async def async_step_not_paired(

@@ -218,7 +218,15 @@ async def async_pair_via_existing_client(client, mac: str) -> None:
         try:
             await agent_mgr.call_request_default_agent(AGENT_PATH)
         except DBusError as err:
-            _LOGGER.debug("RequestDefaultAgent failed: %s (continuing)", err)
+            # The default agent is the only bridge for confirming a
+            # just-works pair on a connection bleak opened itself — if
+            # another process holds it, our RequestConfirmation never
+            # fires and pairing fails later with a cryptic "No agent".
+            _LOGGER.warning(
+                "RequestDefaultAgent failed: %s — pairing may fail if "
+                "another process holds the default agent",
+                err,
+            )
 
         _LOGGER.info("Pairing %s on existing connection ...", mac)
         try:
@@ -349,10 +357,16 @@ async def async_pair_and_trust(mac: str) -> None:
         except DBusError as err:
             msg = str(err)
             if "AuthenticationFailed" in msg:
+                # A stale bond is already removed before this pair attempt,
+                # so an auth failure here is a fresh rejection — usually the
+                # brush was not awake/in range, or the host needs the pairing
+                # agent the bundled script registers.
                 raise PairingError(
-                    "Authentication failed — the toothbrush may have a stale "
-                    "bond from a previous system. Try turning the toothbrush "
-                    "off and back on, then retry."
+                    "Authentication failed while pairing — make sure the "
+                    "toothbrush is awake (press the power button and take it "
+                    "off the charger) and retry. If it keeps failing, run the "
+                    "pairing script shown on the next screen; it registers "
+                    "the pairing agent some hosts need."
                 ) from err
             if "AlreadyExists" in msg:
                 _LOGGER.info("Device %s already paired", mac)
