@@ -122,6 +122,52 @@ def test_used_head_reports_percentage(hass) -> None:
     )
 
     assert new_data["brushhead_wear_pct"] == 25.0
+    # No routine length known yet: 120 s default → (226800-56700)/120
+    assert new_data["brushhead_sessions_left"] == 1417
+
+
+def test_sessions_left_uses_handle_routine_length(hass) -> None:
+    coordinator = make_coordinator(hass)
+
+    new_data = coordinator._apply_parsed(
+        {
+            "brushhead_serial": SERIAL_VALID,
+            "brushhead_lifetime_limit": 43200,
+            "brushhead_lifetime_usage": 21600,
+            "routine_length": 180,
+        }
+    )
+
+    assert new_data["brushhead_sessions_left"] == 120
+
+
+def test_sessions_left_never_negative(hass) -> None:
+    """An overused head (usage past the limit) reports 0, not a negative."""
+    coordinator = make_coordinator(hass)
+
+    new_data = coordinator._apply_parsed(
+        {
+            "brushhead_serial": SERIAL_VALID,
+            "brushhead_lifetime_limit": 43200,
+            "brushhead_lifetime_usage": 50000,
+        }
+    )
+
+    assert new_data["brushhead_sessions_left"] == 0
+
+
+def test_bare_handle_reports_no_sessions(hass) -> None:
+    coordinator = make_coordinator(hass)
+
+    new_data = coordinator._apply_parsed(
+        {
+            "brushhead_serial": SERIAL_ZERO_8,
+            "brushhead_lifetime_limit": 0,
+            "brushhead_lifetime_usage": 0,
+        }
+    )
+
+    assert new_data["brushhead_sessions_left"] is None
 
 
 def test_bare_handle_type_zero_is_not_adaptive_clean(hass) -> None:

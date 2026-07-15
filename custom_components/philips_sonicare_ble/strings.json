@@ -194,6 +194,7 @@
       "session_count": { "name": "Session Count" },
       "motor_runtime": { "name": "Motor Runtime" },
       "brushhead_wear": { "name": "Wear" },
+      "brushhead_sessions_left": { "name": "Sessions Left" },
       "brushhead_usage": { "name": "Usage" },
       "brushhead_limit": { "name": "Lifetime Limit" },
       "brushhead_serial": { "name": "Serial" },

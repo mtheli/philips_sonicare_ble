@@ -277,6 +277,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "brushhead_lifetime_limit": None,
             "brushhead_lifetime_usage": None,
             "brushhead_wear_pct": None,
+            "brushhead_sessions_left": None,
             "brushhead_serial": None,
             "brushhead_date": None,
             "brushhead_nfc_version": None,
@@ -574,6 +575,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         usage = new_data.get("brushhead_lifetime_usage")
         if limit and usage is not None and limit > 0:
             new_data["brushhead_wear_pct"] = min(round(usage / limit * 100, 1), 100.0)
+            # Estimated sessions left on the head: remaining lifetime seconds
+            # divided by the handle's routine length (120 s when unknown).
+            routine = new_data.get("routine_length") or 120
+            new_data["brushhead_sessions_left"] = max(0, (limit - usage) // routine)
         elif usage == 0 and self._is_valid_serial(
             new_data.get("brushhead_serial")
         ):
@@ -1114,6 +1119,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.data["brushhead_lifetime_limit"] = None
         self.data["brushhead_lifetime_usage"] = None
         self.data["brushhead_wear_pct"] = None
+        self.data["brushhead_sessions_left"] = None
         self.data["brushhead_ring_id"] = None
         self.data["brushhead_payload"] = None
         _LOGGER.info("%s: brush head removed — data cleared", self.address)

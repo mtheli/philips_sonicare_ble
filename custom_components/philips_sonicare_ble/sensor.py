@@ -146,6 +146,7 @@ async def async_setup_entry(
     if SVC_BRUSHHEAD.lower() in services:
         entities.extend([
             SonicareBrushHeadWearSensor(coordinator, entry),
+            SonicareBrushHeadSessionsSensor(coordinator, entry),
             SonicareBrushHeadUsageSensor(coordinator, entry),
             SonicareBrushHeadLimitSensor(coordinator, entry),
             SonicareBrushHeadSerialSensor(coordinator, entry),
@@ -158,6 +159,7 @@ async def async_setup_entry(
     elif SVC_CONDOR.lower() in services:
         entities.extend([
             SonicareBrushHeadWearSensor(coordinator, entry),
+            SonicareBrushHeadSessionsSensor(coordinator, entry),
             SonicareBrushHeadUsageSensor(coordinator, entry),
             SonicareBrushHeadLimitSensor(coordinator, entry),
             SonicareBrushHeadSerialSensor(coordinator, entry),
@@ -723,6 +725,28 @@ class SonicareBrushHeadNfcVersionSensor(PhilipsBrushHeadEntity, SensorEntity):
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("brushhead_nfc_version")
+
+
+# ---------------------------------------------------------------------------
+# Brush Head Sessions Left
+# ---------------------------------------------------------------------------
+class SonicareBrushHeadSessionsSensor(PhilipsBrushHeadEntity, SensorEntity):
+    """Estimated brushing sessions left on the head."""
+
+    _attr_translation_key = "brushhead_sessions_left"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:counter"
+    _data_key = "brushhead_sessions_left"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_brushhead_sessions_left"
+
+    @property
+    def native_value(self) -> int | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("brushhead_sessions_left")
 
 
 # ---------------------------------------------------------------------------

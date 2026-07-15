@@ -214,6 +214,9 @@
       "brushhead_wear": {
         "name": "Wear"
       },
+      "brushhead_sessions_left": {
+        "name": "Sessions Left"
+      },
       "brushhead_usage": {
         "name": "Usage"
       },
