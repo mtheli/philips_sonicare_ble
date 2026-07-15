@@ -124,6 +124,51 @@ def test_used_head_reports_percentage(hass) -> None:
     assert new_data["brushhead_wear_pct"] == 25.0
 
 
+def test_bare_handle_type_zero_is_not_adaptive_clean(hass) -> None:
+    """The type char reads 0x00 on a bare handle — 0 is also Adaptive Clean."""
+    coordinator = make_coordinator(hass)
+
+    new_data = coordinator._apply_parsed(
+        {
+            "brushhead_serial": SERIAL_ZERO_8,
+            "brushhead_type": "adaptive_clean",
+            "brushhead_lifetime_limit": 0,
+            "brushhead_lifetime_usage": 0,
+        }
+    )
+
+    assert new_data["brushhead_type"] is None
+
+
+def test_real_adaptive_clean_head_keeps_type(hass) -> None:
+    coordinator = make_coordinator(hass)
+
+    new_data = coordinator._apply_parsed(
+        {
+            "brushhead_serial": SERIAL_VALID,
+            "brushhead_type": "adaptive_clean",
+            "brushhead_lifetime_limit": 226800,
+            "brushhead_lifetime_usage": 0,
+        }
+    )
+
+    assert new_data["brushhead_type"] == "adaptive_clean"
+
+
+def test_other_type_codes_survive_missing_serial(hass) -> None:
+    """Only the ambiguous zero code is gated on the serial."""
+    coordinator = make_coordinator(hass)
+
+    new_data = coordinator._apply_parsed(
+        {
+            "brushhead_serial": SERIAL_ZERO_8,
+            "brushhead_type": "non_rfid",
+        }
+    )
+
+    assert new_data["brushhead_type"] == "non_rfid"
+
+
 def test_usage_zero_after_head_removal_stays_cleared(hass) -> None:
     """After removal the serial is cleared; later zero reads change nothing."""
     coordinator = make_coordinator(hass)

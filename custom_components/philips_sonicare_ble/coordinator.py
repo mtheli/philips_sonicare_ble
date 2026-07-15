@@ -581,6 +581,15 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # attached (valid serial); a bare handle reports usage 0 too.
             new_data["brushhead_wear_pct"] = 0.0
 
+        # A bare handle answers the type characteristic with 0x00, which is
+        # also the Adaptive Clean code. A genuine Adaptive Clean head always
+        # carries a readable chip, so type 0 without a valid serial is an
+        # empty reading, not a head. Other type codes stay untouched.
+        if new_data.get("brushhead_type") == "adaptive_clean" and not self._is_valid_serial(
+            new_data.get("brushhead_serial")
+        ):
+            new_data["brushhead_type"] = None
+
         # Change detection: only update last_seen when data actually changed
         # or every 30s as heartbeat for availability tracking
         changed = any(
