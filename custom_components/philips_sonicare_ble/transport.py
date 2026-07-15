@@ -140,6 +140,24 @@ def describe_connection_path(
         return type(backend).__name__
     except Exception as err:  # noqa: BLE001
         return f"unknown ({err})"
+
+
+def is_local_bluez_connection(client: BleakClient) -> bool:
+    """Whether a BleakClient connection is carried by the local BlueZ stack.
+
+    Bond state is per-controller: a bond in BlueZ says nothing about an
+    ESPHome proxy's NVS and vice versa. habluetooth routes connects by
+    RSSI, so even a "Direct BLE" probe may ride a remote scanner — any
+    conclusion drawn from an auth error about the *BlueZ* bond is only
+    valid when the connection actually went through BlueZ.
+    """
+    try:
+        backend = getattr(client, "_backend", None)
+        if backend is None:
+            return False
+        return "bluezdbus" in (type(backend).__module__ or "")
+    except Exception:  # noqa: BLE001
+        return False
 ESP_STATUS_EVENT_NAME = "esphome.philips_sonicare_ble_status"
 ESP_SERVICES_EVENT_NAME = "esphome.philips_sonicare_ble_services"
 ESP_READ_TIMEOUT = 5.0
