@@ -1117,10 +1117,14 @@ async def _bluez_agent():
             bus.disconnect()
 
 
-async def _client_pair(client: BleakClient) -> bool:
-    """Run ``client.pair()`` on the live connection. A BlueZ auto-confirm agent
-    must already be registered (see ``_bluez_agent``). Returns True on success.
+async def _client_pair(client: BleakClient, agent_active: bool = True) -> bool:
+    """Run ``client.pair()`` on the live connection. Needs a BlueZ auto-confirm
+    agent; registers one for the duration of the call if ``agent_active`` says
+    none is held already. Returns True on success.
     """
+    if not agent_active:
+        async with _bluez_agent():
+            return await _client_pair(client, agent_active=True)
     try:
         await asyncio.wait_for(client.pair(), timeout=PAIR_TIMEOUT)
     except asyncio.TimeoutError:
@@ -1131,6 +1135,12 @@ async def _client_pair(client: BleakClient) -> bool:
         return False
     print("  Paired (bonded via auto-confirm agent)")
     return True
+
+
+def _has_bluez_bond(address: str) -> bool:
+    """True if BlueZ already holds a bond for ``address``."""
+    want = address.upper()
+    return any(mac.upper() == want for mac, _name in _paired_devices())
 
 
 # ATT/BlueZ error fragments that mean "this read needs a bond/encryption".
@@ -1184,6 +1194,31 @@ async def _read_char(client, char, char_entry, char_info, device_info) -> str:
     return "ok"
 
 
+def _paired_devices() -> list[tuple[str, str]]:
+    """List BlueZ-paired devices as ``(mac, name)`` via bluetoothctl.
+
+    Single home for the ``bluetoothctl devices Paired`` invocation and its
+    line format — every bond check in this script must go through here.
+    Needs bluetoothctl >= 5.65 for the ``Paired`` filter.
+    """
+    if sys.platform != "linux":
+        return []
+    try:
+        listing = subprocess.run(
+            ["bluetoothctl", "devices", "Paired"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    devices: list[tuple[str, str]] = []
+    for line in listing.stdout.splitlines():
+        parts = line.split(maxsplit=2)
+        if len(parts) < 2 or parts[0] != "Device":
+            continue
+        devices.append((parts[1], parts[2] if len(parts) > 2 else ""))
+    return devices
+
+
 def _remove_sonicare_bonds(skip: str | None = None) -> list[str]:
     """Remove paired Sonicare / Philips OHC devices from BlueZ (Linux only).
 
@@ -1198,23 +1233,9 @@ def _remove_sonicare_bonds(skip: str | None = None) -> list[str]:
     what happens when a Condor brush advertises its public identity MAC that
     a prior run already bonded.
     """
-    if sys.platform != "linux":
-        return []
     skip_upper = skip.upper() if skip else None
-    try:
-        listing = subprocess.run(
-            ["bluetoothctl", "devices", "Paired"],
-            capture_output=True, text=True, timeout=5,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return []
-
     removed: list[str] = []
-    for line in listing.stdout.splitlines():
-        parts = line.split(maxsplit=2)
-        if len(parts) < 3 or parts[0] != "Device":
-            continue
-        mac, name = parts[1], parts[2]
+    for mac, name in _paired_devices():
         if skip_upper and mac.upper() == skip_upper:
             continue
         low = name.lower()
@@ -1256,10 +1277,19 @@ async def scan_device(
 
     target = connect_target if connect_target is not None else address
     print(f"Connecting to {address} ...")
-    # Register the pairing agent BEFORE connecting: bonded Classic brushes
-    # (HX999X Prestige) trigger SMP during service discovery, which fails and
-    # drops the link if no agent is present yet.
-    async with _bluez_agent(), BleakClient(target, timeout=30) as client:
+    # Agent policy: register the pairing agent around the connect ONLY for
+    # unbonded first contact — bonded Classic brushes (HX999X Prestige)
+    # trigger SMP during service discovery, which fails and drops the link
+    # if no agent is present yet. On a reconnect to an already bonded brush
+    # the kernel encrypts with the stored LTK and no agent is needed; holding
+    # a default agent there makes bluetoothd treat the brush's SMP frames as
+    # a fresh pairing and reject it ("Pairing Failed 0x0c"). Explicit pair()
+    # calls later register their own agent reactively (_client_pair).
+    bonded = _has_bluez_bond(address)
+    if bonded:
+        print("Existing BlueZ bond found — connecting without pairing agent")
+    agent_ctx = _bluez_agent() if not bonded else contextlib.nullcontext(False)
+    async with agent_ctx as agent_active, BleakClient(target, timeout=30) as client:
         print(f"Connected: {client.is_connected}")
 
         await _negotiate_mtu(client, mtu)
@@ -1282,10 +1312,12 @@ async def scan_device(
         # and DROP the link if forced to pair, others bond (HX9992). So for
         # Legacy we pair reactively: read unencrypted, and pair only when a
         # read comes back with an auth/encryption error.
-        paired = False
-        if has_newer:
+        paired = bonded
+        pair_attempted = False
+        if has_newer and not paired:
             print("Pairing (required for newer-protocol probe) ...")
-            paired = await _client_pair(client)
+            paired = await _client_pair(client, agent_active)
+            pair_attempted = True
             print()
 
         gatt_services: list[dict] = []
@@ -1318,9 +1350,13 @@ async def scan_device(
                     )
                     # First auth failure on a Legacy brush → it wants a bond.
                     # Pair once (agent), then retry this read and continue.
-                    if status == "auth" and not paired and not has_newer:
+                    # Gated on pair_attempted, NOT on paired: a stale host
+                    # bond (brush lost its half) reads as bonded but every
+                    # encrypted read fails — one re-pair is the recovery.
+                    if status == "auth" and not pair_attempted and not has_newer:
                         print("    → read needs encryption, pairing ...")
-                        paired = await _client_pair(client)
+                        paired = await _client_pair(client, agent_active)
+                        pair_attempted = True
                         if paired and client.is_connected:
                             await _read_char(
                                 client, char, char_entry, char_info, device_info
@@ -1461,8 +1497,10 @@ async def main():
 
     adv_name = None
     if args.mac:
-        print(f"Scanning for {args.mac} (10s)...")
-        device = await BleakScanner.find_device_by_address(args.mac, timeout=10)
+        # 20 s, not 10: an idle-awake brush advertises only every 10-30 s,
+        # so a shorter window loses the race even when the brush is awake.
+        print(f"Scanning for {args.mac} (20s — wake the brush now)...")
+        device = await BleakScanner.find_device_by_address(args.mac, timeout=20)
         if not device:
             print(f"Device {args.mac} not found. If it is connected to another process (e.g. bluetoothctl),")
             sys.exit(1)
