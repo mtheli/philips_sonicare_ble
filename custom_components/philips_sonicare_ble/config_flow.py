@@ -80,6 +80,12 @@ from .exceptions import DeviceAsleepException, NotPairedException, TransportErro
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _is_hassio(hass) -> bool:
+    """Check if Home Assistant is running on HAOS / Supervised."""
+    return "hassio" in hass.config.components
+
+
 # Sentinel option in the Direct-BLE picker that switches to free-text entry.
 # Picked when the user wants to type a MAC manually (e.g. an RPA-rotating
 # brush whose current address is not the freshest one in the discovery list).
@@ -1988,6 +1994,34 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     # ------------------------------------------------------------------
     # Pairing fallback (manual instructions)
     # ------------------------------------------------------------------
+    def _not_paired_placeholders(self) -> dict[str, str]:
+        """Description placeholders for the not_paired step.
+
+        The pairing script ships inside the integration, so its /config
+        path is stable; passing the brush address makes it pair that
+        exact device without the interactive picker.
+        """
+        pair_cmd = (
+            "bash /config/custom_components/philips_sonicare_ble/"
+            f"scripts/pair.sh {self._address or ''}"
+        ).strip()
+        if _is_hassio(self.hass):
+            pairing_help = (
+                "Open the **Terminal & SSH** addon "
+                "([install it first](/hassio/addon/core_ssh/info) if needed) "
+                "and run the pairing script:"
+            )
+        else:
+            pairing_help = (
+                "Open a terminal on the machine running Home Assistant "
+                "and run the pairing script:"
+            )
+        return {
+            "address": self._address or "",
+            "pairing_help": pairing_help,
+            "pair_cmd": pair_cmd,
+        }
+
     async def async_step_not_paired(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -2019,17 +2053,13 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
             return self.async_show_form(
                 step_id="not_paired",
-                description_placeholders={
-                    "address": self._address or "",
-                },
+                description_placeholders=self._not_paired_placeholders(),
                 errors=errors,
             )
 
         return self.async_show_form(
             step_id="not_paired",
-            description_placeholders={
-                "address": self._address or "",
-            },
+            description_placeholders=self._not_paired_placeholders(),
         )
 
     # ------------------------------------------------------------------

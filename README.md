@@ -213,6 +213,42 @@ The integration supports three connection methods:
 > [!TIP]
 > Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100) require BLE bonding -- the integration detects this automatically and pairs the device during setup via D-Bus. If auto-pairing is not available (e.g. HAOS without D-Bus), manual pairing instructions are shown. Series 7100 brushes also rotate their advertised BLE address (RPA) every few minutes, so an unbonded brush appears under different MACs on each scan; bonding pins it to a stable identity. Simply close the Sonicare phone app to free the BLE connection.
 
+<details>
+<summary>Manual Pairing (fallback when auto-pairing fails)</summary>
+
+If the config flow reports that auto-pairing was not successful, you have two options. Run them via the **Terminal & SSH** addon on HAOS, or any shell on the machine running Home Assistant.
+
+#### Automated Pairing Script
+
+```bash
+bash /config/custom_components/philips_sonicare_ble/scripts/pair.sh
+```
+
+The script scans for nearby Sonicare toothbrushes, lets you choose which one to pair, and handles the `bluetoothctl` agent setup required for bonding. You can also pair a specific address directly:
+
+```bash
+bash /config/custom_components/philips_sonicare_ble/scripts/pair.sh AA:BB:CC:11:22:33
+```
+
+Keep the toothbrush awake (press the power button) while the script runs -- it is not reachable while sitting on the charger.
+
+#### Manual Pairing with `bluetoothctl`
+
+Start an interactive session and register a pairing agent first -- a plain `bluetoothctl pair` registers no agent, and some models reject the pairing without one:
+
+```
+bluetoothctl
+agent NoInputNoOutput
+default-agent
+pair AA:BB:CC:11:22:33
+trust AA:BB:CC:11:22:33
+exit
+```
+
+Then click **Retry** in the config flow.
+
+</details>
+
 ### Option B: ESP32 BLE Bridge
 
 If your Home Assistant host is too far from the toothbrush for a direct Bluetooth connection, you can use an [ESP32](https://esphome.io/components/esp32.html) as a wireless BLE bridge. The ESP32 connects to the toothbrush and relays data to HA over WiFi.
