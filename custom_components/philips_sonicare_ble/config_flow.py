@@ -878,6 +878,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         options: list[SelectOptionDict] = []
         self._probed_bridges = {}
         for entry in esphome_entries:
+            if self._esp_entry_unreachable(entry, "esp_select"):
+                continue
             device_name = entry.data.get("device_name")
             if not device_name:
                 continue
@@ -978,6 +980,32 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             return None
         finally:
             unsub()
+
+    @staticmethod
+    def _esp_entry_unreachable(entry: ConfigEntry, context: str) -> bool:
+        """True when an ESPHome entry cannot serve a bridge probe right now.
+
+        Disabled bridges cannot hold a connection, and bridges whose
+        ESPHome API link is down cannot answer — probing either only burns
+        the probe timeout (their stale services may still be registered,
+        so the service-based detection alone would wrongly pick them up).
+        runtime_data is ESPHome's RuntimeEntryData; fall back to probing
+        if the attribute layout ever changes.
+        """
+        if entry.disabled_by:
+            _LOGGER.debug(
+                "%s: bridge check — skipping disabled ESPHome entry '%s'",
+                context, entry.title,
+            )
+            return True
+        runtime = getattr(entry, "runtime_data", None)
+        if runtime is not None and getattr(runtime, "available", True) is False:
+            _LOGGER.debug(
+                "%s: bridge check — skipping offline ESPHome entry '%s'",
+                context, entry.title,
+            )
+            return True
+        return False
 
     async def _probe_sonicare_bridges(
         self, esp_device_name: str, bridge_ids: list[str],
@@ -1130,6 +1158,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         target = target_mac.upper()
         esphome_entries = self.hass.config_entries.async_entries("esphome")
         for entry in esphome_entries:
+            if self._esp_entry_unreachable(entry, target):
+                continue
             device_name = entry.data.get("device_name")
             if not device_name:
                 continue
