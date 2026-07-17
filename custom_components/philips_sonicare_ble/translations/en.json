@@ -40,12 +40,20 @@
       },
       "esp_select_device": {
         "title": "Select BLE Device",
-        "description": "This ESP bridge has multiple Philips devices connected. Select the device you want to add.\n\n{legend}",
+        "description": "This ESP bridge hosts multiple Sonicare toothbrushes. Select the one you want to add.\n\n{legend}",
         "data": {
           "esp_bridge_id": "BLE Device"
         },
         "data_description": {
           "esp_bridge_id": "{pair_hint}"
+        }
+      },
+      "esp_slot_action": {
+        "title": "Bonded toothbrush found",
+        "description": "The slot **{target}** is already bonded to a toothbrush on the bridge, but it isn't set up in Home Assistant yet.\n\nWhat would you like to do?",
+        "menu_options": {
+          "slot_setup": "Set up this toothbrush",
+          "slot_unpair": "Unpair it from the bridge"
         }
       },
       "esp_bridge_status": {
@@ -60,12 +68,12 @@
       },
       "request_pair": {
         "title": "Pair toothbrush with bridge",
-        "description": "Slot **{target}** has no toothbrush bonded yet.\n\n1. **Switch on** the Sonicare you want to bond and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.\n2. Click **Start pairing**. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.",
+        "description": "{notice}Slot **{target}** has no toothbrush bonded yet.\n\n1. **Switch on** the Sonicare you want to bond and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.\n2. Click **Start pairing**. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.",
         "submit": "Start pairing"
       },
       "reset_bridge": {
         "title": "Reset bridge bond",
-        "description": "Bridge **{device_name}** is currently bonded to **{identity_address}**.\n\nClicking **Submit** will remove the BLE bond on the bridge and clear the saved identity. After that you can pair a different Sonicare.\n\nThe Sonicare itself will keep its end of the bond — if you re-pair this same brush later, you may have to remove the entry there too (Settings → Forget device on the brush, if available).",
+        "description": "{error}Bridge **{target}** is currently bonded to **{identity_address}**.\n\nClicking **Submit** will remove the BLE bond on the bridge and clear the saved identity. After that you can pair a different Sonicare.\n\nThe Sonicare keeps its own half of the bond, but there's nothing to clear on the brush itself — re-pairing this same brush later works without any extra steps.",
         "submit": "Unpair and reset"
       },
       "show_capabilities": {
@@ -83,6 +91,11 @@
         "title": "BLE Pairing Required",
         "description": "Your toothbrush at `{address}` requires **BLE bonding** before characteristics can be read. Auto-pairing was not successful.\n\n{pair_error}{pairing_help}\n\n`{pair_cmd}`\n\nThe script registers the required pairing agent, then pairs and trusts the toothbrush — just keep it **awake** (press the power button) while it runs.\n\nAlternatively, pair manually in an interactive `bluetoothctl` session — a plain `bluetoothctl pair` registers no agent, and some models reject the pairing without one:\n\n```\nbluetoothctl\nagent NoInputNoOutput\ndefault-agent\npair {address}\ntrust {address}\nexit\n```\n\nThen click **Retry**.",
         "submit": "Retry"
+      },
+      "not_paired_proxy": {
+        "title": "BLE Pairing Required",
+        "description": "Your toothbrush at `{address}` requires **BLE bonding** before characteristics can be read.\n\nThis connection runs through a **Bluetooth proxy** (`{proxy_name}`). The proxy pairs with the toothbrush **automatically while reading** — pairing tools on the Home Assistant host (`bluetoothctl`, pairing scripts) have no effect on this connection.\n\nThe automatic pairing has not completed. Most likely causes:\n\n1. **The toothbrush still holds an old bond** for a phone or another adapter. Remove the brush from the Philips Sonicare app (or forget it in your phone's Bluetooth settings), wake the brush, and click **Retry** — retrying restarts the pairing.\n2. **The toothbrush fell asleep** during setup — press the power button, keep it awake, and click **Retry**.\n3. **You run several Bluetooth proxies:** bonds do not move between proxies, and Home Assistant picks whichever proxy has the best signal. Move the brush next to one proxy and click **Retry**.\n4. Some models **reject pairing entirely**. If every retry fails immediately, set the brush up via the host's Bluetooth adapter or the dedicated ESP32 bridge instead.",
+        "submit": "Retry"
       }
     },
     "error": {
@@ -91,6 +104,12 @@
       "pairing_failed": "Device is still not paired. Make sure the toothbrush is awake and try pairing again.",
       "pair_timeout": "No Sonicare paired within the time window. Press the toothbrush's power button to wake it and try again.",
       "unknown": "Unexpected error. Check the logs for details."
+    },
+    "progress": {
+      "pair_arming": "Arming pair-mode on {target}…",
+      "pair_scanning": "Looking for your Sonicare and bonding — switch it on and hold it within ~1 m of the bridge. This can take up to a minute.",
+      "unpairing": "Removing the bond on {target}…",
+      "esp_reading": "Reading the toothbrush over {target}…"
     },
     "abort": {
       "device_asleep": "The toothbrush is asleep and could not be reached. Wake it (press the power button or lift it off the charger), then start setup again.",
@@ -115,10 +134,10 @@
           "warn_counterfeit_brushhead": "Warn about counterfeit brush heads"
         },
         "data_description": {
-          "sensor_pressure": "Stream pressure data during brushing sessions (0x01).",
-          "sensor_temperature": "Stream temperature data during brushing sessions (0x02).",
-          "sensor_gyroscope": "Stream 6-axis IMU data during brushing sessions (0x04). High bandwidth — may impact ESP performance.",
-          "notify_throttle_ms": "Minimum interval between BLE notification events forwarded by the ESP bridge. Lower values give faster updates but may overload the ESP. Only applies to ESP32 bridge connections.",
+          "sensor_pressure": "Stream pressure data during brushing sessions.",
+          "sensor_temperature": "Stream temperature data during brushing sessions.",
+          "sensor_gyroscope": "Stream 6-axis motion data during brushing sessions. High bandwidth — generally fine on a full ESP32, but may cause dropouts on smaller boards like the ESP32-C3. Only available on models with a built-in motion sensor.",
+          "notify_throttle_ms": "Minimum interval between BLE notification events forwarded by the ESP bridge. Lower values give faster updates but may overload the ESP.",
           "pipelined_reads": "Send poll reads to the ESP bridge as one concurrent batch instead of one at a time. Requires bridge firmware 1.7.0 or newer (older bridges are always read sequentially). Disable only if you see read errors after a bridge update.",
           "warn_counterfeit_brushhead": "Warn if no valid brush head NFC serial is detected after 30 seconds of brushing."
         }

@@ -166,6 +166,72 @@ ESP_READ_TIMEOUT = 5.0
 BATCH_READ_TIMEOUT_BASE = 15.0
 ESP_HEARTBEAT_TIMEOUT = 45.0
 
+# Return values of async_unpair_bridge_slot.
+UNPAIR_OK = "unpaired"
+UNPAIR_UNCONFIRMED = "unconfirmed"
+UNPAIR_UNAVAILABLE = "unavailable"
+UNPAIR_FAILED = "failed"
+
+
+async def async_unpair_bridge_slot(
+    hass: HomeAssistant,
+    esp_device_name: str,
+    bridge_id: str,
+    timeout: float = 4.0,
+) -> str:
+    """Clear a bridge slot's bond and wait for the bridge to confirm.
+
+    Fires the slot's ``ble_unpair`` ESPHome service, then waits for the
+    bridge's ``unpaired`` status event (deferred ~2 s on v1.3.2+ so the
+    BLE stack can settle). Shared by the config-flow reset step and entry
+    removal so both treat a silent failure the same way.
+
+    Returns one of ``UNPAIR_OK`` (bridge confirmed), ``UNPAIR_UNCONFIRMED``
+    (call succeeded but no event within ``timeout`` — the bridge may have
+    wedged), ``UNPAIR_UNAVAILABLE`` (service missing, bridge offline), or
+    ``UNPAIR_FAILED`` (the service call raised).
+    """
+    svc_name = f"{esp_device_name}_ble_unpair"
+    if bridge_id:
+        svc_name += f"_{bridge_id}"
+
+    if not hass.services.has_service("esphome", svc_name):
+        return UNPAIR_UNAVAILABLE
+
+    unpair_done = asyncio.Event()
+
+    @callback
+    def _on_status(event: Event) -> None:
+        data = event.data
+        if data.get("status") != "unpaired":
+            return
+        # bridge_id compared case-insensitively (HA lowercases service names)
+        if data.get("bridge_id", "").lower() != bridge_id.lower():
+            return
+        unpair_done.set()
+
+    unsub = hass.bus.async_listen(ESP_STATUS_EVENT_NAME, _on_status)
+    try:
+        try:
+            await hass.services.async_call(
+                "esphome", svc_name, {}, blocking=True
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("ble_unpair on %s failed: %s", esp_device_name, err)
+            return UNPAIR_FAILED
+
+        try:
+            await asyncio.wait_for(unpair_done.wait(), timeout=timeout)
+            return UNPAIR_OK
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "ble_unpair on %s did not confirm within %.0fs",
+                esp_device_name, timeout,
+            )
+            return UNPAIR_UNCONFIRMED
+    finally:
+        unsub()
+
 
 class SonicareTransport(abc.ABC):
     """Abstract BLE transport for Philips Sonicare."""

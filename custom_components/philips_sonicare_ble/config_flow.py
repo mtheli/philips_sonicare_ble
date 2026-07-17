@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 import voluptuous as vol
@@ -73,8 +74,12 @@ from .const import (
 from .helpers import esphome_service_id, is_bond_gated_profile
 from .transport import (
     EspBridgeTransport,
+    async_unpair_bridge_slot,
     describe_connection_path,
     is_local_bluez_connection,
+    UNPAIR_OK,
+    UNPAIR_FAILED,
+    UNPAIR_UNAVAILABLE,
 )
 from .exceptions import DeviceAsleepException, NotPairedException, TransportError
 
@@ -212,6 +217,34 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._probed_bridges: dict[str, list[tuple[str, dict[str, str]]]] = {}
         self._manual_address_entry: bool = False
         self._configured_bridge_ids: set[str] = set()
+        # Transport of the last probe that actually connected. None until a
+        # probe establishes a connection; deliberately NOT reset on failed
+        # connects so a retry that never reaches the device keeps showing
+        # the pairing dialog that matches the last known transport.
+        self._probe_via_proxy: bool | None = None
+        self._probe_proxy_name: str | None = None
+        # One-shot marker: wait_pair just bonded the bridge, so the next
+        # esp_bridge_status render acknowledges the success.
+        self._just_paired: bool = False
+        # Set once the user picked an action for a bonded-but-unconfigured
+        # slot, so re-entering the health check doesn't re-show the menu.
+        self._slot_action_chosen: bool = False
+        # One-shot marker: reset_bridge just cleared the bond, so the next
+        # request_pair render confirms the slot is free.
+        self._just_unpaired: bool = False
+        # Progress state: unpair (reset_bridge) and ESP capabilities read.
+        self._unpair_task: asyncio.Task | None = None
+        self._unpair_outcome: str = ""
+        self._esp_caps_task: asyncio.Task | None = None
+        self._esp_caps_result: dict[str, Any] | None = None
+        self._esp_read_error: str = ""
+        # Pair-mode progress state (async_show_progress two-phase flow).
+        self._pair_arm_task: asyncio.Task | None = None
+        self._pair_scan_task: asyncio.Task | None = None
+        self._pair_future: asyncio.Future[dict[str, str]] | None = None
+        self._pair_unsub: Callable[[], None] | None = None
+        self._pair_svc_name: str = ""
+        self._pair_result: dict[str, str] | None = None
 
     # ------------------------------------------------------------------
     # Duplicate check
@@ -378,6 +411,14 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
             connection_path = describe_connection_path(self.hass, client, device)
             result["connection_path"] = connection_path
+            # Remember which transport carried this probe: a later
+            # NotPairedException must route to the matching pairing
+            # dialog (host instructions vs. proxy guidance) and decide
+            # whether the D-Bus auto-pair machinery applies at all.
+            self._probe_via_proxy = not is_local_bluez_connection(client)
+            self._probe_proxy_name = (
+                connection_path if self._probe_via_proxy else None
+            )
             _LOGGER.info(
                 "%s: capabilities probe connected via %s",
                 address,
@@ -556,6 +597,16 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             return result
         except NotPairedException as err:
             auth_error = err.auth_error
+
+        # A proxy-carried connection bonds on the ESP itself (Bluedroid
+        # pairs lazily during the auth read) — the host-side D-Bus
+        # machinery below can neither inspect nor repair that bond, and
+        # its RemoveDevice would only touch the unrelated BlueZ device
+        # entry. Skip it and surface the failure; the pairing step then
+        # shows proxy-specific guidance, and its Retry re-triggers the
+        # ESP-side SMP via a fresh probe read.
+        if self._probe_via_proxy:
+            raise NotPairedException
 
         # If a bond already exists, the destructive RemoveDevice in
         # async_pair_and_trust would wipe it and leave the device
@@ -1567,10 +1618,29 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return f"{' '.join(icons)} {' — '.join(body_parts)}"
 
+    async def _route_after_health_check(self) -> FlowResult:
+        """Decide where a probed bridge slot goes next.
+
+        A slot that is already bonded but has no config entry yet (a
+        leftover bond, e.g. after removing an entry while the bridge was
+        offline) gets a small menu: set it up as-is, or unpair it. Fresh
+        pairings (``_just_paired``) and pair-capable/empty slots skip
+        straight to the status step, which handles them.
+        """
+        info = self._bridge_info or {}
+        if (
+            info.get("paired") == "true"
+            and info.get("pair_capable", "false") != "true"
+            and not self._just_paired
+            and not self._slot_action_chosen
+        ):
+            return await self.async_step_esp_slot_action()
+        return await self.async_step_esp_bridge_status()
+
     async def _esp_bridge_health_check(self) -> FlowResult:
         """Run bridge health check and proceed to status step."""
         if self._bridge_info:
-            return await self.async_step_esp_bridge_status()
+            return await self._route_after_health_check()
 
         transport = EspBridgeTransport(
             self.hass, "", self._esp_device_name, self._esp_bridge_id
@@ -1612,7 +1682,31 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         finally:
             await transport.disconnect()
 
+        return await self._route_after_health_check()
+
+    async def async_step_esp_slot_action(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Menu for a slot that is bonded but not yet a config entry."""
+        return self.async_show_menu(
+            step_id="esp_slot_action",
+            menu_options=["slot_setup", "slot_unpair"],
+            description_placeholders=self._pair_target_placeholders(),
+        )
+
+    async def async_step_slot_setup(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Menu choice: set up the already-bonded brush (read caps)."""
+        self._slot_action_chosen = True
         return await self.async_step_esp_bridge_status()
+
+    async def async_step_slot_unpair(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Menu choice: drop the slot's leftover bond."""
+        self._slot_action_chosen = True
+        return await self.async_step_reset_bridge()
 
     async def async_step_esp_bridge_status_connected(
         self, user_input: dict[str, Any] | None = None
@@ -1629,75 +1723,33 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Show ESP bridge status before reading toothbrush capabilities."""
-        errors: dict[str, str] = {}
-
         # Mode B with no bound brush → user must arm pair-mode first.
         info = self._bridge_info or {}
         if info.get("pair_capable", "false") == "true":
             return await self.async_step_request_pair()
 
+        # A capabilities read is in flight (progress re-invocations land here).
+        if self._esp_caps_task is not None:
+            if not self._esp_caps_task.done():
+                return self.async_show_progress(
+                    step_id="esp_bridge_status",
+                    progress_action="esp_reading",
+                    progress_task=self._esp_caps_task,
+                    description_placeholders=self._pair_target_placeholders(),
+                )
+            self._esp_caps_result = self._esp_caps_task.result()
+            self._esp_caps_task = None
+            return self.async_show_progress_done(next_step_id="esp_read_finish")
+
+        # "Read capabilities" clicked → run the read as a background task.
         if user_input is not None:
-            try:
-                capabilities = await self._async_fetch_capabilities_esp(
-                    "", self._esp_device_name, self._esp_bridge_id,
-                )
-
-                # Prefer the NVS-persisted identity over the live
-                # remote_bda. Equal for static-address brushes, but only
-                # identity stays valid when the brush is idle and only
-                # identity is RPA-stable on Condor.
-                def _valid_addr(raw: str) -> str:
-                    cleaned = (raw or "").upper()
-                    return cleaned if cleaned and cleaned != "00:00:00:00:00:00" else ""
-
-                identity = _valid_addr(
-                    (self._bridge_info or {}).get("identity_address", "")
-                )
-                sonicare_mac = capabilities.get("sonicare_mac", "")
-                canonical_addr = identity or _valid_addr(sonicare_mac)
-
-                if canonical_addr:
-                    await self.async_set_unique_id(
-                        canonical_addr, raise_on_progress=False
-                    )
-                else:
-                    await self.async_set_unique_id(f"esp_{self._esp_device_name}")
-                self._abort_if_already_configured()
-
-                # Add pairing status from bridge info
-                paired_str = (self._bridge_info or {}).get("paired", "")
-                if paired_str == "true":
-                    capabilities["pairing"] = "bonded"
-                elif paired_str == "false":
-                    capabilities["pairing"] = "open_gatt"
-
-                # Carry YAML-supplied per-slot defaults through to the
-                # show_capabilities step so the form can use them.
-                info = self._bridge_info or {}
-                if info.get("friendly_name"):
-                    capabilities.setdefault("friendly_name", info["friendly_name"])
-                if info.get("area"):
-                    capabilities.setdefault("area", info["area"])
-
-                self._fetched_data = capabilities
-                self._address = canonical_addr or None
-                model = capabilities.get("model")
-                self._name = model if model else self._esp_device_name
-                self._transport_type = TRANSPORT_ESP_BRIDGE
-
-                return await self.async_step_show_capabilities()
-
-            except AbortFlow:
-                raise
-            except TransportError:
-                _LOGGER.error(
-                    "ESP bridge: unable to read toothbrush capabilities via %s",
-                    self._esp_device_name,
-                )
-                errors["base"] = "cannot_connect"
-            except Exception:
-                _LOGGER.exception("Unexpected error reading toothbrush capabilities")
-                errors["base"] = "unknown"
+            self._esp_caps_task = self.hass.async_create_task(self._async_esp_read())
+            return self.async_show_progress(
+                step_id="esp_bridge_status",
+                progress_action="esp_reading",
+                progress_task=self._esp_caps_task,
+                description_placeholders=self._pair_target_placeholders(),
+            )
 
         # Format bridge status display
         info = self._bridge_info or {}
@@ -1731,6 +1783,24 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         else:
             status_text = "Diagnostic details not available."
 
+        # A failed capabilities read surfaces here (errors[] doesn't render
+        # on this schema-less step — same quirk as reset_bridge).
+        if self._esp_read_error:
+            status_text = (
+                f'<ha-alert alert-type="error">{self._esp_read_error}</ha-alert>\n\n'
+                + status_text
+            )
+            self._esp_read_error = ""
+
+        # Acknowledge a pairing that wait_pair just completed (one-shot).
+        if self._just_paired:
+            self._just_paired = False
+            status_text = (
+                '<ha-alert alert-type="success">Pairing successful — the '
+                "bridge is now bonded to your toothbrush.</ha-alert>\n\n"
+                + status_text
+            )
+
         target_placeholders = self._pair_target_placeholders()
         target = target_placeholders["target"]
 
@@ -1745,8 +1815,87 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "target": target,
                 "status": status_text,
             },
-            errors=errors,
         )
+
+    async def _async_esp_read(self) -> dict[str, Any]:
+        """Read capabilities via the ESP bridge (runs as a progress task)."""
+        try:
+            caps = await self._async_fetch_capabilities_esp(
+                "", self._esp_device_name, self._esp_bridge_id,
+            )
+            return {"ok": True, "caps": caps}
+        except TransportError:
+            _LOGGER.error(
+                "ESP bridge: unable to read toothbrush capabilities via %s",
+                self._esp_device_name,
+            )
+            return {"ok": False, "error": "cannot_connect"}
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Unexpected error reading toothbrush capabilities")
+            return {"ok": False, "error": "unknown"}
+
+    async def async_step_esp_read_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Process the capabilities read captured by esp_bridge_status."""
+        result = self._esp_caps_result or {}
+        self._esp_caps_result = None
+
+        if not result.get("ok"):
+            if result.get("error") == "cannot_connect":
+                self._esp_read_error = (
+                    "Couldn't read the toothbrush over the bridge. Make sure "
+                    "it's switched on and the bridge is online, then try again."
+                )
+            else:
+                self._esp_read_error = (
+                    "Something went wrong reading the toothbrush. Check the "
+                    "logs (Settings → System → Logs) and try again."
+                )
+            return await self.async_step_esp_bridge_status()
+
+        capabilities = result["caps"]
+
+        # Prefer the NVS-persisted identity over the live remote_bda. Equal
+        # for static-address brushes, but only identity stays valid when the
+        # brush is idle and only identity is RPA-stable on Condor.
+        def _valid_addr(raw: str) -> str:
+            cleaned = (raw or "").upper()
+            return cleaned if cleaned and cleaned != "00:00:00:00:00:00" else ""
+
+        identity = _valid_addr(
+            (self._bridge_info or {}).get("identity_address", "")
+        )
+        sonicare_mac = capabilities.get("sonicare_mac", "")
+        canonical_addr = identity or _valid_addr(sonicare_mac)
+
+        if canonical_addr:
+            await self.async_set_unique_id(canonical_addr, raise_on_progress=False)
+        else:
+            await self.async_set_unique_id(f"esp_{self._esp_device_name}")
+        self._abort_if_already_configured()
+
+        # Add pairing status from bridge info
+        paired_str = (self._bridge_info or {}).get("paired", "")
+        if paired_str == "true":
+            capabilities["pairing"] = "bonded"
+        elif paired_str == "false":
+            capabilities["pairing"] = "open_gatt"
+
+        # Carry YAML-supplied per-slot defaults through to show_capabilities.
+        info = self._bridge_info or {}
+        if info.get("friendly_name"):
+            capabilities.setdefault("friendly_name", info["friendly_name"])
+        if info.get("area"):
+            capabilities.setdefault("area", info["area"])
+
+        self._fetched_data = capabilities
+        self._address = canonical_addr or None
+        model = capabilities.get("model")
+        self._name = model if model else self._esp_device_name
+        self._transport_type = TRANSPORT_ESP_BRIDGE
+
+        return await self.async_step_show_capabilities()
 
     # ------------------------------------------------------------------
     # Pair-mode flow (Mode B bridges with no bound identity)
@@ -1758,10 +1907,20 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             return await self.async_step_wait_pair()
 
+        placeholders = self._pair_target_placeholders()
+        # Acknowledge a bond that reset_bridge just cleared (one-shot), so
+        # the jump from "Reset bridge bond" to pair-mode isn't silent.
+        if self._just_unpaired:
+            self._just_unpaired = False
+            placeholders["notice"] = (
+                '<ha-alert alert-type="success">Bond removed — the slot is '
+                "free. Switch on the Sonicare you want to bond, then start "
+                "pairing.</ha-alert>\n\n"
+            )
         return self.async_show_form(
             step_id="request_pair",
             data_schema=vol.Schema({}),
-            description_placeholders=self._pair_target_placeholders(),
+            description_placeholders=placeholders,
         )
 
     def _pair_target_placeholders(self) -> dict[str, str]:
@@ -1782,6 +1941,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             "device_name": device,
             "bridge_id": self._esp_bridge_id or "",
             "target": target,
+            # Optional one-shot notice slot (request_pair success alert).
+            # Empty by default; every step that renders it must supply it.
+            "notice": "",
         }
 
     def _resolve_friendly_name(
@@ -1816,10 +1978,67 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_wait_pair(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Arm pair-mode and wait for pair_complete / pair_timeout event."""
+        """Arm pair-mode and wait for the bond, showing live progress.
+
+        Two ``async_show_progress`` phases so the dialog tells the user
+        what is happening instead of freezing on a blank spinner for up
+        to a minute: first *arming* pair-mode on the bridge, then
+        *scanning/bonding*. Each phase runs as a background task; when it
+        finishes HA re-invokes this step. The outcome lands in
+        ``_pair_result`` and ``async_step_pair_finish`` renders it.
+        """
+        # Phase 1 — arm pair-mode on the bridge.
+        if (
+            self._pair_arm_task is None
+            and self._pair_scan_task is None
+            and self._pair_result is None
+        ):
+            self._pair_arm_task = self.hass.async_create_task(
+                self._async_arm_pair_mode()
+            )
+
+        if self._pair_arm_task is not None:
+            if not self._pair_arm_task.done():
+                return self.async_show_progress(
+                    step_id="wait_pair",
+                    progress_action="pair_arming",
+                    progress_task=self._pair_arm_task,
+                    description_placeholders=self._pair_target_placeholders(),
+                )
+            armed = self._pair_arm_task.result()
+            self._pair_arm_task = None
+            if not armed:
+                self._pair_result = {"error": "cannot_connect"}
+                return self.async_show_progress_done(next_step_id="pair_finish")
+            # Arming succeeded — kick off the scan/bond phase.
+            self._pair_scan_task = self.hass.async_create_task(
+                self._async_scan_and_bond()
+            )
+
+        # Phase 2 — wait for the bridge to bond (or time out).
+        if self._pair_scan_task is not None:
+            if not self._pair_scan_task.done():
+                return self.async_show_progress(
+                    step_id="wait_pair",
+                    progress_action="pair_scanning",
+                    progress_task=self._pair_scan_task,
+                    description_placeholders=self._pair_target_placeholders(),
+                )
+            self._pair_result = self._pair_scan_task.result()
+            self._pair_scan_task = None
+
+        return self.async_show_progress_done(next_step_id="pair_finish")
+
+    async def _async_arm_pair_mode(self) -> bool:
+        """Register the status listener and arm pair-mode on the bridge.
+
+        Returns True when the arm service call succeeded. The listener is
+        registered *before* the service call so a fast pair_complete
+        can't slip through; ``async_step_pair_finish`` tears it down.
+        """
         timeout_s = 60
         bridge_id = self._esp_bridge_id or ""
-        pair_future: asyncio.Future[dict[str, str]] = self.hass.loop.create_future()
+        self._pair_future = self.hass.loop.create_future()
 
         @callback
         def _on_status(event: Event) -> None:
@@ -1827,64 +2046,79 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             # bridge_id compared case-insensitively (HA lowercases service names)
             if data.get("bridge_id", "").lower() != bridge_id.lower():
                 return
-            status = data.get("status")
-            if status not in ("pair_complete", "pair_timeout"):
+            if data.get("status") not in ("pair_complete", "pair_timeout"):
                 return
-            if not pair_future.done():
-                pair_future.set_result(dict(data))
+            if self._pair_future is not None and not self._pair_future.done():
+                self._pair_future.set_result(dict(data))
 
-        unsub = self.hass.bus.async_listen(
+        self._pair_unsub = self.hass.bus.async_listen(
             "esphome.philips_sonicare_ble_status", _on_status
         )
+
+        svc_name = f"{self._esp_device_name}_ble_pair_mode"
+        if bridge_id:
+            svc_name += f"_{bridge_id}"
+        self._pair_svc_name = svc_name
         try:
-            svc_name = f"{self._esp_device_name}_ble_pair_mode"
-            if bridge_id:
-                svc_name += f"_{bridge_id}"
+            await self.hass.services.async_call(
+                "esphome",
+                svc_name,
+                {"enabled": True, "timeout_s": str(timeout_s)},
+                blocking=True,
+            )
+        except Exception as err:
+            _LOGGER.error("Failed to arm pair-mode on %s: %s",
+                          self._esp_device_name, err)
+            return False
+        return True
+
+    async def _async_scan_and_bond(self) -> dict[str, str]:
+        """Wait for pair_complete / pair_timeout from the bridge."""
+        if self._pair_future is None:  # arming always sets it; defensive
+            return {"error": "unknown"}
+        timeout_s = 60
+        try:
+            # Wait slightly longer than the bridge's own timeout so its
+            # pair_timeout event can arrive before we give up.
+            return await asyncio.wait_for(self._pair_future, timeout=timeout_s + 5)
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Pair-mode wait timed out (no event received)")
+            return {"status": "pair_timeout"}
+
+    async def async_step_pair_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Render the outcome captured by the wait_pair progress phases."""
+        result = self._pair_result or {}
+        self._pair_result = None
+
+        # Tear down the status listener and, unless we cleanly bonded,
+        # tell the bridge to stand down so a stray Sonicare in range
+        # during its leftover window isn't auto-bonded (best-effort — the
+        # bridge has its own timer).
+        if self._pair_unsub is not None:
+            self._pair_unsub()
+            self._pair_unsub = None
+        clean_complete = result.get("status") == "pair_complete"
+        if not clean_complete and self._pair_svc_name:
             try:
                 await self.hass.services.async_call(
-                    "esphome",
-                    svc_name,
-                    {"enabled": True, "timeout_s": str(timeout_s)},
-                    blocking=True,
+                    "esphome", self._pair_svc_name,
+                    {"enabled": False, "timeout_s": "0"},
+                    blocking=False,
                 )
-            except Exception as err:
-                _LOGGER.error("Failed to arm pair-mode on %s: %s",
-                              self._esp_device_name, err)
-                return self.async_show_form(
-                    step_id="request_pair",
-                    data_schema=vol.Schema({}),
-                    errors={"base": "cannot_connect"},
-                    description_placeholders=self._pair_target_placeholders(),
-                )
+            except Exception:
+                _LOGGER.debug("Best-effort pair-mode cancel failed (ignoring)")
+        self._pair_future = None
+        self._pair_svc_name = ""
 
-            try:
-                # Wait slightly longer than the bridge's own timeout so the
-                # pair_timeout event has a chance to arrive before we give up.
-                result = await asyncio.wait_for(pair_future, timeout=timeout_s + 5)
-            except asyncio.TimeoutError:
-                _LOGGER.warning("Pair-mode wait timed out (no event received)")
-                return self.async_show_form(
-                    step_id="request_pair",
-                    data_schema=vol.Schema({}),
-                    errors={"base": "pair_timeout"},
-                    description_placeholders=self._pair_target_placeholders(),
-                )
-        finally:
-            unsub()
-            # If we leave without a pair_complete/pair_timeout event (HA-side
-            # timeout, exception, …), tell the bridge to stand down so a fresh
-            # Sonicare in range during the bridge's leftover window doesn't
-            # get auto-bonded. Best-effort — the bridge has its own timer.
-            if not pair_future.done():
-                try:
-                    await self.hass.services.async_call(
-                        "esphome", svc_name,
-                        {"enabled": False, "timeout_s": "0"},
-                        blocking=False,
-                    )
-                except Exception:
-                    _LOGGER.debug("Best-effort pair-mode cancel failed (ignoring)")
-
+        if result.get("error"):
+            return self.async_show_form(
+                step_id="request_pair",
+                data_schema=vol.Schema({}),
+                errors={"base": result["error"]},
+                description_placeholders=self._pair_target_placeholders(),
+            )
         if result.get("status") == "pair_timeout":
             return self.async_show_form(
                 step_id="request_pair",
@@ -1907,6 +2141,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # the freshly-bound state, then run capabilities probe via the
         # existing ESP-bridge path.
         self._bridge_info = None
+        self._just_paired = True
         self._address = identity
         await self.async_set_unique_id(identity, raise_on_progress=False)
         self._abort_if_already_configured()
@@ -1915,36 +2150,99 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reset_bridge(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Confirm + execute unpair on a bound Mode B bridge."""
-        if user_input is not None:
-            svc_name = f"{self._esp_device_name}_ble_unpair"
-            if self._esp_bridge_id:
-                svc_name += f"_{self._esp_bridge_id}"
-            try:
-                await self.hass.services.async_call(
-                    "esphome", svc_name, {}, blocking=True,
-                )
-            except Exception as err:
-                _LOGGER.error("Failed to unpair %s: %s",
-                              self._esp_device_name, err)
-                return self.async_show_form(
+        """Confirm + execute unpair on a bound Mode B bridge.
+
+        The unpair (service call + waiting for the bridge's ``unpaired``
+        confirmation, ~4 s) runs as a background task behind an
+        ``async_show_progress`` spinner; ``reset_finish`` renders the
+        outcome.
+        """
+        # An unpair is in flight (progress re-invocations land here).
+        if self._unpair_task is not None:
+            if not self._unpair_task.done():
+                return self.async_show_progress(
                     step_id="reset_bridge",
-                    data_schema=vol.Schema({}),
-                    errors={"base": "cannot_connect"},
+                    progress_action="unpairing",
+                    progress_task=self._unpair_task,
+                    description_placeholders=self._reset_bridge_placeholders(),
                 )
-            # Bridge is now pair_capable=true again — refetch info, then re-pair.
+            self._unpair_outcome = self._unpair_task.result()
+            self._unpair_task = None
+            return self.async_show_progress_done(next_step_id="reset_finish")
+
+        if user_input is not None:
+            self._unpair_task = self.hass.async_create_task(
+                async_unpair_bridge_slot(
+                    self.hass,
+                    self._esp_device_name or "",
+                    self._esp_bridge_id or "",
+                )
+            )
+            return self.async_show_progress(
+                step_id="reset_bridge",
+                progress_action="unpairing",
+                progress_task=self._unpair_task,
+                description_placeholders=self._reset_bridge_placeholders(),
+            )
+
+        return self.async_show_form(
+            step_id="reset_bridge",
+            data_schema=vol.Schema({}),
+            description_placeholders=self._reset_bridge_placeholders(),
+        )
+
+    async def async_step_reset_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Render the unpair outcome captured by reset_bridge."""
+        outcome = self._unpair_outcome
+        self._unpair_outcome = ""
+
+        # Only proceed when the bridge confirmed the bond is gone. A silent
+        # failure (call returned but no `unpaired` event) would otherwise
+        # drop the user back onto the still-bonded status screen unexplained.
+        if outcome == UNPAIR_OK:
+            # pair_capable=true again — refetch info, then re-pair.
             self._bridge_info = None
+            self._just_unpaired = True
             return await self._esp_bridge_health_check()
 
+        _LOGGER.error(
+            "Unpair on %s did not succeed (%s)",
+            self._esp_device_name, outcome,
+        )
+        if outcome in (UNPAIR_FAILED, UNPAIR_UNAVAILABLE):
+            msg = (
+                "Couldn't reach the ESP bridge to clear the bond. Make "
+                "sure it's online and powered, then try again."
+            )
+        else:  # UNPAIR_UNCONFIRMED
+            msg = (
+                "Couldn't confirm the bridge cleared the bond — it may "
+                "need a reboot. Make sure it's online, then try again."
+            )
+        return self.async_show_form(
+            step_id="reset_bridge",
+            data_schema=vol.Schema({}),
+            description_placeholders=self._reset_bridge_placeholders(msg),
+        )
+
+    def _reset_bridge_placeholders(self, error: str = "") -> dict[str, str]:
+        """Placeholders for the reset_bridge step.
+
+        ``errors["base"]`` does not render on this schema-less confirmation
+        step (same as bluetooth_confirm), so a failure is surfaced by
+        injecting an ``<ha-alert>`` into the ``{error}`` placeholder.
+        """
         placeholders = self._pair_target_placeholders()
         placeholders["identity_address"] = (
             (self._bridge_info or {}).get("identity_address", "")
         )
-        return self.async_show_form(
-            step_id="reset_bridge",
-            data_schema=vol.Schema({}),
-            description_placeholders=placeholders,
+        placeholders["error"] = (
+            f'<ha-alert alert-type="error">{error}</ha-alert>\n\n'
+            if error else ""
         )
+        return placeholders
 
     # ------------------------------------------------------------------
     # Capabilities dialog (shared by BLE and ESP)
@@ -2070,10 +2368,40 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             "pair_error": pair_error,
         }
 
+    def _show_not_paired_form(self, errors: dict[str, str]) -> FlowResult:
+        """Render the pairing dialog matching the probe transport.
+
+        The host variant walks the user through pair.sh/bluetoothctl on
+        the HA host; the proxy variant explains that the proxy bonds on
+        its own during reads and host tools have no effect. habluetooth
+        routes each connect by RSSI, so the transport is re-evaluated on
+        every retry and the dialog follows it.
+        """
+        if self._probe_via_proxy:
+            return self.async_show_form(
+                step_id="not_paired_proxy",
+                description_placeholders={
+                    "address": self._address or "",
+                    "proxy_name": self._probe_proxy_name or "unknown",
+                },
+                errors=errors,
+            )
+        return self.async_show_form(
+            step_id="not_paired",
+            description_placeholders=self._not_paired_placeholders(),
+            errors=errors,
+        )
+
     async def async_step_not_paired(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Show manual pairing instructions when auto-pairing failed."""
+        """Show pairing instructions when auto-pairing failed.
+
+        Handles both dialog variants: Retry probes again either way (on
+        the proxy path the probe read itself re-triggers the ESP-side
+        SMP), and ``_show_not_paired_form`` picks the variant for the
+        transport that carried the probe.
+        """
         if user_input is not None:
             # User clicked retry after manual pairing
             errors: dict[str, str] = {}
@@ -2099,16 +2427,15 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Error after manual pairing retry")
                 errors["base"] = "unknown"
 
-            return self.async_show_form(
-                step_id="not_paired",
-                description_placeholders=self._not_paired_placeholders(),
-                errors=errors,
-            )
+            return self._show_not_paired_form(errors)
 
-        return self.async_show_form(
-            step_id="not_paired",
-            description_placeholders=self._not_paired_placeholders(),
-        )
+        return self._show_not_paired_form({})
+
+    async def async_step_not_paired_proxy(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Proxy variant of not_paired — same handler, different text."""
+        return await self.async_step_not_paired(user_input)
 
     # ------------------------------------------------------------------
     # Options flow
