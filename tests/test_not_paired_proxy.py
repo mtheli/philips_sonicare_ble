@@ -174,3 +174,34 @@ def test_strings_define_proxy_step_with_matching_placeholders() -> None:
         used = set(re.findall(r"\{(\w+)\}", step["description"]))
         assert used == {"address", "proxy_name"}, name
         assert "<" not in step["description"], name  # hassfest: no HTML
+
+
+# --- BLE-security label on the proxy path (bond lives in ESP NVS) ---------
+
+async def test_proxy_encrypted_probe_labels_bonded() -> None:
+    """A proxy probe that had to wait for SMP is bonded/encrypted, even
+    though BlueZ has no bond for it."""
+    flow = _flow()
+
+    async def probe(addr):
+        flow._probe_via_proxy = True
+        flow._probe_needed_encryption = True
+        return {"services": [], "model": "HX999X"}
+
+    flow._async_fetch_capabilities = probe
+    result = await flow._fetch_with_pair_retry(ADDRESS)
+    assert result["pairing"] == "bonded"
+
+
+async def test_proxy_open_gatt_probe_labels_open() -> None:
+    """A proxy probe that never hit an auth error is genuinely open GATT."""
+    flow = _flow()
+
+    async def probe(addr):
+        flow._probe_via_proxy = True
+        flow._probe_needed_encryption = False
+        return {"services": [], "model": "HX6340"}
+
+    flow._async_fetch_capabilities = probe
+    result = await flow._fetch_with_pair_retry(ADDRESS)
+    assert result["pairing"] == "open_gatt"

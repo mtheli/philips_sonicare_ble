@@ -223,6 +223,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # the pairing dialog that matches the last known transport.
         self._probe_via_proxy: bool | None = None
         self._probe_proxy_name: str | None = None
+        # Set when a probe read had to wait for SMP (encryption required).
+        # Used to label BLE security on the proxy path, where the BlueZ
+        # bond state is meaningless (the bond lives in the proxy's NVS).
+        self._probe_needed_encryption: bool = False
         # One-shot marker: wait_pair just bonded the bridge, so the next
         # esp_bridge_status render acknowledges the success.
         self._just_paired: bool = False
@@ -313,8 +317,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     # ------------------------------------------------------------------
     # Capabilities fetch (direct BLE)
     # ------------------------------------------------------------------
-    @staticmethod
     async def _read_with_auth_retry(
+        self,
         client: BleakClient,
         char_uuid: str,
         timeout: float = 5.0,
@@ -348,6 +352,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "Read on %s returned auth error — waiting for SMP to complete",
                 char_uuid,
             )
+            # Encryption was required — remember it so the proxy path can
+            # label BLE security correctly (BlueZ can't see the ESP bond).
+            self._probe_needed_encryption = True
             await asyncio.sleep(2.0)
             return await asyncio.wait_for(
                 client.read_gatt_char(char_uuid), timeout=timeout
@@ -355,6 +362,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def _async_fetch_capabilities(self, address: str) -> dict[str, Any]:
         """Connect to the device and read capabilities via direct BLE."""
+        self._probe_needed_encryption = False
         # Pre-fill services from advertisement data (available before connect)
         adv_services: list[str] = []
         if self._discovery_info is not None:
@@ -592,8 +600,17 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         auth_error = False
         try:
             result = await self._async_fetch_capabilities(address)
-            paired = await async_is_device_paired(address)
-            result["pairing"] = "bonded" if paired else "open_gatt"
+            if self._probe_via_proxy:
+                # BlueZ can't see the bond on a proxy connection (it lives
+                # in the proxy's NVS), so async_is_device_paired would
+                # mislabel an encrypted link as "unpaired". Derive it from
+                # whether a read had to wait for SMP instead.
+                result["pairing"] = (
+                    "bonded" if self._probe_needed_encryption else "open_gatt"
+                )
+            else:
+                paired = await async_is_device_paired(address)
+                result["pairing"] = "bonded" if paired else "open_gatt"
             return result
         except NotPairedException as err:
             auth_error = err.auth_error
