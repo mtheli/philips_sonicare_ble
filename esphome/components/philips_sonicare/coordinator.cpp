@@ -524,6 +524,58 @@ void SonicareCoordinator::unpair() {
   this->unpair_until_ms_ = millis() + UNPAIR_DRAIN_MS;
 }
 
+void SonicareCoordinator::remove_bond_by_mac(const std::string &mac) {
+  uint8_t bda[6] = {0};
+  if (!parse_mac_to_bda(mac, bda)) {
+    ESP_LOGW(this->log_tag_.c_str(),
+             "unpair_mac: cannot parse MAC '%s' — ignoring", mac.c_str());
+    this->emit_status_("bond_removal_failed",
+                       {{"mac", mac}, {"reason", "bad_mac"}});
+    return;
+  }
+
+  ESP_LOGW(this->log_tag_.c_str(),
+           "unpair_mac: removing any bond for %s (slot-independent)",
+           mac.c_str());
+
+  bool removed = false;
+  // Targeted removal.
+  if (esp_ble_remove_bond_device(bda) == ESP_OK) {
+    removed = true;
+    ESP_LOGI(this->log_tag_.c_str(), "unpair_mac: bond removed for %s",
+             mac.c_str());
+  }
+
+  // Safety-net sweep — only entries whose BDA matches the requested MAC, so
+  // bonds for other slots / components on this same chip stay intact.
+  int total = esp_ble_get_bond_device_num();
+  if (total > 0) {
+    auto *list = (esp_ble_bond_dev_t *) malloc(sizeof(esp_ble_bond_dev_t) * total);
+    if (list != nullptr) {
+      if (esp_ble_get_bond_device_list(&total, list) == ESP_OK) {
+        for (int i = 0; i < total; i++) {
+          if (memcmp(list[i].bd_addr, bda, 6) != 0)
+            continue;  // belongs to another device — leave alone
+          if (esp_ble_remove_bond_device(list[i].bd_addr) == ESP_OK) {
+            removed = true;
+            ESP_LOGI(this->log_tag_.c_str(),
+                     "unpair_mac: swept lingering bond for %s", mac.c_str());
+          }
+        }
+      }
+      free(list);
+    }
+  }
+
+  if (!removed)
+    ESP_LOGI(this->log_tag_.c_str(),
+             "unpair_mac: no stored bond found for %s", mac.c_str());
+  // Distinct status from the slot-unpair `unpaired` event so the config
+  // flow's slot-unpair listener never mistakes this manual call for its own.
+  this->emit_status_(removed ? "bond_removed" : "bond_not_found",
+                     {{"mac", mac}});
+}
+
 std::string SonicareCoordinator::get_device_mac() {
   if (this->parent_ == nullptr)
     return "00:00:00:00:00:00";

@@ -9,6 +9,10 @@ namespace philips_sonicare {
 
 static const char *const TAG = "philips_sonicare.bridge";
 
+// Node-wide guard: only the first bridge instance registers the
+// slot-independent ble_unpair_mac service. See setup().
+bool SonicareBridge::unpair_mac_registered_ = false;
+
 static uint32_t parse_timeout_s(const std::string &s, uint32_t fallback,
                                 const char *field) {
   if (s.empty())
@@ -56,6 +60,16 @@ void SonicareBridge::setup() {
                           {"enabled", "timeout_s"});
   this->register_service(&SonicareBridge::on_unpair,
                           this->svc_name_("ble_unpair"), {});
+  // ble_unpair_mac removes a bond by MAC from the controller's shared NVS
+  // bond store — it is slot-independent, so register it once per node
+  // (not per bridge_id) or a 5-slot board would expose 5 identical copies.
+  // The first instance to run setup() claims it; its coordinator can
+  // service it since the bond store is global to the controller.
+  if (!SonicareBridge::unpair_mac_registered_) {
+    SonicareBridge::unpair_mac_registered_ = true;
+    this->register_service(&SonicareBridge::on_unpair_mac,
+                            "ble_unpair_mac", {"mac"});
+  }
   this->register_service(&SonicareBridge::on_scan,
                           this->svc_name_("ble_scan"),
                           {"timeout_s"});
@@ -225,6 +239,11 @@ void SonicareBridge::on_pair_mode(bool enabled, std::string timeout_s) {
 void SonicareBridge::on_unpair() {
   if (this->coord_)
     this->coord_->unpair();
+}
+
+void SonicareBridge::on_unpair_mac(std::string mac) {
+  if (this->coord_)
+    this->coord_->remove_bond_by_mac(mac);
 }
 
 void SonicareBridge::on_scan(std::string timeout_s) {

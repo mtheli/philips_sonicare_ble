@@ -93,6 +93,12 @@ class SonicareCoordinator {
   // Called by HA service ble_unpair. Removes the BLE bond, clears any cached
   // identity address (Worker-side via callback) and disconnects.
   void unpair();
+  // Called by HA service ble_unpair_mac. Removes the Bluedroid bond for an
+  // explicit MAC, independent of any slot's persisted identity — recovers
+  // orphaned bonds that the slot-scoped unpair() can't target. Touches only
+  // the given address; leaves other slots' bonds and this slot's identity
+  // untouched.
+  void remove_bond_by_mac(const std::string &mac);
   // Worker registers a callback that wipes its own NVS-persisted identity and
   // resets uuid_scan_mode_ when the user requests unpair.
   void set_unpair_cb(std::function<void()> cb) {

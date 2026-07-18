@@ -53,6 +53,9 @@ class SonicareBridge : public Component, public api::CustomAPIDevice {
   binary_sensor::BinarySensor *connected_sensor_{nullptr};
   uint32_t last_heartbeat_ms_{0};
   static const uint32_t HEARTBEAT_INTERVAL_MS = 15000;
+  // Guards the node-wide (slot-independent) ble_unpair_mac registration so
+  // only the first bridge instance registers it. See setup().
+  static bool unpair_mac_registered_;
 
   std::string svc_name_(const std::string &action);
 
@@ -68,6 +71,7 @@ class SonicareBridge : public Component, public api::CustomAPIDevice {
   void on_list_services();
   void on_pair_mode(bool enabled, std::string timeout_s);
   void on_unpair();
+  void on_unpair_mac(std::string mac);
   void on_scan(std::string timeout_s);
   void on_pair_mac(std::string mac, std::string timeout_s);
 };
