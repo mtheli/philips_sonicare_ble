@@ -75,6 +75,7 @@ from .helpers import esphome_service_id, is_bond_gated_profile
 from .transport import (
     EspBridgeTransport,
     async_unpair_bridge_slot,
+    describe_available_paths,
     describe_connection_path,
     is_local_bluez_connection,
     UNPAIR_OK,
@@ -249,6 +250,17 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._pair_unsub: Callable[[], None] | None = None
         self._pair_svc_name: str = ""
         self._pair_result: dict[str, str] | None = None
+        # Direct-BLE probe progress state, shared by bluetooth_confirm and
+        # user_bleak; ble_probe_finish routes the outcome back to whichever
+        # step started the probe (``_ble_probe_origin``).
+        self._ble_probe_task: asyncio.Task | None = None
+        self._ble_probe_result: dict[str, Any] | None = None
+        self._ble_probe_origin: str = ""
+        # One-shot <ha-alert> for the next bluetooth_confirm render
+        # (errors[] doesn't render on that schema-less step).
+        self._confirm_status: str = ""
+        # One-shot errors["base"] for the next user_bleak render.
+        self._manual_error: str = ""
 
     # ------------------------------------------------------------------
     # Duplicate check
@@ -360,6 +372,18 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 client.read_gatt_char(char_uuid), timeout=timeout
             )
 
+    def _bump_progress(self, value: float) -> None:
+        """Advance the determinate progress bar, if this core supports it.
+
+        ``async_update_progress`` arrived in HA 2025.5 — on older cores the
+        progress step simply keeps its indeterminate spinner. Calls made
+        while no progress step is showing (e.g. the probe re-run from the
+        not_paired retry) fire an update event nothing listens to; harmless.
+        """
+        update = getattr(self, "async_update_progress", None)
+        if update is not None:
+            update(min(1.0, max(0.0, value)))
+
     async def _async_fetch_capabilities(self, address: str) -> dict[str, Any]:
         """Connect to the device and read capabilities via direct BLE."""
         self._probe_needed_encryption = False
@@ -410,12 +434,17 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         client: BleakClient | None = None
         try:
+            # Progress milestones: the connect is a single await and by far
+            # the longest leg, so the bar sits low until it lands, then
+            # advances per characteristic read.
+            self._bump_progress(0.05)
             client = await bleak_establish(
                 BleakClient, device, "philips_sonicare_ble",
                 use_services_cache=True, timeout=30.0,
             )
             if not client or not client.is_connected:
                 return result
+            self._bump_progress(0.4)
 
             connection_path = describe_connection_path(self.hass, client, device)
             result["connection_path"] = connection_path
@@ -437,6 +466,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             gatt_services = [str(s.uuid).lower() for s in client.services]
             if gatt_services:
                 result["services"] = gatt_services
+            self._bump_progress(0.5)
 
             # Condor brushes (HX742X / Series 7100) require BLE bonding
             # before the e50b… handshake's first CCCD write is accepted.
@@ -489,7 +519,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 (CHAR_FIRMWARE_REVISION, "firmware"),
             ]
 
-            for char_uuid, key in probe_chars:
+            progress_step = 0.45 / max(1, len(probe_chars))
+            for index, (char_uuid, key) in enumerate(probe_chars, start=1):
                 try:
                     raw = await self._read_with_auth_retry(
                         client, char_uuid, timeout=5.0
@@ -525,6 +556,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                             auth_error=is_local_bluez_connection(client)
                         ) from err
                     _LOGGER.debug("Failed to read %s: %s", key, err)
+                self._bump_progress(0.5 + progress_step * index)
 
             # Bond-gated profile (see helpers.is_bond_gated_profile): none
             # of the probe reads produced data and Device Information is
@@ -691,7 +723,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         transport = EspBridgeTransport(self.hass, address, esp_device_name, esp_bridge_id)
         try:
+            # Progress milestones — each read is its own bridge round-trip,
+            # so the bar advances per characteristic.
+            self._bump_progress(0.05)
             await transport.connect()
+            self._bump_progress(0.25)
 
             found_services: list[str] = []
             model_number: str | None = None
@@ -699,12 +735,14 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
             services_from_bridge = await transport.list_services()
             if services_from_bridge:
+                self._bump_progress(0.45)
                 found_services = [s.lower() for s in services_from_bridge]
                 services_set = set(found_services)
                 # Model number — always emitted on Device Information.
                 raw_model = await transport.read_char(CHAR_MODEL_NUMBER)
                 if raw_model:
                     model_number = raw_model.decode("utf-8", errors="replace").strip()
+                self._bump_progress(0.55)
                 # Battery — only on the standard 0x180F service. Condor
                 # brushes route battery through their port-property layer
                 # instead and would 404 the 0x2A19 read.
@@ -712,9 +750,13 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     raw_batt = await transport.read_char(CHAR_BATTERY_LEVEL)
                     if raw_batt:
                         battery = raw_batt[0]
+                self._bump_progress(0.65)
             else:
                 # Legacy probe — old bridges without ble_list_services.
-                for svc_uuid, probe_char in SERVICE_PROBE_CHARS.items():
+                probe_count = max(1, len(SERVICE_PROBE_CHARS))
+                for index, (svc_uuid, probe_char) in enumerate(
+                    SERVICE_PROBE_CHARS.items(), start=1
+                ):
                     raw = await transport.read_char(probe_char)
                     if raw is not None:
                         found_services.append(svc_uuid)
@@ -722,6 +764,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                             model_number = raw.decode("utf-8", errors="replace").strip()
                         elif probe_char == CHAR_BATTERY_LEVEL and raw:
                             battery = raw[0]
+                    self._bump_progress(0.25 + 0.4 * index / probe_count)
                 # Condor-by-exclusion: the only readable Condor char
                 # (e50b0005) is optional — HX742X FW 1.8.20.0 omits it
                 # entirely, so a direct probe misses that device. If the
@@ -755,20 +798,16 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             raw_serial = await transport.read_char(CHAR_SERIAL_NUMBER)
             if raw_serial:
                 serial = raw_serial.decode("utf-8", errors="replace").strip()
+            self._bump_progress(0.8)
 
             # Firmware
             firmware: str | None = None
             raw_fw = await transport.read_char(CHAR_FIRMWARE_REVISION)
             if raw_fw:
                 firmware = raw_fw.decode("utf-8", errors="replace").strip()
+            self._bump_progress(0.95)
 
-            friendly = self._resolve_friendly_name(esp_device_name, esp_bridge_id)
-            if friendly:
-                connection_path = friendly
-            elif esp_bridge_id:
-                connection_path = f"{esp_device_name} / {esp_bridge_id}"
-            else:
-                connection_path = esp_device_name
+            connection_path = self._esp_target_label(esp_device_name, esp_bridge_id)
             return {
                 "services": found_services,
                 "sonicare_mac": transport.detected_mac,
@@ -923,20 +962,26 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         return bool(fetched_lower & _EXPECTED_SERVICES)
 
     @staticmethod
-    def _get_connection_status_text(transport_type: str, path: str | None) -> str:
+    def _get_connection_status_text(
+        transport_type: str, path: str | None, *, via_proxy: bool = False
+    ) -> str:
         """Return the connection status line for the capabilities dialog.
 
-        Leads with the transport *class* (``ESP32 Bridge`` / ``Direct
-        Bluetooth``) — same framing as the other ``via`` dialogs — and
-        appends the slot/adapter label (YAML ``friendly_name`` for ESP,
-        host adapter name for direct BLE) in parentheses as a
-        disambiguator, never in the ``via`` position itself.
+        Leads with the transport *class* (``ESP32 Bridge`` / ``Bluetooth
+        proxy`` / ``Direct Bluetooth``) — same framing as the other
+        ``via`` dialogs — and appends the slot/adapter label (YAML
+        ``friendly_name`` for ESP, scanner name otherwise) in
+        parentheses as a disambiguator, never in the ``via`` position
+        itself. ``via_proxy`` marks a TRANSPORT_BLEAK probe that rode a
+        remote scanner — labelling that "Direct Bluetooth" would hide
+        the very path distinction the pairing dialogs are keyed on.
         """
-        transport_label = (
-            "ESP32 Bridge"
-            if transport_type == TRANSPORT_ESP_BRIDGE
-            else "Direct Bluetooth"
-        )
+        if transport_type == TRANSPORT_ESP_BRIDGE:
+            transport_label = "ESP32 Bridge"
+        elif via_proxy:
+            transport_label = "Bluetooth proxy"
+        else:
+            transport_label = "Direct Bluetooth"
         if path:
             return f"✅ Connected via **{transport_label}** ({path})."
         return f"✅ Connected via **{transport_label}**."
@@ -1256,6 +1301,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Confirm Bluetooth discovery."""
+        # Progress re-invocations of a running probe land here first —
+        # before the ESP auto-route, whose slot probes would add seconds
+        # of latency to every re-entry.
+        if (progress := self._ble_probe_progress("bluetooth_confirm")) is not None:
+            return progress
+
         # Auto-route to ESP only when an ESP slot already has this MAC
         # bonded — otherwise fall through to Direct BLE confirm so the
         # user can pick the manual ESP path themselves if needed.
@@ -1265,46 +1316,218 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             self._esp_bridge_ids = self._detect_esp_bridge_ids(self._esp_device_name)
             return await self._esp_bridge_health_check()
 
-        status = ""
-        errors: dict[str, str] = {}
         if user_input is not None:
-            try:
-                self._fetched_data = await self._fetch_with_pair_retry(self._address)
-                has_device_info = any(
-                    self._fetched_data.get(k)
-                    for k in ("model", "serial", "firmware", "battery")
-                )
-                if has_device_info and self._has_sonicare_services(self._fetched_data):
-                    self._transport_type = TRANSPORT_BLEAK
-                    return await self.async_step_show_capabilities()
-                errors["base"] = "cannot_connect"
-            except DeviceAsleepException:
-                # Keep the discovery flow alive — an abort would dismiss the
-                # discovery card, and ADV deduplication stops HA from
-                # re-creating it when the brush wakes. errors["base"] does not
-                # render on this schema-less confirmation step, so inject an
-                # <ha-alert> into the description; ha-markdown renders it as a
-                # real coloured alert box.
-                status = (
-                    '<ha-alert alert-type="error">The toothbrush is asleep — '
-                    "wake it (press the power button or lift it off the "
-                    "charger), then click Submit again.</ha-alert>\n\n"
-                )
-            except NotPairedException:
-                return await self.async_step_not_paired()
-            except Exception:
-                _LOGGER.exception("Unexpected error during capabilities fetch")
-                errors["base"] = "unknown"
+            return self._start_ble_probe("bluetooth_confirm", self._address)
 
+        # One-shot outcome from ble_probe_finish. errors["base"] does not
+        # render on this schema-less confirmation step, so failures are
+        # injected as an <ha-alert> into the description; ha-markdown
+        # renders it as a real coloured alert box.
+        status = self._confirm_status
+        self._confirm_status = ""
+
+        via, warning = self._transport_lines()
         return self.async_show_form(
             step_id="bluetooth_confirm",
             description_placeholders={
                 "name": self._name,
                 "address": self._address,
                 "status": status,
+                "via": via,
+                "transport": warning,
             },
-            errors=errors,
         )
+
+    @staticmethod
+    def _short_scanner(p: dict) -> str:
+        # Scanner names carry the adapter MAC in parentheses; strip it —
+        # the dialog cares about *which* device, not its MAC.
+        return str(p["name"]).split(" (")[0]
+
+    def _transport_lines(self) -> tuple[str, str]:
+        """Return ``(via_suffix, warning)`` for the discovery confirm step.
+
+        ``via_suffix`` names the likely carrier inline after "discovered
+        at <mac>", mirroring the capabilities dialog's
+        ``via <class> (<detail>)`` framing: "Direct Bluetooth" for a
+        local adapter, "Bluetooth proxy" for a remote scanner.
+
+        ``warning`` is a proxy-only <ha-alert> — pairing over a standard
+        proxy is model-dependent (some models never trigger the
+        proxy-side bonding and fail every read; see not_paired_proxy).
+
+        habluetooth routes by signal strength, so the strongest scanner
+        is only the *likely* carrier; recomputed each render so the
+        ranking stays current.
+        """
+        paths = describe_available_paths(self.hass, self._address or "")
+        if not paths:
+            return "", ""
+
+        def _rssi(p: dict) -> str:
+            return f" ({p['rssi']} dBm)" if p["rssi"] is not None else ""
+
+        best = paths[0]
+        best_name = self._short_scanner(best)
+        best_rssi = f", {best['rssi']} dBm" if best["rssi"] is not None else ""
+
+        if best["is_local"]:
+            via = f" via **Direct Bluetooth** ({best_name}{best_rssi})"
+            return via, ""
+
+        via = f" via **Bluetooth proxy** ({best_name}{best_rssi})"
+
+        # Markdown is not parsed inside an HTML block, so the warning uses
+        # <b>/<br> for emphasis and paragraph breaks.
+        local = next((p for p in paths if p["is_local"]), None)
+        if local is None:
+            tail = (
+                "For reliable pairing and live updates use a local "
+                "Bluetooth adapter or the ESP32 bridge."
+            )
+        else:
+            tail = (
+                f"Your local adapter <b>{self._short_scanner(local)}</b> "
+                f"also sees the toothbrush{_rssi(local)} — Home Assistant "
+                "connects through the strongest signal, so move the "
+                "toothbrush closer to it to prefer that path."
+            )
+        warning = (
+            '<ha-alert alert-type="warning">'
+            "This connection will go through the Bluetooth proxy "
+            f"<b>{best_name}</b>{_rssi(best)}."
+            "<br><br>Depending on the toothbrush model, pairing and "
+            "live updates over a standard Bluetooth proxy can be "
+            "unreliable."
+            f"<br><br>{tail}</ha-alert>\n\n"
+        )
+        return via, warning
+
+    # ------------------------------------------------------------------
+    # Direct BLE probe as a progress task (shared by discovery + manual)
+    # ------------------------------------------------------------------
+    def _ble_probe_placeholders(self) -> dict[str, str]:
+        return {"name": self._name or self._address or ""}
+
+    def _ble_probe_progress(self, step_id: str) -> FlowResult | None:
+        """Progress bookkeeping for a running direct-BLE probe.
+
+        Returns None when no probe is in flight (the caller renders its
+        form as usual), the progress view while the task runs, and the
+        transition to ``ble_probe_finish`` once it is done.
+        """
+        task = self._ble_probe_task
+        if task is None:
+            return None
+        if not task.done():
+            return self.async_show_progress(
+                step_id=step_id,
+                progress_action="ble_probing",
+                progress_task=task,
+                description_placeholders=self._ble_probe_placeholders(),
+            )
+        self._ble_probe_result = task.result()
+        self._ble_probe_task = None
+        return self.async_show_progress_done(next_step_id="ble_probe_finish")
+
+    def _start_ble_probe(self, step_id: str, address: str | None) -> FlowResult:
+        """Kick off the capabilities probe as a background progress task."""
+        self._ble_probe_origin = step_id
+        self._ble_probe_task = self.hass.async_create_task(
+            self._async_ble_probe(address or "")
+        )
+        return self.async_show_progress(
+            step_id=step_id,
+            progress_action="ble_probing",
+            progress_task=self._ble_probe_task,
+            description_placeholders=self._ble_probe_placeholders(),
+        )
+
+    async def _async_ble_probe(self, address: str) -> dict[str, Any]:
+        """Run the capabilities probe (progress task) and box the outcome."""
+        try:
+            return {
+                "ok": True,
+                "data": await self._fetch_with_pair_retry(address),
+            }
+        except DeviceAsleepException:
+            return {"ok": False, "error": "asleep"}
+        except NotPairedException:
+            return {"ok": False, "error": "not_paired"}
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Unexpected error during capabilities fetch")
+            return {"ok": False, "error": "unknown"}
+
+    async def async_step_ble_probe_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Route the probe outcome captured by the progress step.
+
+        Success continues to show_capabilities; failures go back to the
+        origin step — rendered as errors[] on the manual form (it has a
+        schema) and as an <ha-alert> on the schema-less discovery confirm.
+        """
+        result = self._ble_probe_result or {}
+        self._ble_probe_result = None
+        manual = self._ble_probe_origin == "user_bleak"
+
+        error = result.get("error", "unknown")
+        if result.get("ok"):
+            data = result["data"]
+            has_device_info = any(
+                data.get(k) for k in ("model", "serial", "firmware", "battery")
+            )
+            if manual and "connection_path" not in data:
+                # Refuse to create an entry if the GATT probe never
+                # established a connection. ``connection_path`` is set by
+                # ``_async_fetch_capabilities`` only after a live client
+                # is in hand — its absence means we have no evidence the
+                # device is reachable at this address (out of range,
+                # rotated RPA, no slot). Creating an entry anyway would
+                # leave the user with a permanently "Initializing"
+                # device and no actionable feedback in the UI.
+                error = "cannot_connect"
+            elif has_device_info and self._has_sonicare_services(data):
+                self._fetched_data = data
+                self._transport_type = TRANSPORT_BLEAK
+                return await self.async_step_show_capabilities()
+            elif manual:
+                # Connect succeeded but the device didn't expose any
+                # Sonicare service / DeviceInfo we could read. Don't
+                # create an empty entry that would just sit in
+                # "Initializing" forever — surface as an error so
+                # the user can re-try with a different address.
+                error = "not_a_sonicare"
+            else:
+                error = "cannot_connect"
+
+        if error == "not_paired":
+            return await self.async_step_not_paired()
+
+        if manual:
+            if error == "asleep":
+                return self.async_abort(reason="device_asleep")
+            if error == "unknown":
+                error = "cannot_connect"
+            self._manual_error = error
+            return await self.async_step_user_bleak()
+
+        # Keep the discovery flow alive — an abort would dismiss the
+        # discovery card, and ADV deduplication stops HA from re-creating
+        # it when the brush wakes.
+        if error == "asleep":
+            self._confirm_status = (
+                '<ha-alert alert-type="error">The toothbrush is asleep — '
+                "wake it (press the power button or lift it off the "
+                "charger), then click Submit again.</ha-alert>\n\n"
+            )
+        else:
+            self._confirm_status = (
+                '<ha-alert alert-type="error">Could not read the toothbrush. '
+                "Make sure it is awake and in range, then click Submit to "
+                "try again.</ha-alert>\n\n"
+            )
+        return await self.async_step_bluetooth_confirm()
 
     # ------------------------------------------------------------------
     # Manual flow — menu: choose connection type
@@ -1325,7 +1548,16 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle manual MAC address entry for direct BLE."""
+        # Progress re-invocations of a running probe land here.
+        if (progress := self._ble_probe_progress("user_bleak")) is not None:
+            return progress
+
         errors: dict[str, str] = {}
+        # One-shot outcome from ble_probe_finish (this form has a schema,
+        # so errors[] renders normally here).
+        if self._manual_error:
+            errors["base"] = self._manual_error
+            self._manual_error = ""
 
         if user_input is not None:
             raw = user_input[CONF_ADDRESS]
@@ -1340,40 +1572,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
                 self._address = address
                 self._name = address
-
-                try:
-                    self._fetched_data = await self._fetch_with_pair_retry(address)
-                    # Refuse to create an entry if the GATT probe never
-                    # established a connection. ``connection_path`` is set by
-                    # ``_async_fetch_capabilities`` only after a live client
-                    # is in hand — its absence means we have no evidence the
-                    # device is reachable at this address (out of range,
-                    # rotated RPA, no slot). Creating an entry anyway would
-                    # leave the user with a permanently "Initializing"
-                    # device and no actionable feedback in the UI.
-                    if "connection_path" not in self._fetched_data:
-                        errors["base"] = "cannot_connect"
-                    else:
-                        has_device_info = any(
-                            self._fetched_data.get(k)
-                            for k in ("model", "serial", "firmware", "battery")
-                        )
-                        if has_device_info and self._has_sonicare_services(self._fetched_data):
-                            self._transport_type = TRANSPORT_BLEAK
-                            return await self.async_step_show_capabilities()
-                        # Connect succeeded but the device didn't expose any
-                        # Sonicare service / DeviceInfo we could read. Don't
-                        # create an empty entry that would just sit in
-                        # "Initializing" forever — surface as an error so
-                        # the user can re-try with a different address.
-                        errors["base"] = "not_a_sonicare"
-                except DeviceAsleepException:
-                    return self.async_abort(reason="device_asleep")
-                except NotPairedException:
-                    return await self.async_step_not_paired()
-                except Exception:
-                    _LOGGER.exception("Unexpected error during manual setup")
-                    errors["base"] = "cannot_connect"
+                return self._start_ble_probe("user_bleak", address)
 
         # Free-text entry path: nothing to discover, or user asked for it.
         if self._manual_address_entry:
@@ -1405,6 +1604,18 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 label_parts.append(f"{age_s}s ago")
             if rssi is not None:
                 label_parts.append(f"{rssi} dBm")
+            # Name the scanner that will likely carry the connect — the
+            # step is titled "Direct Bluetooth", but habluetooth routes
+            # by signal strength and may pick a bluetooth_proxy. Local
+            # scanner names carry the adapter MAC in parentheses; strip
+            # it to keep the label compact ("hci0" / "atom-lite (proxy)").
+            paths = describe_available_paths(self.hass, info.address)
+            if paths:
+                best = paths[0]
+                via = str(best["name"]).split(" (")[0]
+                label_parts.append(
+                    f"via {via}" + ("" if best["is_local"] else " (proxy)")
+                )
             label = label_parts[0] + (" — " + ", ".join(label_parts[1:]) if len(label_parts) > 1 else "")
             scored.append((
                 age_s if age_s is not None else 9999,
@@ -1504,6 +1715,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             if selected in self._configured_bridge_ids:
                 return self.async_abort(reason="already_configured")
             self._esp_bridge_id = selected
+            # Reuse the probe this picker was rendered from for the slot the
+            # user just chose — scopes the cache to this one hop.
+            self._seed_bridge_info_from_probe()
             return await self._esp_bridge_health_check()
 
         # Collect MACs already configured for this integration
@@ -1565,6 +1779,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         ]
         if len(unconfigured) == 1 and len(options) == 1:
             self._esp_bridge_id = unconfigured[0]["value"]
+            # Sole slot auto-selected — same picker probe, same one-hop reuse.
+            self._seed_bridge_info_from_probe()
             return await self._esp_bridge_health_check()
 
         # Default to first unconfigured option so users don't have to deselect
@@ -1654,8 +1870,51 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             return await self.async_step_esp_slot_action()
         return await self.async_step_esp_bridge_status()
 
+    def _seed_bridge_info_from_probe(self) -> None:
+        """Seed ``_bridge_info`` from the picker's slot probe.
+
+        The picker probes every slot via ble_get_info to build its option
+        labels; for the slot the user just picked, that payload is exactly
+        what the health check would otherwise fetch again. Seeding it here
+        lets the immediately-following health check skip a redundant
+        roundtrip (seconds on a busy bridge).
+
+        Called ONLY from the picker-submit paths, so the reuse is scoped
+        to the one hop picker -> health check. Every other entry into the
+        health check (discovery auto-route, post-pair, post-unpair) leaves
+        ``_bridge_info`` None and fetches fresh, because the slot's bonded
+        state may have changed since the picker rendered.
+        """
+        cached = self._probed_bridges.get(self._esp_device_name or "")
+        if not cached:
+            return
+        bridge_id = self._esp_bridge_id or ""
+        for did, info in cached:
+            # Cached did is detection-form (lowercase); compare
+            # case-insensitively, same as _resolve_friendly_name.
+            if did.lower() != bridge_id.lower():
+                continue
+            self._bridge_info = {
+                "version": info.get("version") or "?",
+                "ble_connected": info.get("ble_connected", "false"),
+                "mac": info.get("mac", ""),
+                "paired": info.get("paired", ""),
+                "mode": info.get("mode", "external"),
+                "pair_capable": info.get("pair_capable", "false"),
+                "pair_mode_active": info.get("pair_mode_active", "false"),
+                "identity_address": info.get("identity_address", ""),
+                "friendly_name": info.get("friendly_name", ""),
+                "area": info.get("area", ""),
+            }
+            return
+
     async def _esp_bridge_health_check(self) -> FlowResult:
-        """Run bridge health check and proceed to status step."""
+        """Run bridge health check and proceed to status step.
+
+        ``_bridge_info`` is already populated when the picker seeded it
+        (``_seed_bridge_info_from_probe``) or a prior step filled it;
+        otherwise we fetch it live from the bridge here.
+        """
         if self._bridge_info:
             return await self._route_after_health_check()
 
@@ -1940,24 +2199,37 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders=placeholders,
         )
 
-    def _pair_target_placeholders(self) -> dict[str, str]:
-        """Placeholders identifying the bridge being paired/reset.
+    def _esp_target_label(
+        self,
+        esp_device_name: str | None = None,
+        esp_bridge_id: str | None = None,
+    ) -> str:
+        """Human label for an ESP bridge slot: ``<node> / <slot>``.
 
-        Prefers YAML ``friendly_name`` when set (matches the slot picker
-        label the user just saw), falls back to the technical identifier.
+        Leads with the ESP node name so a multi-bridge setup shows which
+        bridge carries the connection, then the slot's YAML
+        ``friendly_name`` (or the ``bridge_id`` when the slot is unnamed).
+        Single-bridge nodes with no slot id collapse to just the node.
+        Defaults to current flow state; mid-fetch callers pass explicit
+        values.
         """
-        device = self._esp_device_name or ""
-        friendly = self._resolve_friendly_name()
-        if friendly:
-            target = friendly
-        elif self._esp_bridge_id:
-            target = f"{device} / {self._esp_bridge_id}"
-        else:
-            target = device
+        device = (
+            esp_device_name if esp_device_name is not None
+            else self._esp_device_name
+        ) or ""
+        bridge_id = (
+            esp_bridge_id if esp_bridge_id is not None
+            else self._esp_bridge_id
+        ) or ""
+        slot = self._resolve_friendly_name(esp_device_name, esp_bridge_id) or bridge_id
+        return f"{device} / {slot}" if slot else device
+
+    def _pair_target_placeholders(self) -> dict[str, str]:
+        """Placeholders identifying the bridge being paired/reset."""
         return {
-            "device_name": device,
+            "device_name": self._esp_device_name or "",
             "bridge_id": self._esp_bridge_id or "",
-            "target": target,
+            "target": self._esp_target_label(),
             # Optional one-shot notice slot (request_pair success alert).
             # Empty by default; every step that renders it must supply it.
             "notice": "",
@@ -2090,17 +2362,34 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         return True
 
     async def _async_scan_and_bond(self) -> dict[str, str]:
-        """Wait for pair_complete / pair_timeout from the bridge."""
+        """Wait for pair_complete / pair_timeout from the bridge.
+
+        Ticks the determinate progress bar along the bridge's 60 s pair
+        window while waiting — the only feedback the user gets during a
+        wait this long. ``shield`` keeps the per-tick ``wait_for`` from
+        cancelling the shared future.
+        """
         if self._pair_future is None:  # arming always sets it; defensive
             return {"error": "unknown"}
         timeout_s = 60
-        try:
-            # Wait slightly longer than the bridge's own timeout so its
-            # pair_timeout event can arrive before we give up.
-            return await asyncio.wait_for(self._pair_future, timeout=timeout_s + 5)
-        except asyncio.TimeoutError:
-            _LOGGER.warning("Pair-mode wait timed out (no event received)")
-            return {"status": "pair_timeout"}
+        loop = self.hass.loop
+        start = loop.time()
+        # Wait slightly longer than the bridge's own timeout so its
+        # pair_timeout event can arrive before we give up.
+        deadline = start + timeout_s + 5
+        while True:
+            now = loop.time()
+            if now >= deadline:
+                _LOGGER.warning("Pair-mode wait timed out (no event received)")
+                return {"status": "pair_timeout"}
+            self._bump_progress((now - start) / timeout_s)
+            try:
+                return await asyncio.wait_for(
+                    asyncio.shield(self._pair_future),
+                    timeout=min(2.0, deadline - now),
+                )
+            except asyncio.TimeoutError:
+                continue
 
     async def async_step_pair_finish(
         self, user_input: dict[str, Any] | None = None
@@ -2220,6 +2509,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # drop the user back onto the still-bonded status screen unexplained.
         if outcome == UNPAIR_OK:
             # pair_capable=true again — refetch info, then re-pair.
+            # Clearing _bridge_info forces a fresh ble_get_info: the health
+            # check only reuses the picker snapshot when a picker-submit
+            # path seeded it (_seed_bridge_info_from_probe), and this is not
+            # one, so pair_capable/paired reflect the just-cleared slot.
+            # _just_unpaired drives the request_pair success notice.
             self._bridge_info = None
             self._just_unpaired = True
             return await self._esp_bridge_health_check()
@@ -2334,7 +2628,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         path = self._fetched_data.get("connection_path")
         connection_status = self._get_connection_status_text(
-            self._transport_type, path
+            self._transport_type, path, via_proxy=bool(self._probe_via_proxy)
         )
 
         return self.async_show_form(

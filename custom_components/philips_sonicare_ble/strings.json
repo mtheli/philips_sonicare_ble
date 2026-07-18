@@ -14,7 +14,7 @@
     "step": {
       "bluetooth_confirm": {
         "title": "Confirm Philips Sonicare",
-        "description": "{status}**{name}** discovered at `{address}` via Direct Bluetooth.\n\nMake sure your toothbrush is **turned on** (press the button), then click **Submit**."
+        "description": "{status}**{name}** discovered at `{address}`{via}.\n\n{transport}**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
       },
       "user": {
         "title": "Add Philips Sonicare",
@@ -26,7 +26,7 @@
       },
       "user_bleak": {
         "title": "Direct Bluetooth",
-        "description": "Select or enter BLE address of your Sonicare toothbrush.\n\n**Important:** Turn on your toothbrush before clicking Submit. The brush must be active during setup so that services can be read.",
+        "description": "Select or enter BLE address of your Sonicare toothbrush.\n\n**Important:** **Switch on your Sonicare** (press the power button or pick it up from the charger) before clicking Submit — it must stay on so its services can be read.",
         "data": {
           "address": "BLE Address"
         }
@@ -58,22 +58,22 @@
       },
       "esp_bridge_status": {
         "title": "Connection via ESP32 Bridge",
-        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n{status}\n\nMake sure the toothbrush is **turned on** (press button or pick up from charger) and **keep it on**, then click **Read capabilities** to finish setup.",
+        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n{status}\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to finish setup.",
         "submit": "Read capabilities"
       },
       "esp_bridge_status_connected": {
         "title": "Connection via ESP32 Bridge",
-        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n{status}\n\nThe bridge is already connected to your toothbrush. **Keep the toothbrush switched on** — click **Read capabilities** to finish setup.",
+        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n{status}\n\nThe bridge is already connected to your toothbrush. **Keep your Sonicare switched on** — click **Read capabilities** to finish setup.",
         "submit": "Read capabilities"
       },
       "request_pair": {
         "title": "Pair toothbrush with bridge",
-        "description": "{notice}Slot **{target}** has no toothbrush bonded yet.\n\n1. **Switch on** the Sonicare you want to bond and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.\n2. Click **Start pairing**. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.",
+        "description": "{notice}Slot **{target}** has no toothbrush bonded yet.\n\n1. **Switch on** the Sonicare you want to bond (press the power button or pick it up from the charger) and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.\n2. Click **Start pairing**. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.",
         "submit": "Start pairing"
       },
       "reset_bridge": {
         "title": "Reset bridge bond",
-        "description": "{error}Bridge **{target}** is currently bonded to **{identity_address}**.\n\nClicking **Submit** will remove the BLE bond on the bridge and clear the saved identity. After that you can pair a different Sonicare.\n\nThe Sonicare keeps its own half of the bond, but there's nothing to clear on the brush itself — re-pairing this same brush later works without any extra steps.",
+        "description": "{error}Slot **{target}** is currently bonded to **{identity_address}**.\n\nClicking **Submit** will remove the BLE bond on the bridge and clear the saved identity. After that you can pair a different Sonicare.\n\nThe Sonicare keeps its own half of the bond, but there's nothing to clear on the brush itself — re-pairing this same brush later works without any extra steps.",
         "submit": "Unpair and reset"
       },
       "show_capabilities": {
@@ -103,9 +103,10 @@
       "not_a_sonicare": "Connected to the device, but no Philips Sonicare characteristics were found. Check that the address belongs to a Sonicare toothbrush.",
       "pairing_failed": "Device is still not paired. Make sure the toothbrush is awake and try pairing again.",
       "pair_timeout": "No Sonicare paired within the time window. Press the toothbrush's power button to wake it and try again.",
-      "unknown": "Unexpected error. Check the logs for details."
+      "unknown": "Unexpected error. Check the logs (Settings → System → Logs) for details."
     },
     "progress": {
+      "ble_probing": "Connecting to {name} and reading its data — this can take up to half a minute…",
       "pair_arming": "Arming pair-mode on {target}…",
       "pair_scanning": "Looking for your Sonicare and bonding — switch it on and hold it within ~1 m of the bridge. This can take up to a minute.",
       "unpairing": "Removing the bond on {target}…",

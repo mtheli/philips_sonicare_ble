@@ -182,13 +182,20 @@ def test_progress_strings_present_and_placeholder_safe() -> None:
         / "custom_components"
         / "philips_sonicare_ble"
     )
+    # Placeholders each progress string may use — they must match what the
+    # showing step passes via description_placeholders.
+    allowed = {
+        "pair_arming": {"target"},
+        "pair_scanning": {"target"},
+        "unpairing": {"target"},
+        "esp_reading": {"target"},
+        "ble_probing": {"name"},
+    }
     for name in ("strings.json", "translations/en.json"):
         data = json.loads((comp / name).read_text(encoding="utf-8"))
         progress = data["config"]["progress"]
-        assert {"pair_arming", "pair_scanning"} <= set(progress), name
-        arming_ph = set(re.findall(r"\{(\w+)\}", progress["pair_arming"]))
-        assert arming_ph <= {"target"}, name
-        for text in progress.values():
-            # only the neutral {target} placeholder, no HTML (hassfest)
-            assert set(re.findall(r"\{(\w+)\}", text)) <= {"target"}, name
+        assert set(progress) == set(allowed), name
+        for key, text in progress.items():
+            # only known placeholders, no HTML (hassfest)
+            assert set(re.findall(r"\{(\w+)\}", text)) <= allowed[key], name
             assert "<" not in text, name

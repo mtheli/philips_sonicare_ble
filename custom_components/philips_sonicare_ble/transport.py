@@ -17,6 +17,7 @@ from bleak import BleakClient
 from bleak_retry_connector import establish_connection as bleak_establish
 
 from homeassistant.components.bluetooth import (
+    HaScanner,
     async_last_service_info,
     async_scanner_by_source,
     async_scanner_devices_by_address,
@@ -140,6 +141,41 @@ def describe_connection_path(
         return type(backend).__name__
     except Exception as err:  # noqa: BLE001
         return f"unknown ({err})"
+
+
+def describe_available_paths(
+    hass: HomeAssistant, address: str
+) -> list[dict[str, object]]:
+    """Connectable scanners currently seeing *address*, strongest first.
+
+    Predicts habluetooth's backend choice before a connect exists:
+    connects are ranked by an RSSI-based score, so the strongest entry
+    here is the likely carrier. Each entry:
+    ``{"name": str, "rssi": int | None, "is_local": bool}`` where
+    ``is_local`` means the local BlueZ stack (``HaScanner``) as opposed
+    to a remote scanner such as an ESPHome bluetooth_proxy.
+    """
+    paths: list[dict[str, object]] = []
+    try:
+        for sd in async_scanner_devices_by_address(hass, address, connectable=True):
+            scanner = sd.scanner
+            name = (
+                getattr(scanner, "name", None)
+                or getattr(scanner, "source", None)
+                or "?"
+            )
+            paths.append({
+                "name": name,
+                "rssi": getattr(sd.advertisement, "rssi", None),
+                "is_local": isinstance(scanner, HaScanner),
+            })
+    except Exception:  # noqa: BLE001 — preview only, never break the flow
+        return []
+    paths.sort(
+        key=lambda p: p["rssi"] if isinstance(p["rssi"], int) else -999,
+        reverse=True,
+    )
+    return paths
 
 
 def is_local_bluez_connection(client: BleakClient) -> bool:
