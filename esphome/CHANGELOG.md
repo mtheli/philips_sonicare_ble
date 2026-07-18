@@ -1,5 +1,16 @@
 # ESP Bridge Changelog
 
+## v1.9.0 — 2026-07-19
+
+- **New `ble_unpair_mac` service.** Clears a bond by MAC address from the
+  controller's shared NVS bond store, independent of any bridge slot's
+  identity — useful for an orphaned bond that no slot can target through the
+  existing `ble_unpair`. Because the bond store is node-wide, the service is
+  registered once per node (not per `bridge_id`), so a multi-slot board
+  exposes a single `<node>_ble_unpair_mac` instead of one copy per slot. No
+  integration change and no re-configuration needed; `MIN_BRIDGE_VERSION`
+  stays 1.4.0.
+
 ## v1.8.0 — 2026-07-09
 
 - **Bridge answers the newer-protocol change-indication acknowledgment
