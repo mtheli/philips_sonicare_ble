@@ -63,12 +63,12 @@ See [Configuration](#configuration) for setup instructions.
 | **DiamondClean Prestige** | | | |
 | [HX999X](https://www.usa.philips.com/c-p/HX9990_11/sonicare-9900-prestige-power-toothbrush-with-senseiq) | :white_check_mark: | :white_check_mark: | Maintainer, Community ([forum](https://community.home-assistant.io/t/philips-sonicare-ble-toothbrush-integration-with-30-sensors/999515/5)) |
 | **Series 7100** | | | |
-| [HX742X](https://www.usa.philips.com/c-p/HX7423_43/sonicare-7100) | :white_check_mark: | :white_check_mark: | Maintainer, Community ([#4](https://github.com/mtheli/philips_sonicare_ble/issues/4), [#13](https://github.com/mtheli/philips_sonicare_ble/issues/13)) |
+| [HX742X](https://www.usa.philips.com/c-p/HX7423_43/sonicare-7100) | :white_check_mark: | :white_check_mark: | Maintainer, Community ([#4](https://github.com/mtheli/philips_sonicare_ble/issues/4), [#13](https://github.com/mtheli/philips_sonicare_ble/issues/13), [#27](https://github.com/mtheli/philips_sonicare_ble/issues/27)) |
 
 Any BLE-enabled Philips Sonicare toothbrush using either the standard protocol or the newer Condor protocol (HX742X / Series 7100) should work (Sonicare For Kids, ExpertClean, DiamondClean Smart, DiamondClean 9000, DiamondClean Prestige, Series 7100, and more). The integration auto-discovers compatible devices via BLE and selects the right protocol automatically. If you have a different model — happy to hear your test results!
 
 > [!NOTE]
-> Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100) require **BLE bonding**. The integration detects this automatically and pairs the device during setup. Models like DiamondClean Smart and Sonicare For Kids use open GATT and connect without pairing. Series 7100 brushes additionally use a **rolling private address (RPA)** that changes every few minutes — bonding is what allows the host to follow the brush across address rotations.
+> Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100) require **BLE bonding**. The integration detects this automatically and pairs the device during setup. Models like DiamondClean Smart and Sonicare For Kids use open GATT and connect without pairing. Series 7100 brushes additionally use a **rolling private address (RPA)** that can change as often as every ~15–20 seconds — bonding is what allows the host to follow the brush across address rotations. Bonding also needs a host adapter with a working SMP implementation; some cheap USB dongles can't complete it (see [Known Issues](docs/KNOWN_ISSUES.md#some-usb-dongles-cannot-complete-smp-bonding)).
 
 ---
 
@@ -211,7 +211,7 @@ The integration supports three connection methods:
 4.  The confirmation dialog shows the current brush status and detected services, and a **Name** field pre-filled with a model + MAC-suffix default (e.g. `Sonicare HX9352 (3456)`). Edit it now if you have several brushes of the same model — you can also rename later via Settings → Devices. Make sure the toothbrush is **turned on** (status shows "Active") before clicking **Submit**.
 
 > [!TIP]
-> Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100) require BLE bonding -- the integration detects this automatically and pairs the device during setup via D-Bus. If auto-pairing is not available (e.g. HAOS without D-Bus), manual pairing instructions are shown. Series 7100 brushes also rotate their advertised BLE address (RPA) every few minutes, so an unbonded brush appears under different MACs on each scan; bonding pins it to a stable identity. Simply close the Sonicare phone app to free the BLE connection.
+> Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100) require BLE bonding -- the integration detects this automatically and pairs the device during setup via D-Bus. If auto-pairing is not available (e.g. HAOS without D-Bus), manual pairing instructions are shown. Series 7100 brushes also rotate their advertised BLE address (RPA) — on some units as often as every ~15–20 seconds — so an unbonded brush appears under different MACs on each scan; bonding pins it to a stable identity. If pairing times out repeatedly on a cheap USB dongle, see [Known Issues](docs/KNOWN_ISSUES.md#some-usb-dongles-cannot-complete-smp-bonding). Simply close the Sonicare phone app to free the BLE connection.
 
 <details>
 <summary>Manual Pairing (fallback when auto-pairing fails)</summary>

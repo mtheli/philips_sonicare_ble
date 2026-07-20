@@ -263,6 +263,56 @@ sees only what `habluetooth` delivers; the starvation sits one layer down.
 
 ---
 
+## Some USB dongles cannot complete SMP bonding
+
+**Status:** Hardware limitation of the adapter's SMP implementation, no integration-side fix
+
+The bonding-required models (ExpertClean HX962X, DiamondClean 9000
+HX991X/HX991M, DiamondClean Prestige HX999X, Series 7100 HX742X) need a
+successful **SMP bonding handshake** during setup. Some cheap USB Bluetooth
+dongles connect fine but never complete that handshake — the pairing runs
+into a timeout on every attempt, while the very same brush bonds immediately
+on a different adapter on the same host.
+
+### Symptoms
+
+- Config flow ends with **"Pairing timed out after 30s"**, repeatably — the
+  connection itself is established and held, it is the pairing step that
+  never finishes.
+- Manual `bluetoothctl` pairing fails with `org.bluez.Error.AuthenticationCanceled`.
+- Moving the *same* setup to another adapter (e.g. the Raspberry Pi's
+  built-in radio) bonds within one or two attempts.
+
+### Confirmed affected adapter
+
+- Generic "100 m long-range" BT 5.3 USB dongle with an **Actions**
+  chipset (Bluetooth company ID `0x03E0`), sold under UGREEN and many
+  other brand names — reported in
+  [issue #27](https://github.com/mtheli/philips_sonicare_ble/issues/27)
+  against a Series 7100 (HX742X). The Pi's built-in Cypress radio bonded
+  the same brush on the second try.
+
+Not every pairing failure is the adapter, though. If pairing fails,
+update to the latest release and try the
+[manual pairing script](../README.md#option-a-direct-bluetooth) first —
+only when the handshake times out consistently on one adapter and
+succeeds on another is the dongle the culprit.
+
+### Mitigations
+
+1. **Use a bonding-capable adapter** — the Raspberry Pi's built-in radio,
+   Intel AX200/AX210-class M.2 combos, or a genuine CSR8510A10 dongle.
+2. **Use the [ESP32 BLE Bridge](../esphome/SETUP.md)** — it performs the
+   bonding on the ESP32 itself, taking the host adapter out of the
+   equation entirely.
+
+Note that the cheap dongles affected here overlap heavily with the
+adapters described in
+[the scanning limitation above](#budget-bt-adapters-cant-scan-while-a-gatt-connection-is-active) —
+if a dongle fails at bonding, it is usually also a poor scanner.
+
+---
+
 ## Toothbrush not reachable on charger
 
 **Status:** By design (hardware behavior)
