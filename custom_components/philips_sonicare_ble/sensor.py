@@ -174,6 +174,7 @@ async def async_setup_entry(
     # ESP bridge sub-device sensor (only for ESP transport)
     if entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE:
         entities.append(SonicareBridgeVersionSensor(coordinator, entry))
+        entities.append(SonicareBridgeBuildSensor(coordinator, entry))
         entities.append(SonicareBridgeBootTimeSensor(coordinator, entry))
 
     async_add_entities(entities)
@@ -1137,6 +1138,49 @@ class SonicareBridgeVersionSensor(PhilipsConnectionEntity, SensorEntity):
     def native_value(self) -> str | None:
         transport = self.coordinator.transport
         return getattr(transport, "bridge_version", None)
+
+
+# ---------------------------------------------------------------------------
+# ESP Bridge Build (on bridge sub-device)
+# ---------------------------------------------------------------------------
+class SonicareBridgeBuildSensor(PhilipsConnectionEntity, SensorEntity):
+    """Build environment of the running bridge firmware.
+
+    The same bridge version can sit on different ESPHome/ESP-IDF stacks,
+    which behave differently at runtime (Bluedroid fixes ship via ESP-IDF)
+    — so surface what the firmware was actually compiled with. Reported by
+    bridge firmware >= 1.10.0; stays unknown on older firmware.
+    """
+
+    _attr_translation_key = "bridge_build"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:hammer-wrench"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_bridge_build"
+
+    @property
+    def native_value(self) -> str | None:
+        transport = self.coordinator.transport
+        esphome = getattr(transport, "esphome_version", None)
+        idf = getattr(transport, "idf_version", None)
+        parts = []
+        if esphome:
+            parts.append(f"ESPHome {esphome}")
+        if idf:
+            parts.append(f"IDF {idf}")
+        return " / ".join(parts) if parts else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str] | None:
+        transport = self.coordinator.transport
+        attrs = {}
+        if esphome := getattr(transport, "esphome_version", None):
+            attrs["esphome_version"] = esphome
+        if idf := getattr(transport, "idf_version", None):
+            attrs["idf_version"] = idf
+        return attrs or None
 
 
 # ---------------------------------------------------------------------------

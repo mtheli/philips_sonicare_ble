@@ -271,10 +271,13 @@
         "name": "NFC Payload"
       },
       "bridge_version": {
-        "name": "Version"
+        "name": "Bridge Version"
+      },
+      "bridge_build": {
+        "name": "ESP Build"
       },
       "bridge_boot_time": {
-        "name": "Bridge Last Boot"
+        "name": "ESP Last Boot"
       },
       "model_number": {
         "name": "Model Number"
@@ -340,7 +343,7 @@
         "name": "Pressure Alert"
       },
       "esp_bridge_alive": {
-        "name": "ESP Bridge"
+        "name": "ESP Connected"
       },
       "ble_connected": {
         "name": "BLE Connected"

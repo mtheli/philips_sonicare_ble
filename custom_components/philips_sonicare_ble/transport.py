@@ -549,6 +549,11 @@ class EspBridgeTransport(SonicareTransport):
         self._notify_callbacks: dict[str, Callable[[str, bytes], None]] = {}
         self._detected_mac: str | None = address if ":" in address else None
         self._bridge_version: str | None = None
+        # Build environment reported by the bridge (info events, firmware
+        # >= 1.10.0): which ESPHome/ESP-IDF the running firmware was built
+        # with. Purely diagnostic — surfaced by the ESP Build sensor.
+        self._esphome_version: str | None = None
+        self._idf_version: str | None = None
         self._pending_info: asyncio.Future[dict[str, str]] | None = None
         self._ble_paired: str | None = None
         self._needs_resubscribe = False
@@ -626,6 +631,14 @@ class EspBridgeTransport(SonicareTransport):
     @property
     def bridge_version(self) -> str | None:
         return self._bridge_version
+
+    @property
+    def esphome_version(self) -> str | None:
+        return self._esphome_version
+
+    @property
+    def idf_version(self) -> str | None:
+        return self._idf_version
 
     @property
     def auto_tx_ack(self) -> bool:
@@ -765,6 +778,16 @@ class EspBridgeTransport(SonicareTransport):
                         )
                     except Exception:  # noqa: BLE001 — unparseable (dev build)
                         self._pipelined_reads = False
+
+            # Build-environment fields ride on info events only (not on
+            # heartbeats), so keep the last seen value.
+            for key, attr in (
+                ("esphome_version", "_esphome_version"),
+                ("idf_version", "_idf_version"),
+            ):
+                value = event.data.get(key)
+                if value:
+                    setattr(self, attr, str(value).strip().strip("\"'").strip())
 
             self._last_heartbeat = time.monotonic()
             was_alive = self._esp_alive
