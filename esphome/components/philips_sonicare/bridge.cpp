@@ -116,7 +116,7 @@ void SonicareBridge::loop() {
 
   this->last_heartbeat_ms_ = now;
   char uptime_str[16];
-  snprintf(uptime_str, sizeof(uptime_str), "%u", now / 1000);
+  snprintf(uptime_str, sizeof(uptime_str), "%u", (unsigned) (now / 1000));
 
   // Heartbeat is HA-driven (timer-based), not tied to a BLE state change,
   // so we fire the event directly instead of going through the Coordinator's
@@ -149,12 +149,15 @@ void SonicareBridge::loop() {
 
 void SonicareBridge::dump_config() {
   ESP_LOGCONFIG(this->log_tag_.c_str(), "Philips Sonicare Bridge v%s", PHILIPS_SONICARE_VERSION);
-  if (!this->bridge_id_.empty())
+  if (!this->bridge_id_.empty()) {
     ESP_LOGCONFIG(this->log_tag_.c_str(), "  Bridge ID: %s", this->bridge_id_.c_str());
-  if (!this->friendly_name_.empty())
+  }
+  if (!this->friendly_name_.empty()) {
     ESP_LOGCONFIG(this->log_tag_.c_str(), "  Friendly Name: %s", this->friendly_name_.c_str());
-  if (!this->area_.empty())
+  }
+  if (!this->area_.empty()) {
     ESP_LOGCONFIG(this->log_tag_.c_str(), "  Area: %s", this->area_.c_str());
+  }
 }
 
 void SonicareBridge::fire_event(const std::string &event_type,

@@ -1,5 +1,29 @@
 # ESP Bridge Changelog
 
+## v1.10.0 — 2026-07-21
+
+- **Bridge reports its build environment.** `ble_get_info` now includes
+  `esphome_version` and `idf_version` — which ESPHome/ESP-IDF the running
+  firmware was compiled with. The same bridge version behaves differently
+  depending on the underlying stack (Bluedroid fixes ship via ESP-IDF), so
+  this answers the first support question of any bug report automatically.
+  Surfaced in Home Assistant as the new "ESP Build" diagnostic
+  sensor. `MIN_BRIDGE_VERSION` stays 1.4.0 (fields are optional).
+- **Warning-free builds under the ESPHome 2026.7 native toolchain.** Fixed
+  `-Wformat` warnings (uint32_t is `long unsigned int` on the newer
+  toolchain) and `-Wempty-body` warnings in `dump_config()`. No behavior
+  change.
+- **Compile-time guard against the Bluedroid GATT-cache crash.** Building
+  with the persistent GATT service cache enabled (`bluetooth_proxy:` with its
+  default `cache_services: true`, or `CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"`)
+  on an ESP-IDF version affected by [esphome#15783](https://github.com/esphome/esphome/issues/15783)
+  (< 5.5.5, or 6.0.0–6.0.1) now aborts validation with instructions instead
+  of producing a firmware that boot-loops during service discovery. Builds
+  that wire up the `bluedroid_null_fix.py` pre-build patch are allowed
+  through with a reminder that the patch is obsolete from ESPHome 2026.7.1
+  (which bundles the fixed ESP-IDF 5.5.5). Build-time change only — no
+  firmware behavior change, no version bump.
+
 ## v1.9.0 — 2026-07-19
 
 - **New `ble_unpair_mac` service.** Clears a bond by MAC address from the

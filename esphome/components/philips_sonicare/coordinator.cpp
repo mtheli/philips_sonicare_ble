@@ -2,6 +2,7 @@
 #include "bridge.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/version.h"
 #include "esp_system.h"
 
 namespace espbt = esphome::esp32_ble_tracker;
@@ -176,7 +177,7 @@ void SonicareCoordinator::on_loop(uint32_t now_ms) {
              "ATT op got no response in %us (read=0x%04X probe=0x%04X "
              "write=0x%04X reg=%u cccd=%u retry=%d smp=%d) — clearing, "
              "draining %u queued call(s)",
-             ATT_WATCHDOG_MS / 1000, this->pending_handle_,
+             (unsigned) (ATT_WATCHDOG_MS / 1000), this->pending_handle_,
              this->probe_handle_, this->write_handle_,
              (unsigned) this->reg_notify_pending_,
              (unsigned) this->pending_cccd_writes_,
@@ -1881,16 +1882,16 @@ void SonicareCoordinator::list_services() {
 
 std::map<std::string, std::string> SonicareCoordinator::collect_info_data() {
   char uptime_str[16];
-  snprintf(uptime_str, sizeof(uptime_str), "%u", millis() / 1000);
+  snprintf(uptime_str, sizeof(uptime_str), "%u", (unsigned) (millis() / 1000));
 
   char heap_str[16];
-  snprintf(heap_str, sizeof(heap_str), "%u", (uint32_t) esp_get_free_heap_size());
+  snprintf(heap_str, sizeof(heap_str), "%u", (unsigned) esp_get_free_heap_size());
 
   char subs_str[8];
-  snprintf(subs_str, sizeof(subs_str), "%u", (uint32_t) this->notify_map_.size());
+  snprintf(subs_str, sizeof(subs_str), "%u", (unsigned) this->notify_map_.size());
 
   char throttle_str[16];
-  snprintf(throttle_str, sizeof(throttle_str), "%u", this->notify_throttle_ms_);
+  snprintf(throttle_str, sizeof(throttle_str), "%u", (unsigned) this->notify_throttle_ms_);
 
   // Check bond status
   int bond_count = esp_ble_get_bond_device_num();
@@ -1939,6 +1940,12 @@ std::map<std::string, std::string> SonicareCoordinator::collect_info_data() {
   if (!this->model_number_.empty()) {
     info["model"] = this->model_number_;
   }
+
+  // Build environment of the running firmware. The same bridge version
+  // behaves differently depending on the underlying stack (Bluedroid fixes
+  // ship via ESP-IDF), so surface both for support/diagnostics.
+  info["esphome_version"] = ESPHOME_VERSION;
+  info["idf_version"] = esp_get_idf_version();
 
   ESP_LOGI(this->log_tag_.c_str(),
            "Info: v%s uptime=%ss heap=%s subs=%s name=%s model=%s",
