@@ -2,12 +2,15 @@ esphome:
   name: esp32-ble-bridge
   friendly_name: "ESP32 BLE Bridge"
   # Optional: bluedroid_null_fix.py cherry-picks the NULL pointer guards
-  # from ESP-IDF commit d4f3517 into the build. Uncomment the
-  # platformio_options block below if you opt into either:
+  # from ESP-IDF commit d4f3517 into the build. Only needed on
+  # ESPHome < 2026.7.1 (ESP-IDF < 5.5.5) when you opt into either:
   #   - CONFIG_BT_GATTC_CACHE_NVS_FLASH (see sdkconfig_options below)
   #   - bluetooth_proxy: (see end of file)
-  # Both crash on ESP-IDF 5.5's bluedroid GATT cache path without the
-  # patch. Place the script next to this YAML in your ESPHome config dir.
+  # On those older builds both crash the bluedroid GATT cache path without
+  # the patch — the component aborts the build with instructions if you
+  # try. From ESPHome 2026.7.1 the fix ships upstream and this block can
+  # stay commented out. Place the script next to this YAML in your
+  # ESPHome config dir.
   #
   # platformio_options:
   #   extra_scripts:
@@ -25,10 +28,12 @@ esp32:
       CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"     # default 5; we subscribe to 11 chars
       # Optional: persist discovered GATT DB to NVS keyed by bonded peer
       # identity. First connect still does a full ~4s SDP; subsequent
-      # reconnects to the same brush hit the cache in tens of ms. Requires
+      # reconnects to the same brush hit the cache in tens of ms. On
+      # ESPHome < 2026.7.1 (ESP-IDF < 5.5.5) this additionally requires
       # the bluedroid_null_fix.py pre-script (uncomment platformio_options
       # at the top of this file) — without it the cache-save path crashes
-      # inside bta_gattc_cache_save on ESP-IDF 5.5.
+      # inside bta_gattc_cache_save, so the component refuses to build.
+      # From ESPHome 2026.7.1 the fix ships upstream.
       # CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"
 
 logger:
@@ -121,11 +126,13 @@ philips_sonicare:
 #     pin: GPIO2
 
 # --- Bluetooth Proxy (optional) ---
-# Uncomment to relay BLE for other devices through this ESP. Requires the
+# Uncomment to relay BLE for other devices through this ESP. On
+# ESPHome < 2026.7.1 (ESP-IDF < 5.5.5) this additionally requires the
 # bluedroid_null_fix.py patch (uncomment platformio_options at the top of
 # this file) to dodge ESP-IDF bug
 # https://github.com/esphome/esphome/issues/15783 — without the patch,
-# every GATT service discovery crashes the chip.
+# every GATT service discovery crashes the chip and the component refuses
+# to build. From ESPHome 2026.7.1 the fix ships upstream.
 #
 # bluetooth_proxy:
 #   active: true

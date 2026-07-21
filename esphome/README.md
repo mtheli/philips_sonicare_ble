@@ -59,7 +59,7 @@ multi-device setups) see [`SETUP.md`](SETUP.md).
 | File | Description |
 |------|-------------|
 | [`components/philips_sonicare/`](components/philips_sonicare/) | The C++ ESPHome external component. This is the actual bridge implementation — BLE client, GATT read/write/subscribe, bonding, and the HA event/service interface. |
-| [`atom-lite.yaml`](atom-lite.yaml) | Ready-to-flash config for the M5Stack Atom Lite, one toothbrush. `bluetooth_proxy` is disabled by default but prepared — uncomment the `bluetooth_proxy:` block and the `extra_scripts:` entry (both clearly marked in the file) to run the bridge and a proxy for other BLE devices in parallel. |
+| [`atom-lite.yaml`](atom-lite.yaml) | Ready-to-flash config for the M5Stack Atom Lite, one toothbrush. `bluetooth_proxy` is disabled by default but prepared — uncomment the `bluetooth_proxy:` block (and, only on ESPHome < 2026.7.1, the `extra_scripts:` entry — both clearly marked in the file) to run the bridge and a proxy for other BLE devices in parallel. |
 | [`atom-lite-dual.yaml`](atom-lite-dual.yaml) | Same board, but configured for **two** Sonicares via one bridge. Raises `BTA_GATTC_NOTIF_REG_MAX` and `BTA_GATTC_MAX_CACHE_CHAR` accordingly. `bluetooth_proxy` also off by default, same uncomment recipe as above. |
 | [`esp32-generic.yaml`](esp32-generic.yaml) | Generic ESP32 dev-board config (`esp32dev`). Use as a starting point for other boards. Same proxy opt-in pattern. |
 | [`bluedroid_null_fix.py`](bluedroid_null_fix.py) | Compile-time patch — see next section. |
@@ -97,14 +97,21 @@ the slot.
 ## Bluedroid NULL-check patch (`bluedroid_null_fix.py`)
 
 > [!IMPORTANT]
-> **If you enable `bluetooth_proxy:` in the same ESP config as this bridge,
-> the ESP will crash on boot** with a `LoadProhibited` / `bta_gattc_cache_save`
-> exception. This is an ESP-IDF bug (not specific to this integration) —
-> tracked in [esphome#15783](https://github.com/esphome/esphome/issues/15783).
+> **Fixed upstream in ESPHome 2026.7.1** (bundles ESP-IDF 5.5.5). If you
+> build with 2026.7.1 or newer, this section does not apply — no patch
+> needed. On older ESPHome versions, enabling `bluetooth_proxy:` in the
+> same ESP config as this bridge crashes the ESP on boot with a
+> `LoadProhibited` / `bta_gattc_cache_save` exception. This is an ESP-IDF
+> bug (not specific to this integration) — tracked in
+> [esphome#15783](https://github.com/esphome/esphome/issues/15783), fixed
+> by ESP-IDF commit [`d4f3517`](https://github.com/espressif/esp-idf/commit/d4f3517)
+> (shipped in ESP-IDF 5.5.5 / 6.0.2).
 
-Until ESP-IDF **v5.5.5** is released (still pending as of July 2026; it will
-contain the fix from ESP-IDF commit [`d4f3517`](https://github.com/espressif/esp-idf/commit/d4f3517)),
-compile the bridge with the pre-build script in this directory:
+The component checks for this at compile time: building the crash-prone
+combination (old ESP-IDF + GATT service cache enabled) aborts with clear
+instructions instead of producing a firmware that boot-loops. When stuck
+on an older ESPHome, either set `bluetooth_proxy: cache_services: false`,
+or compile the bridge with the pre-build script in this directory:
 
 ```yaml
 esphome:
@@ -121,9 +128,9 @@ in the compile log so you can verify it ran. The line only appears at
 **compile time**, not at runtime — check the "Install" output in the
 ESPHome dashboard, not the device's live log.
 
-Once ESP-IDF v5.5.5 ships, the `extra_scripts:` entry can be removed. The
-script is harmless to leave in place — it becomes a no-op against patched
-source.
+Once you update to ESPHome >= 2026.7.1, the `extra_scripts:` entry can be
+removed. The script is harmless to leave in place — it becomes a no-op
+against patched source.
 
 **If you only run this bridge and no `bluetooth_proxy:`, the patch is not
 required** — unless you also opt into the persisted GATT cache (next
@@ -139,9 +146,11 @@ service table in tens of ms. On a brush you reconnect to often this is
 the biggest single contributor to reconnect latency.
 
 The cache-save path crashes on the same NULL deref as the proxy bug, so
-this flag depends on the patch above. To opt in, uncomment the
-`CONFIG_BT_GATTC_CACHE_NVS_FLASH` line in your YAML (and the patch
-wiring at the top of `esphome:` if not already enabled).
+on ESPHome < 2026.7.1 this flag depends on the patch above — the
+component enforces this at compile time. From ESPHome 2026.7.1 on, no
+patch is needed. To opt in, uncomment the
+`CONFIG_BT_GATTC_CACHE_NVS_FLASH` line in your YAML (and, only on older
+ESPHome, the patch wiring at the top of `esphome:`).
 
 ## Pipelined GATT reads (bridge ≥ 1.7.0)
 

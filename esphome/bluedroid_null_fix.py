@@ -3,6 +3,11 @@ PlatformIO pre-build script: cherry-pick NULL pointer checks from ESP-IDF
 commit d4f3517 to fix LoadProhibited crash in bta_gattc_cache_save when
 bluetooth_proxy is active alongside ble_client.
 
+OBSOLETE from ESPHome 2026.7.1 on: that release bundles ESP-IDF 5.5.5,
+which contains the fix upstream. This script is only needed when building
+with older ESPHome/ESP-IDF versions. It is idempotent and becomes a no-op
+against already-fixed source, so leaving it wired up is harmless.
+
 Reference: https://github.com/espressif/esp-idf/commit/d4f3517
 Tracking:  https://github.com/esphome/esphome/issues/15783
 """

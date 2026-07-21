@@ -1,17 +1,25 @@
+import logging
 import zlib
 from pathlib import Path
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
+import esphome.final_validate as fv
 from esphome import automation
 from esphome.components import binary_sensor, ble_client, esp32_ble_tracker
 from esphome.const import (
+    CONF_ESPHOME,
     CONF_ID,
+    CONF_PLATFORMIO_OPTIONS,
     CONF_MAC_ADDRESS,
     CONF_ON_CONNECT,
     CONF_ON_DISCONNECT,
+    KEY_CORE,
+    KEY_FRAMEWORK_VERSION,
 )
-from esphome.core import ID as CoreID
+from esphome.core import CORE, ID as CoreID
+
+_LOGGER = logging.getLogger(__name__)
 
 CONF_AUTO_CONNECT = "auto_connect"
 
@@ -122,6 +130,92 @@ def _validate_config(config):
 
 
 CONFIG_SCHEMA = _validate_config
+
+# ESP-IDF versions whose bundled Bluedroid stack crashes (LoadProhibited in
+# bta_gattc_cache_save) when bluetooth_proxy's persistent GATT service cache
+# is enabled and a Sonicare's service discovery runs. Fixed upstream in
+# ESP-IDF 5.5.5 and 6.0.2 (esp-idf commit d4f3517, see esphome#15783).
+_IDF_FIX_5 = cv.Version(5, 5, 5)
+_IDF_6 = cv.Version(6, 0, 0)
+_IDF_FIX_6 = cv.Version(6, 0, 2)
+
+_warned_patched_build = False
+
+
+def _extra_scripts_patch_bluedroid(full_config):
+    """True if the build applies the bluedroid_null_fix.py pre-build patch."""
+    pio_options = full_config.get(CONF_ESPHOME, {}).get(CONF_PLATFORMIO_OPTIONS) or {}
+    scripts = pio_options.get("extra_scripts") or []
+    if isinstance(scripts, str):
+        scripts = [scripts]
+    return any("bluedroid_null_fix" in str(s) for s in scripts)
+
+
+def _final_validate(config):
+    global _warned_patched_build
+    # target_framework (not the removed CORE.using_esp_idf) — works on both
+    # pre- and post-2026.7 ESPHome. On Arduino, KEY_FRAMEWORK_VERSION holds
+    # the Arduino core version, so the ESP-IDF comparison below would be
+    # meaningless — skip (the component requires esp-idf anyway).
+    if not CORE.is_esp32 or CORE.target_framework != "esp-idf":
+        return config
+
+    full = fv.full_config.get()
+    # The crashing code path is only compiled in when Bluedroid's NVS service
+    # cache (CONFIG_BT_GATTC_CACHE_NVS_FLASH) is enabled. Two ways to get there:
+    # bluetooth_proxy with cache_services (its default), or setting the
+    # sdkconfig option directly for faster reconnects.
+    proxy = full.get("bluetooth_proxy")
+    proxy_cache = bool(proxy) and proxy.get("cache_services", True)
+    sdkconfig = (
+        full.get("esp32", {}).get("framework", {}).get("sdkconfig_options") or {}
+    )
+    manual_cache = str(
+        sdkconfig.get("CONFIG_BT_GATTC_CACHE_NVS_FLASH", "n")
+    ).strip().strip('"').lower() in ("y", "yes", "true", "1")
+    if not proxy_cache and not manual_cache:
+        return config
+
+    idf_version = CORE.data[KEY_CORE][KEY_FRAMEWORK_VERSION]
+    if idf_version >= _IDF_FIX_5 and not (_IDF_6 <= idf_version < _IDF_FIX_6):
+        return config
+
+    if _extra_scripts_patch_bluedroid(full):
+        # The pre-build patch guards the crash path; allow but note it is
+        # obsolete once the build moves to a fixed ESP-IDF.
+        if not _warned_patched_build:
+            _warned_patched_build = True
+            _LOGGER.warning(
+                "philips_sonicare: building against ESP-IDF %s with the "
+                "bluedroid_null_fix.py patch. The fix ships with ESP-IDF 5.5.5 "
+                "(ESPHome 2026.7.1) — once updated, the patch can be removed.",
+                idf_version,
+            )
+        return config
+
+    trigger = (
+        "bluetooth_proxy (its default cache_services: true)"
+        if proxy_cache
+        else "CONFIG_BT_GATTC_CACHE_NVS_FLASH under sdkconfig_options"
+    )
+    remedy = (
+        "set `bluetooth_proxy: cache_services: false`"
+        if proxy_cache
+        else "remove `CONFIG_BT_GATTC_CACHE_NVS_FLASH` from sdkconfig_options"
+    )
+    raise cv.Invalid(
+        f"This config enables Bluedroid's persistent GATT service cache via "
+        f"{trigger}, which crashes on ESP-IDF {idf_version}: the cache-save "
+        f"path (bta_gattc_cache_save) hits a NULL pointer during Sonicare "
+        f"service discovery and the device enters a reboot loop. Fixed "
+        f"upstream in ESP-IDF 5.5.5 / 6.0.2 (esphome#15783). Either update "
+        f"ESPHome to >= 2026.7.1 (bundles ESP-IDF 5.5.5), or {remedy}, or "
+        f"apply the `esphome/bluedroid_null_fix.py` pre-build patch from this "
+        f"repository via `platformio_options: extra_scripts:`."
+    )
+
+
+FINAL_VALIDATE_SCHEMA = _final_validate
 
 _instance_count = 0
 
