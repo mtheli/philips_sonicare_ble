@@ -1,0 +1,751 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Philips Sonicare BLE — config flow walkthrough</title>
+<style>
+  :root {
+    --paper: #f2f5f9;
+    --surface: #ffffff;
+    --surface2: #f7fafd;
+    --ink: #1a2332;
+    --muted: #5c6b7e;
+    --line: #dbe2ea;
+    --accent: #0277bd;
+    --accent-ink: #01579b;
+    --accent-soft: #e5f2fb;
+    --ok: #2e7d32;
+    --ok-soft: #e7f3e8;
+    --warn: #a15c00;
+    --warn-soft: #fdf3e3;
+    --err: #c62828;
+    --err-soft: #fdecea;
+    --code-bg: #eef2f7;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 4px 14px rgba(16,24,40,.07);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0f141b; --surface: #171f2a; --surface2: #131a24; --ink: #e7edf5;
+      --muted: #93a1b3; --line: #2a3547; --accent: #58b8f0; --accent-ink: #8fd0f7;
+      --accent-soft: #10344d; --ok: #66bb6a; --ok-soft: #16301b; --warn: #e0a458;
+      --warn-soft: #33280f; --err: #ef6e64; --err-soft: #3a1f1e; --code-bg: #0e1621;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 6px 18px rgba(0,0,0,.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 15px/1.55 system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 34px 20px 90px; }
+  code, .mono {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, monospace;
+    font-size: .88em;
+  }
+  code { background: var(--code-bg); border-radius: 4px; padding: 1px 5px; }
+
+  .eyebrow { text-transform: uppercase; letter-spacing: .09em; font-size: 11.5px; font-weight: 600; color: var(--accent); margin: 0 0 6px; }
+  h1 { font-size: 24px; line-height: 1.2; margin: 0 0 6px; font-weight: 700; text-wrap: balance; }
+  .sub { color: var(--muted); margin: 0 0 8px; max-width: 66ch; font-size: 13.5px; }
+  .stamp { color: var(--muted); margin: 0 0 22px; font-size: 12px; }
+
+  /* breadcrumb trail */
+  .trail { display: flex; flex-wrap: wrap; gap: 4px 2px; align-items: center; margin: 0 0 16px; min-height: 26px; }
+  .crumb {
+    border: 0; cursor: pointer; font: inherit; font-size: 12px;
+    font-family: ui-monospace, Menlo, monospace;
+    background: var(--surface); color: var(--muted); border: 1px solid var(--line);
+    border-radius: 99px; padding: 2px 10px;
+  }
+  .crumb:hover { color: var(--accent-ink); border-color: var(--accent); }
+  .crumb:focus-visible, .opt:focus-visible, .reset:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .crumb.cur { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+  .trail .sep { color: var(--muted); font-size: 11px; padding: 0 2px; }
+  .reset {
+    border: 0; cursor: pointer; font: inherit; font-size: 12px; margin-left: auto;
+    color: var(--muted); background: transparent; padding: 2px 8px; border-radius: 6px;
+  }
+  .reset:hover { color: var(--err); background: var(--err-soft); }
+
+  /* dialog mockup */
+  .stage { min-height: 200px; }
+  .dlg {
+    background: var(--surface); border-radius: 14px; box-shadow: var(--shadow);
+    border: 1px solid var(--line); overflow: hidden;
+  }
+  .dlg-head { display: flex; align-items: center; gap: 10px; padding: 16px 20px 0; }
+  .dlg-head .x { color: var(--muted); font-size: 18px; line-height: 1; margin-left: auto; }
+  .dlg-title { font-size: 17.5px; font-weight: 600; }
+  .dlg-body { padding: 12px 20px 8px; font-size: 13.5px; line-height: 1.55; overflow-x: auto; }
+  .dlg-body p { margin: 0 0 10px; }
+  .dlg-body table { border-collapse: collapse; margin: 4px 0 10px; }
+  .dlg-body td { padding: 2px 14px 2px 0; vertical-align: top; }
+  .dlg-body pre {
+    background: var(--code-bg); border-radius: 8px; padding: 10px 12px; overflow-x: auto;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; line-height: 1.5; margin: 8px 0 10px;
+  }
+  .alert { border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; font-size: 13px; display: flex; gap: 8px; }
+  .alert.error { background: var(--err-soft); color: var(--err); }
+  .formerr { color: var(--err); font-size: 12.5px; margin: 6px 0 10px; }
+
+  .field { margin: 10px 0 12px; }
+  .field .flabel { font-size: 11.5px; color: var(--accent); margin-bottom: 2px; }
+  .field .fbox {
+    border: 1px solid var(--line); border-bottom: 2px solid var(--accent);
+    border-radius: 6px 6px 0 0; background: var(--surface2);
+    padding: 8px 12px; font-size: 13.5px; display: flex; justify-content: space-between; gap: 8px;
+  }
+  .field .fbox .caret { color: var(--muted); }
+  .field .fhelp { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .radio { display: flex; gap: 10px; align-items: baseline; padding: 5px 2px; font-size: 13.5px; }
+  .radio .dot { width: 15px; height: 15px; border-radius: 50%; border: 2px solid var(--muted); flex: none; align-self: center; }
+  .radio.sel .dot { border-color: var(--accent); box-shadow: inset 0 0 0 3.5px var(--surface), inset 0 0 0 10px var(--accent); }
+  .switchrow { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; padding: 8px 2px; border-bottom: 1px solid var(--line); }
+  .switchrow:last-of-type { border-bottom: 0; }
+  .switchrow .sl { font-size: 13.5px; }
+  .switchrow .sd { font-size: 12px; color: var(--muted); margin-top: 1px; max-width: 46ch; }
+  .toggle { flex: none; width: 40px; height: 20px; border-radius: 99px; background: var(--line); position: relative; margin-top: 2px; }
+  .toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+  .toggle.on { background: var(--accent); }
+  .toggle.on::after { left: 22px; }
+  .menuopt {
+    display: flex; align-items: center; gap: 12px; border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 14px; margin: 8px 0; font-weight: 500; font-size: 14px;
+  }
+  .menuopt .chev { margin-left: auto; color: var(--muted); }
+  .menuopt .ic { color: var(--accent); font-size: 16px; }
+  .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 4px 14px 14px; }
+  .fakebtn { color: var(--accent); font-weight: 600; font-size: 13.5px; letter-spacing: .02em; padding: 8px 14px; border-radius: 8px; text-transform: uppercase; }
+  .progressbar { height: 4px; border-radius: 99px; background: var(--accent-soft); overflow: hidden; margin: 14px 0 8px; }
+  .progressbar > div { width: 40%; height: 100%; background: var(--accent); border-radius: 99px; animation: slide 1.6s ease-in-out infinite alternate; }
+  @keyframes slide { from { margin-left: 0; } to { margin-left: 60%; } }
+  @media (prefers-reduced-motion: reduce) { .progressbar > div { animation: none; } }
+
+  /* discovery tile */
+  .tile {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: var(--shadow); padding: 18px 20px 12px; max-width: 340px;
+  }
+  .tile .tname { font-weight: 600; font-size: 15px; }
+  .tile .tsub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .tile .tactions { display: flex; gap: 6px; margin-top: 14px; }
+
+  /* terminal cards */
+  .term { border-radius: 14px; padding: 22px 24px; box-shadow: var(--shadow); border: 1px solid var(--line); background: var(--surface); }
+  .term.good { border-left: 4px solid var(--ok); }
+  .term.bad { border-left: 4px solid var(--err); }
+  .term .ttl { font-weight: 700; font-size: 16.5px; margin-bottom: 6px; }
+  .term.good .ttl { color: var(--ok); }
+  .term.bad .ttl { color: var(--err); }
+  .term p { margin: 0; font-size: 13.5px; }
+  .term .abkey { margin-top: 10px; }
+
+  /* meta line under dialog */
+  .meta {
+    font-size: 12px; color: var(--muted); padding: 10px 6px 0; display: flex;
+    flex-wrap: wrap; gap: 6px 12px; align-items: baseline;
+  }
+  .meta .sid {
+    font-family: ui-monospace, Menlo, monospace; color: var(--accent-ink);
+    background: var(--accent-soft); border-radius: 5px; padding: 1px 7px; font-size: 11.5px;
+  }
+  .meta .src { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+  .metanote { font-size: 12px; color: var(--muted); padding: 4px 6px 0; max-width: 80ch; }
+
+  /* options panel */
+  .nextpanel { margin-top: 26px; }
+  .nextpanel .nhead {
+    text-transform: uppercase; letter-spacing: .09em; font-size: 11px; font-weight: 700;
+    color: var(--muted); margin-bottom: 10px; display: flex; align-items: center; gap: 8px;
+  }
+  .nextpanel .nhead::after { content: ""; flex: 1; border-top: 1px solid var(--line); }
+  .optgrid { display: flex; flex-direction: column; gap: 8px; }
+  .optghead {
+    text-transform: uppercase; letter-spacing: .08em; font-size: 10.5px; font-weight: 700;
+    color: var(--muted); margin: 10px 2px 0;
+  }
+  .optghead:first-child { margin-top: 0; }
+  .opt {
+    display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+    border-radius: 10px; padding: 10px 14px; cursor: pointer; font: inherit; font-size: 13.5px;
+  }
+  .opt:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .opt .tag {
+    flex: none; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+    border-radius: 5px; padding: 2px 7px;
+  }
+  .opt.kind-main .tag { background: var(--accent-soft); color: var(--accent-ink); }
+  .opt.kind-cond .tag { background: var(--code-bg); color: var(--muted); }
+  .opt.kind-err .tag { background: var(--warn-soft); color: var(--warn); }
+  .opt.kind-abort .tag { background: var(--err-soft); color: var(--err); }
+  .opt.kind-err:hover { border-color: var(--warn); background: var(--warn-soft); }
+  .opt.kind-abort:hover { border-color: var(--err); background: var(--err-soft); }
+  .opt .olabel { flex: 1; }
+  .opt .onum {
+    flex: none; font-family: ui-monospace, Menlo, monospace; font-weight: 700;
+    font-size: 12px; background: var(--accent); color: #fff;
+    border-radius: 6px; padding: 2px 8px; letter-spacing: .03em;
+  }
+  .opt .onum.abortnum { background: var(--err); }
+  .opt .otarget { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--muted); flex: none; }
+  .opt .arr { color: var(--muted); flex: none; }
+  @media (max-width: 560px) { .opt .otarget { display: none; } }
+
+  /* step number badge above the stage */
+  .stepbadge {
+    display: inline-flex; align-items: baseline; gap: 8px; margin: 0 0 10px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted);
+  }
+  .stepbadge .no {
+    background: var(--accent); color: #fff; border-radius: 6px; padding: 2px 9px;
+    font-weight: 700; font-size: 12.5px; letter-spacing: .03em;
+  }
+  .stepbadge.abort .no { background: var(--err); }
+
+  /* step index */
+  .index { margin: 0 0 18px; }
+  .index summary {
+    cursor: pointer; font-size: 12px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .08em; font-weight: 600; user-select: none;
+  }
+  .index summary:hover { color: var(--accent-ink); }
+  .indexgrid { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 0 4px; }
+  .ixchip {
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+    border-radius: 8px; padding: 3px 10px; cursor: pointer; font: inherit; font-size: 12px;
+    display: inline-flex; gap: 7px; align-items: baseline;
+  }
+  .ixchip:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .ixchip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .ixchip .no { font-family: ui-monospace, Menlo, monospace; font-weight: 700; color: var(--accent-ink); font-size: 11px; }
+  .ixchip.abort .no { color: var(--err); }
+  .ixchip .nm { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <p class="eyebrow">philips_sonicare_ble · interactive walkthrough</p>
+  <h1>Play through the config flow</h1>
+  <p class="sub">One screen at a time, with every possible continuation below it — the normal path, conditional branches, errors (which stay in the dialog) and aborts. The breadcrumbs at the top lead back. Example data: HX9992 Prestige · bridge <code>sonicare-bridge</code>. Companion to the auto-generated step graph in <code>docs/config_flow.html</code>.</p>
+  <p class="stamp">Last updated: 2026-07-22 · philips_sonicare_ble v0.22.0 — source references point at <code>config_flow.py</code> of that version.</p>
+
+  <details class="index"><summary>Step index (S0–S19, A1–A5)</summary>
+    <div class="indexgrid" id="index"></div>
+  </details>
+
+  <div class="trail" id="trail"></div>
+  <div class="stage" id="stage"></div>
+  <div class="nextpanel">
+    <div class="nhead">What can happen next</div>
+    <div class="optgrid" id="opts"></div>
+  </div>
+</div>
+
+<script>
+const MAC = "AA:BB:CC:11:22:33";
+const MAC2 = "AA:BB:CC:44:55:66";
+
+function dlg(title, body, actions, meta, note) {
+  return `<div class="dlg">
+    <div class="dlg-head"><span class="dlg-title">${title}</span><span class="x">✕</span></div>
+    <div class="dlg-body">${body}</div>
+    <div class="dlg-actions">${(actions||[]).map(a=>`<span class="fakebtn">${a}</span>`).join("")}</div>
+  </div>
+  ${meta ? `<div class="meta">${meta}</div>` : ""}
+  ${note ? `<div class="metanote">${note}</div>` : ""}`;
+}
+function meta(sid, src) { return `<span class="sid">${sid}</span><span class="src">${src}</span>`; }
+function errline(key, text) { return `<div class="formerr">⚠ ${text} <span class="mono">(${key})</span></div>`; }
+
+const ERRORS = {
+  cannot_connect: "Could not connect to the toothbrush. Make sure it is awake (press button or place on charger) and in range.",
+  not_a_sonicare: "Connected to the device, but no Philips Sonicare characteristics were found. Check that the address belongs to a Sonicare toothbrush.",
+  pairing_failed: "Device is still not paired. Make sure the toothbrush is awake and try pairing again.",
+  pair_timeout: "No Sonicare paired within the time window. Press the toothbrush's power button to wake it and try again.",
+  unknown: "Unexpected error. Check the logs for details.",
+  unpair_failed: "Couldn't confirm the bridge cleared the bond — it may need a reboot. Make sure it's online, then try again.",
+  unpair_offline: "Couldn't reach the ESP bridge to clear the bond. Make sure it's online and powered, then try again.",
+};
+const ABORTS = {
+  device_asleep: "The toothbrush is asleep and could not be reached. Wake it (press the power button or lift it off the charger), then start setup again.",
+  already_configured: "Device is already configured. — Detail variant: “This toothbrush is already configured via ESP32 Bridge (status: loaded). Remove or re-enable the existing entry first.”",
+  no_esphome_devices: "No ESPHome bridge found. Set up an ESPHome device with the Sonicare BLE bridge component first — click the help icon (top-right) for the setup guide.",
+  no_devices_found: "No supported Philips Sonicare devices were found on this ESP bridge.",
+  not_supported: "This ESPHome device does not host a Philips Sonicare bridge component.",
+};
+
+// option kinds: main (normal path) / cond (conditional branch) / err (error, stays in the dialog) / abort
+const SCREENS = {
+
+  start: {
+    render: () => `<div class="term">
+        <div class="ttl">Entry points</div>
+        <p>The flow can start in three ways. Pick one below.</p>
+      </div>`,
+    opts: [
+      ["main","A discovery card appears (the brush advertises the Sonicare service)","disc_bt"],
+      ["main","“+ Add integration” in the settings","user"],
+      ["main","Zeroconf: ESPHome device with the bridge component discovered","disc_zeroconf"],
+    ],
+  },
+
+  disc_bt: {
+    render: () => `<div class="tile">
+        <div class="tname">Philips Sonicare</div>
+        <div class="tsub">Discovered · Bluetooth</div>
+        <div class="tactions"><span class="fakebtn">Configure</span><span class="fakebtn" style="color:var(--muted)">Ignore</span></div>
+      </div>
+      <div class="meta">${meta("bluetooth","config_flow.py:1244")}</div>
+      <div class="metanote">UI-less routing step: sets the <code>unique_id</code> from the advertised address; the discovery card title is <code>flow_title</code> = <code>{name}</code>.</div>`,
+    opts: [
+      ["main","Configure","bluetooth_confirm"],
+      ["abort","Brush is already set up","abort_already_configured"],
+    ],
+  },
+
+  disc_zeroconf: {
+    render: () => `<div class="tile">
+        <div class="tname">sonicare-bridge</div>
+        <div class="tsub">Discovered · ESPHome (Sonicare bridge)</div>
+        <div class="tactions"><span class="fakebtn">Configure</span><span class="fakebtn" style="color:var(--muted)">Ignore</span></div>
+      </div>
+      <div class="meta">${meta("zeroconf","config_flow.py:1145")}</div>
+      <div class="metanote">UI-less routing step: checks whether the ESPHome device hosts Sonicare bridge services, then continues based on the slot situation.</div>`,
+    opts: [
+      ["cond","Bridge hosts several slots → device selection","esp_select_device"],
+      ["cond","Exactly one (unconfigured) slot → straight to the status screen","esp_bridge_status"],
+      ["abort","No Sonicare bridge component on the device","abort_not_supported"],
+      ["abort","Slot is already set up","abort_already_configured"],
+    ],
+  },
+
+  user: {
+    render: () => dlg("Add Philips Sonicare",
+      `<p>Choose how to connect to your toothbrush.</p>
+       <div class="menuopt"><span class="ic">🖥</span> Direct Bluetooth <span class="chev">›</span></div>
+       <div class="menuopt"><span class="ic">📡</span> ESP32 Bridge (ESPHome) <span class="chev">›</span></div>`,
+      [], meta("user","config_flow.py:1535")),
+    opts: [
+      ["main","Direct Bluetooth","user_bleak"],
+      ["main","ESP32 Bridge (ESPHome)","esp_bridge"],
+    ],
+  },
+
+  bluetooth_confirm: {
+    render: (s) => dlg("Confirm Philips Sonicare",
+      `${s.variant==="asleep" ? `<div class="alert error">⚠ <span>The toothbrush is asleep — wake it (press the power button or lift it off the charger), then click Submit again.</span></div>` : ""}
+       <p><b>Philips Sonicare</b> discovered at <code>${MAC}</code> via Direct Bluetooth.</p>
+       <p>Make sure your toothbrush is <b>turned on</b> (press the button), then click <b>Submit</b>.</p>
+       ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
+      ["Submit"], meta("bluetooth_confirm","config_flow.py:1300")),
+    opts: [
+      {group:"Direct BLE"},
+      ["main","Submit — probe succeeds (services + device info read)","show_capabilities_direct"],
+      ["cond","Bonding required → auto-pair via D-Bus runs silently (no dialog) → continue","show_capabilities_direct"],
+      ["cond","Auto-pair failed (NotPairedException)","not_paired"],
+      {group:"Bluetooth proxy"},
+      ["cond","Bonding required → the proxy bonds on its own (lazy SMP + read retry, no dialog) → continue","show_capabilities_direct"],
+      ["cond","Proxy-side pairing fails (e.g. stale bond on the brush) → proxy variant","not_paired_proxy"],
+      {group:"Special cases"},
+      ["cond","Brush was asleep on Submit → alert appears, card stays open","bluetooth_confirm",{variant:"asleep"}],
+      ["cond","Device is held by an ESP bridge → switch to the ESP path","esp_bridge_status"],
+      {group:"Errors"},
+      ["err","Error: cannot_connect","bluetooth_confirm",{error:"cannot_connect"}],
+      ["err","Error: unknown","bluetooth_confirm",{error:"unknown"}],
+    ],
+  },
+
+  user_bleak: {
+    render: (s) => dlg("Direct Bluetooth",
+      `<p>Select or enter BLE address of your Sonicare toothbrush.</p>
+       <p><b>Important:</b> Turn on your toothbrush before clicking Submit. The brush must be active during setup so that services can be read.</p>
+       <div class="field">
+         <div class="flabel">BLE Address</div>
+         <div class="fbox"><span>Philips Sonicare — ${MAC} (−80 dBm, 3 s)</span><span class="caret">▾</span></div>
+       </div>
+       ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
+      ["Submit"], meta("user_bleak","config_flow.py:1547"),
+      "The picker lists discovered devices with advertisement age + RSSI; a sentinel entry allows free-form MAC input."),
+    opts: [
+      {group:"Direct BLE"},
+      ["main","Submit — probe succeeds","show_capabilities_direct"],
+      ["cond","Bonding required → auto-pair via D-Bus runs silently (no dialog) → continue","show_capabilities_direct"],
+      ["cond","Auto-pair failed (NotPairedException)","not_paired"],
+      {group:"Bluetooth proxy"},
+      ["cond","Bonding required → the proxy bonds on its own (lazy SMP + read retry, no dialog) → continue","show_capabilities_direct"],
+      ["cond","Proxy-side pairing fails (e.g. stale bond on the brush) → proxy variant","not_paired_proxy"],
+      {group:"Errors / abort"},
+      ["err","Error: cannot_connect","user_bleak",{error:"cannot_connect"}],
+      ["err","Error: not_a_sonicare (address is not a Sonicare)","user_bleak",{error:"not_a_sonicare"}],
+      ["abort","Brush fell asleep → flow aborts","abort_device_asleep"],
+    ],
+  },
+
+  not_paired: {
+    render: (s) => dlg("BLE Pairing Required",
+      `<p>Your toothbrush at <code>${MAC}</code> requires <b>BLE bonding</b> before characteristics can be read. Auto-pairing was not successful.</p>
+       <p><b>Last attempt:</b> Pairing rejected by the device (AuthenticationFailed)</p>
+       <p>Open the <b>Terminal &amp; SSH</b> addon (install it first if needed) and run the pairing script:</p>
+       <pre>bash /config/custom_components/philips_sonicare_ble/scripts/pair.sh ${MAC}</pre>
+       <p>The script registers the required pairing agent, then pairs and trusts the toothbrush — just keep it <b>awake</b> (press the power button) while it runs.</p>
+       <p>Alternatively, pair manually in an interactive <code>bluetoothctl</code> session — a plain <code>bluetoothctl pair</code> registers no agent, and some models reject the pairing without one:</p>
+       <pre>bluetoothctl
+agent NoInputNoOutput
+default-agent
+pair ${MAC}
+trust ${MAC}
+exit</pre>
+       <p>Then click <b>Retry</b>.</p>
+       ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
+      ["Retry"], meta("not_paired","config_flow.py:2706"),
+      "The “Last attempt” line (<code>{pair_error}</code>) only appears after a failed auto-pair; the help text differs between HassOS and a generic terminal. Probes carried by a Bluetooth proxy don't land here but in the proxy variant (S19) — the switch follows the transport of the last connected probe."),
+    opts: [
+      ["main","Retry — pairing worked, probe succeeds","show_capabilities_direct"],
+      ["err","Retry — still not paired (pairing_failed)","not_paired",{error:"pairing_failed"}],
+      ["cond","Retry ran through a proxy this time → proxy dialog","not_paired_proxy",{error:"pairing_failed"}],
+      ["err","Error: cannot_connect","not_paired",{error:"cannot_connect"}],
+      ["abort","Brush fell asleep → flow aborts","abort_device_asleep"],
+    ],
+  },
+
+  not_paired_proxy: {
+    render: (s) => dlg("BLE Pairing Required",
+      `<p>Your toothbrush at <code>${MAC}</code> requires <b>BLE bonding</b> before characteristics can be read.</p>
+       <p>This connection runs through a <b>Bluetooth proxy</b> (<code>bluetooth-proxy-1</code>). The proxy pairs with the toothbrush <b>automatically while reading</b> — pairing tools on the Home Assistant host (<code>bluetoothctl</code>, pairing scripts) have no effect on this connection.</p>
+       <p>The automatic pairing has not completed. Most likely causes:</p>
+       <p>1. <b>The toothbrush still holds an old bond</b> for a phone or another adapter. Remove the brush from the Philips Sonicare app (or forget it in your phone's Bluetooth settings), wake the brush, and click <b>Retry</b> — retrying restarts the pairing.</p>
+       <p>2. <b>The toothbrush fell asleep</b> during setup — press the power button, keep it awake, and click <b>Retry</b>.</p>
+       <p>3. <b>You run several Bluetooth proxies:</b> bonds do not move between proxies, and Home Assistant picks whichever proxy has the best signal. Move the brush next to one proxy and click <b>Retry</b>.</p>
+       <p>4. Some models <b>reject pairing entirely</b>. If every retry fails immediately, set the brush up via the host's Bluetooth adapter or the dedicated ESP32 bridge instead.</p>
+       ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
+      ["Retry"], meta("not_paired_proxy","config_flow.py:2745"),
+      "The proxy/host switch is set after every connected probe from the connection path; on the proxy path the D-Bus auto-pair is skipped — it cannot touch the proxy's own bond store. The proxy name comes from the connection path (fallback “unknown”). Retry follows the transport: if the connection flips to the host adapter, the host dialog (S6) is rendered instead. Background: the proxy firmware pairs lazily on an authenticated read, so a retry genuinely restarts the pairing."),
+    opts: [
+      ["main","Retry — bond cleared on the brush, proxy pairing succeeds now","show_capabilities_direct"],
+      ["err","Retry — still failing (pairing_failed)","not_paired_proxy",{error:"pairing_failed"}],
+      ["cond","Retry ran through the host adapter this time → host dialog","not_paired",{error:"pairing_failed"}],
+      ["abort","Brush fell asleep → flow aborts","abort_device_asleep"],
+    ],
+  },
+
+  esp_bridge: {
+    render: (s) => dlg("ESP32 Bridge (ESPHome)",
+      `<p>Select the ESPHome device that acts as the BLE bridge for your toothbrush.</p>
+       <div class="field">
+         <div class="flabel">ESPHome Bridge Device</div>
+         <div class="fbox"><span>sonicare-bridge &nbsp;(1 paired / 1 free slots)</span><span class="caret">▾</span></div>
+       </div>
+       ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
+      ["Submit"], meta("esp_bridge","config_flow.py:1657"),
+      "Candidates are verified with a <code>ble_get_info</code> probe (non-Sonicare bridges are filtered out); results are cached for the next step."),
+    opts: [
+      ["main","Submit — bridge hosts several slots","esp_select_device"],
+      ["cond","Exactly one free slot → selection skipped","esp_bridge_status"],
+      ["err","Error: cannot_connect (bridge does not respond)","esp_bridge",{error:"cannot_connect"}],
+      ["abort","No ESPHome bridge found","abort_no_esphome_devices"],
+    ],
+  },
+
+  esp_select_device: {
+    render: () => dlg("Select BLE Device",
+      `<p>This ESP bridge hosts multiple Sonicare toothbrushes. Select the one you want to add.</p>
+       <p>✅ already configured · 🔒 bonded · 🟢 online · ⚪ offline</p>
+       <div class="radio sel"><span class="dot"></span><span>🔒 🟢 Master Bath — HX9992 / Philips Sonicare — ${MAC}</span></div>
+       <div class="radio"><span class="dot"></span><span>✅ ⚪ Kids — HX6340 — ${MAC2}</span></div>
+       <div class="radio"><span class="dot"></span><span>sonicare_2</span></div>
+       <div class="field" style="margin-top:6px"><div class="fhelp">Entries without status icons are empty bridges in pair-mode. Switch on the toothbrush you want to bond before submitting.</div></div>`,
+      ["Submit"], meta("esp_select_device","config_flow.py:1709"),
+      "Legend (<code>{legend}</code>) and pair hint (<code>{pair_hint}</code>) are built dynamically from the states that actually occur; label priority: friendly name → model/BLE name → bridge id."),
+    opts: [
+      ["main","Bonded slot WITHOUT an entry selected → action menu","esp_slot_action"],
+      ["cond","Empty pair-mode slot selected (sonicare_2)","request_pair"],
+      ["abort","Slot is already a config entry (already_configured)","abort_already_configured"],
+      ["abort","Bridge reports no supported devices","abort_no_devices_found"],
+    ],
+  },
+
+  esp_bridge_status: {
+    render: (s) => dlg("Connection via ESP32 Bridge",
+      `<p>Setting up toothbrush via <b>ESP32 Bridge</b> (Master Bath / sonicare_1).</p>
+       <table><tbody>
+         <tr><td><b>BLE</b></td><td>❌ Disconnected</td></tr>
+         <tr><td><b>Security</b></td><td>Bonded (encrypted)</td></tr>
+         <tr><td><b>MAC</b></td><td><code>${MAC}</code></td></tr>
+       </tbody></table>
+       <p>Make sure the toothbrush is <b>turned on</b> (press button or pick up from charger) and <b>keep it on</b>, then click <b>Read capabilities</b> to finish setup.</p>
+       ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
+      ["Read capabilities"], meta("esp_bridge_status","config_flow.py:1998"),
+      "Plain status/read form — unpair vs. setup is decided beforehand by the S9 menu. “Read capabilities” runs behind <code>async_show_progress</code> (“Reading the toothbrush…”), the result is handled in <code>esp_read_finish</code>; a read error is injected as an <code>&lt;ha-alert&gt;</code> into the status placeholder, because <code>errors[]</code> does not render on schema-less forms."),
+    opts: [
+      ["main","Read capabilities — brush awake, read succeeds","show_capabilities_esp"],
+      ["err","Brush asleep / bridge timeout (cannot_connect)","esp_bridge_status",{error:"cannot_connect"}],
+    ],
+  },
+
+  esp_bridge_status_connected: {
+    render: (s) => dlg("Connection via ESP32 Bridge",
+      `<p>Setting up toothbrush via <b>ESP32 Bridge</b> (Master Bath / sonicare_1).</p>
+       ${s.variant==="paired" ? `<div class="alert" style="background:var(--ok-soft);color:var(--ok)">✅ <span>Pairing successful — the bridge is now bonded to your toothbrush.</span></div>` : ""}
+       <table><tbody>
+         <tr><td><b>BLE</b></td><td>✅ Connected</td></tr>
+         <tr><td><b>Security</b></td><td>Bonded (encrypted)</td></tr>
+         <tr><td><b>MAC</b></td><td><code>${MAC}</code></td></tr>
+       </tbody></table>
+       <p>The bridge is already connected to your toothbrush. <b>Keep the toothbrush switched on</b> — click <b>Read capabilities</b> to finish setup.</p>`,
+      ["Read capabilities"], meta("esp_bridge_status_connected","config_flow.py:1987"),
+      "Alias of <code>esp_bridge_status</code> with its own text. The green success alert appears once, right after <code>wait_pair</code>."),
+    opts: [
+      ["main","Read capabilities","show_capabilities_esp"],
+    ],
+  },
+
+  esp_slot_action: {
+    render: () => dlg("Bonded toothbrush found",
+      `<p>The slot <b>sonicare-bridge / sonicare_1</b> is already bonded to a toothbrush on the bridge, but it isn't set up in Home Assistant yet.</p>
+       <p>What would you like to do?</p>
+       <div class="menuopt"><span class="ic">🪥</span> Set up this toothbrush <span class="chev">›</span></div>
+       <div class="menuopt"><span class="ic">🔓</span> Unpair it from the bridge <span class="chev">›</span></div>`,
+      [], meta("esp_slot_action","config_flow.py:1963"),
+      "Appears when a bonded slot WITHOUT a config entry is selected — e.g. an orphaned bond left behind after its entry was deleted while the bridge was offline (the unpair call was skipped). Bond ≠ entry: <code>already_configured</code> only triggers when an entry exists."),
+    opts: [
+      ["main","Set up this toothbrush (bond already exists → just read capabilities)","esp_bridge_status"],
+      ["main","Release the bond on the bridge (free the slot)","reset_bridge"],
+    ],
+  },
+
+  request_pair: {
+    render: (s) => dlg("Pair toothbrush with bridge",
+      `${s.variant==="unpaired" ? `<div class="alert" style="background:var(--ok-soft);color:var(--ok)">✅ <span>Bond removed — the slot is free. Switch on the Sonicare you want to bond, then start pairing.</span></div>` : ""}
+       <p>Slot <b>sonicare-bridge / sonicare_2</b> has no toothbrush bonded yet.</p>
+       <p>1. <b>Switch on</b> the Sonicare you want to bond and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.</p>
+       <p>2. Click <b>Start pairing</b>. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.</p>
+       ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
+      ["Start pairing"], meta("request_pair","config_flow.py:2179")),
+    opts: [
+      ["main","Start pairing","wait_pair"],
+    ],
+  },
+
+  wait_pair: {
+    render: (s) => {
+      const scanning = s.phase === "scanning";
+      const label = scanning
+        ? "Looking for your Sonicare and bonding — switch it on and hold it within ~1 m of the bridge. This can take up to a minute."
+        : "Arming pair-mode on sonicare-bridge / sonicare_1 …";
+      return dlg("Pair toothbrush with bridge",
+        `<div class="progressbar"><div></div></div>
+         <p style="color:var(--muted)">${label}</p>
+         <p style="font-size:12px;color:var(--muted)">Phase ${scanning ? "2 / 2 — Scanning &amp; bonding" : "1 / 2 — Arming"}</p>`,
+        [], meta(scanning ? "wait_pair · pair_scanning" : "wait_pair · pair_arming","config_flow.py:2267"),
+        "Two <code>async_show_progress</code> phases (<code>pair_arming</code> → <code>pair_scanning</code>) instead of one blocking 65-second spinner. Each phase runs as a background task; when it finishes, Home Assistant re-invokes the step. The result lands in <code>_pair_result</code> and <code>async_step_pair_finish</code> renders it. (Indeterminate spinner — a determinate bar via <code>async_update_progress</code> would need a newer HA baseline.)");
+    },
+    opts: [
+      ["main","Phase 1 done (armed) → scanning phase","wait_pair",{phase:"scanning"}],
+      ["main","Event pair_complete → pair_finish → success alert","esp_bridge_status_connected",{variant:"paired"}],
+      ["err","Event pair_timeout → pair_finish → back with an error","request_pair",{error:"pair_timeout"}],
+      ["err","Arming fails (service-call error) → cannot_connect","request_pair",{error:"cannot_connect"}],
+    ],
+  },
+
+  reset_bridge: {
+    render: (s) => dlg("Reset bridge bond",
+      `${s.error ? `<div class="alert error">⚠ <span>${ERRORS[s.error]}</span></div>` : ""}
+       <p>Bridge <b>sonicare-bridge / sonicare_1</b> is currently bonded to <b>${MAC2}</b>.</p>
+       <p>Clicking <b>Submit</b> will remove the BLE bond on the bridge and clear the saved identity. After that you can pair a different Sonicare.</p>
+       <p>The Sonicare keeps its own half of the bond, but there's nothing to clear on the brush itself — re-pairing this same brush later works without any extra steps.</p>`,
+      ["Unpair and reset"], meta("reset_bridge","config_flow.py:2456"),
+      "Reached via the S9 menu (“Release the bond on the bridge”). Waits for the bridge's “unpaired” event (~4 s, shared helper with <code>async_remove_entry</code>) and only continues to pair-mode on confirmed success. Errors are injected as an <code>&lt;ha-alert&gt;</code> at the top of the description — <code>errors[\"base\"]</code> does not render on this schema-less step. The unpair itself runs behind <code>async_show_progress</code> (“Removing the bond…”), the result is handled in <code>reset_finish</code>."),
+    opts: [
+      ["main","Confirmed (unpaired event) → slot empty → pair-mode + success notice","request_pair",{variant:"unpaired"}],
+      ["err","No confirmation within ~4 s (bridge wedged) → alert","reset_bridge",{error:"unpair_failed"}],
+      ["err","Bridge offline / call fails → alert","reset_bridge",{error:"unpair_offline"}],
+      ["cond","Back to bridge selection","esp_bridge"],
+    ],
+  },
+
+  show_capabilities_direct: {
+    render: () => capDialog("✅ Connected via <b>Direct Bluetooth</b> (hci0)."),
+    opts: [
+      ["main","Set up — entry is created","created"],
+    ],
+  },
+  show_capabilities_esp: {
+    render: () => capDialog("✅ Connected via <b>ESP32 Bridge</b> (Master Bath / sonicare_1)."),
+    opts: [
+      ["main","Set up — entry is created","created"],
+    ],
+  },
+
+  created: {
+    render: () => `<div class="term good">
+        <div class="ttl">✅ Config entry created</div>
+        <p>“Master Bath” is set up. The coordinator starts and entities appear; with the ESP transport the bridge manages the connection.</p>
+      </div>`,
+    opts: [
+      ["main","Open the integration's options (options flow)","options"],
+      ["cond","Play through a new flow","start"],
+    ],
+  },
+
+  options: {
+    render: () => dlg("Philips Sonicare Options",
+      `<div class="switchrow"><div><div class="sl">Enable pressure sensor</div><div class="sd">Stream pressure data during brushing sessions.</div></div><span class="toggle on"></span></div>
+       <div class="switchrow"><div><div class="sl">Enable temperature sensor</div><div class="sd">Stream temperature data during brushing sessions.</div></div><span class="toggle on"></span></div>
+       <div class="switchrow"><div><div class="sl">Enable gyroscope sensor</div><div class="sd">Stream 6-axis motion data during brushing sessions. High bandwidth — generally fine on a full ESP32, but may cause dropouts on smaller boards like the ESP32-C3. Only available on models with a built-in motion sensor.</div></div><span class="toggle"></span></div>
+       <div class="switchrow"><div><div class="sl">Notification throttle (ms)</div><div class="sd">Minimum interval between BLE notification events forwarded by the ESP bridge. Lower values give faster updates but may overload the ESP.</div></div><span class="mono" style="color:var(--muted)">250</span></div>
+       <div class="switchrow"><div><div class="sl">Pipelined GATT reads</div><div class="sd">Send poll reads to the ESP bridge as one concurrent batch. Requires bridge firmware 1.7.0+.</div></div><span class="toggle on"></span></div>
+       <div class="switchrow"><div><div class="sl">Warn about counterfeit brush heads</div><div class="sd">Warn if no valid brush head NFC serial is detected after 30 seconds of brushing.</div></div><span class="toggle on"></span></div>`,
+      ["Submit"], meta("options · init","config_flow.py:2766"),
+      "Second flow class (OptionsFlow), reachable at any time from the integration page."),
+    opts: [
+      ["main","Submit — options saved (entry reload)","created"],
+    ],
+  },
+};
+
+function capDialog(statusLine) {
+  return dlg("Philips Sonicare — HX9992",
+    `<p>${statusLine}</p>
+     <p><b>Device Information</b></p>
+     <table><tbody>
+       <tr><td><b>Model</b></td><td>HX9992</td></tr>
+       <tr><td><b>Serial</b></td><td><code>2431xxxxx</code></td></tr>
+       <tr><td><b>Firmware</b></td><td>2.2.4</td></tr>
+       <tr><td><b>Battery</b></td><td>87%</td></tr>
+       <tr><td><b>MAC</b></td><td><code>${MAC}</code></td></tr>
+       <tr><td><b>BLE Security</b></td><td>Bonded (encrypted)</td></tr>
+     </tbody></table>
+     <p><b>Detected Services</b></p>
+     <table><tbody>
+       <tr><td>✅ Sonicare (Main)</td><td>❌ Condor (HX742X / Series 7100)</td></tr>
+       <tr><td>✅ Routine / Session</td><td></td></tr>
+       <tr><td>✅ Storage / History</td><td></td></tr>
+       <tr><td>✅ Sensor (IMU)</td><td></td></tr>
+       <tr><td>✅ Brush Head</td><td></td></tr>
+       <tr><td>✅ Battery · ✅ Device Information</td><td></td></tr>
+     </tbody></table>
+     <p style="color:var(--muted)">❌ entries are not available on this model.</p>
+     <div class="field">
+       <div class="flabel">Name</div>
+       <div class="fbox"><span>Master Bath</span></div>
+       <div class="fhelp">How this toothbrush appears in Home Assistant. Pick something that distinguishes it from any other brushes you have (e.g., "Master Bath", "Jane's").</div>
+     </div>`,
+    ["Set up"], meta("show_capabilities","config_flow.py:2587"),
+    "The tables are runtime HTML in placeholders (<code>{device_info}</code>, <code>{services}</code>); the ❌ footer only appears when services are missing.");
+}
+
+// abort screens generated from ABORTS
+for (const [key, text] of Object.entries(ABORTS)) {
+  SCREENS["abort_"+key] = {
+    render: () => `<div class="term bad">
+        <div class="ttl">Flow aborted</div>
+        <p>${text}</p>
+        <p class="abkey"><span class="mono" style="color:var(--err)">abort: ${key}</span></p>
+      </div>`,
+    opts: [["main","Restart the flow","start"]],
+  };
+}
+
+// ---------- step numbering ----------
+const ORDER = [
+  "start", "disc_bt", "disc_zeroconf", "user", "user_bleak", "bluetooth_confirm",
+  "not_paired", "esp_bridge", "esp_select_device", "esp_slot_action", "esp_bridge_status",
+  "esp_bridge_status_connected", "request_pair", "wait_pair", "reset_bridge",
+  "show_capabilities_direct", "show_capabilities_esp", "created", "options",
+  "not_paired_proxy",
+];
+const ABORT_ORDER = ["abort_device_asleep", "abort_already_configured",
+  "abort_no_esphome_devices", "abort_no_devices_found", "abort_not_supported"];
+const NUM = {};
+ORDER.forEach((id, i) => NUM[id] = "S" + i);
+ABORT_ORDER.forEach((id, i) => NUM[id] = "A" + (i + 1));
+function shortName(id) {
+  return id.replace(/^abort_/, "abort:").replace(/^disc_/, "discovery:");
+}
+
+// ---------- engine ----------
+let history = [{ id: "start", state: {} }];
+
+function go(id, state) {
+  const cur = history[history.length-1];
+  if (cur.id === id) {
+    // same screen (error/variant rerender): replace state, don't grow trail
+    cur.state = state || {};
+  } else {
+    history.push({ id, state: state || {} });
+  }
+  render();
+}
+function jump(idx) { history = history.slice(0, idx+1); render(); }
+function restart() { history = [{ id: "start", state: {} }]; render(); }
+
+function render() {
+  const cur = history[history.length-1];
+  const screen = SCREENS[cur.id];
+
+  const trail = document.getElementById("trail");
+  trail.replaceChildren();
+  history.forEach((h, i) => {
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.className = "sep"; sep.textContent = "›";
+      trail.appendChild(sep);
+    }
+    const b = document.createElement("button");
+    b.className = "crumb" + (i === history.length-1 ? " cur" : "");
+    b.textContent = shortName(h.id) + " " + (NUM[h.id] || "?");
+    b.addEventListener("click", () => jump(i));
+    trail.appendChild(b);
+  });
+  const rst = document.createElement("button");
+  rst.className = "reset"; rst.textContent = "⟲ Restart";
+  rst.addEventListener("click", restart);
+  trail.appendChild(rst);
+
+  const isAbort = cur.id.startsWith("abort_");
+  document.getElementById("stage").innerHTML =
+    `<div class="stepbadge${isAbort ? " abort" : ""}"><span>${shortName(cur.id)}</span><span class="no">${NUM[cur.id] || "?"}</span></div>`
+    + screen.render(cur.state);
+
+  const opts = document.getElementById("opts");
+  opts.replaceChildren();
+  const kindLabel = { main: "Next", cond: "If", err: "Error", abort: "Abort" };
+  screen.opts.forEach((entry) => {
+    if (!Array.isArray(entry)) {
+      const h = document.createElement("div");
+      h.className = "optghead";
+      h.textContent = entry.group;
+      opts.appendChild(h);
+      return;
+    }
+    const [kind, label, target, state] = entry;
+    const b = document.createElement("button");
+    b.className = "opt kind-" + kind;
+    const abortCls = target.startsWith("abort_") ? " abortnum" : "";
+    b.innerHTML = `<span class="tag">${kindLabel[kind]}</span><span class="olabel">${label}</span><span class="arr">→</span><span class="otarget">${shortName(target)}</span><span class="onum${abortCls}">${NUM[target] || "?"}</span>`;
+    b.addEventListener("click", () => go(target, state));
+    opts.appendChild(b);
+  });
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+// step index (direct jump)
+const ix = document.getElementById("index");
+[...ORDER, ...ABORT_ORDER].forEach((id) => {
+  const b = document.createElement("button");
+  b.className = "ixchip" + (id.startsWith("abort_") ? " abort" : "");
+  b.innerHTML = `<span class="nm">${shortName(id)}</span><span class="no">${NUM[id]}</span>`;
+  b.addEventListener("click", () => go(id, {}));
+  ix.appendChild(b);
+});
+
+render();
+</script>
+
+</body>
+</html>

@@ -209,6 +209,9 @@ The integration supports three connection methods:
 
 ⭐ = recommended path
 
+> [!TIP]
+> Want to see the setup dialogs before you start? The **[interactive config-flow walkthrough](https://raw.githack.com/mtheli/philips_sonicare_ble/main/docs/config_flow_walkthrough.html)** lets you click through every screen of the setup — normal path, conditional branches, errors and aborts — with example data ([HTML source](docs/config_flow_walkthrough.html)).
+
 > [!NOTE]
 > The [ESP-IDF bug](https://github.com/esphome/esphome/issues/15783) that crashed GATT service discovery on the ESP32 proxy/bridge paths is **fixed as of ESPHome 2026.7.1** (bundles ESP-IDF 5.5.5) — no workaround needed anymore. Building with an older ESPHome still requires the [compile-time workaround](docs/KNOWN_ISSUES.md#bluedroid-crash-with-bluetooth_proxy-fixed-in-esphome-202671); since bridge firmware v1.10.0 the component refuses to build the affected combination and points you to it.
 
