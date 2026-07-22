@@ -11,7 +11,8 @@ for direct Bluetooth access from the HA host.
 > The bridge provides stable bonding, notification throttling, and multi-device
 > support; `bluetooth_proxy` is available as a less stable fallback — see
 > [Option C: Bluetooth Proxy](../README.md#option-c-bluetooth-proxy) in the
-> main README. Both can run on the same ESP32; if you enable both, apply the
+> main README. Both can run on the same ESP32 when building with
+> ESPHome 2026.7.1 or newer; on older builders, apply the
 > [Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy).
 
 ## Tested Hardware
@@ -31,10 +32,11 @@ for direct Bluetooth access from the HA host.
 - **ESP32 board** — see [Tested Hardware](#tested-hardware) above
 - **ESPHome** — installed as Home Assistant add-on or standalone
 - **Philips Sonicare toothbrush** — see [Tested Models](../README.md#tested-models)
-- **No `bluetooth_proxy:` enabled** on this ESP — running both crashes
-  Bluedroid during service discovery; see
+- **ESPHome 2026.7.1 or newer** if `bluetooth_proxy:` runs on the same
+  ESP — on older builders that combination crashes Bluedroid during
+  service discovery (the component aborts the build); see
   [ESP32 crashes/reboots when connecting](#esp32-crashesreboots-when-connecting)
-  in Troubleshooting for the patch you need if both have to coexist.
+  in Troubleshooting for the patch if you must stay on an old builder.
 
 ## Setup overview
 
@@ -330,10 +332,10 @@ across reboots (no further pair-mode needed).
 ## Bridge vs. bluetooth_proxy
 
 The standard ESPHome `bluetooth_proxy` transparently relays BLE connections
-from Home Assistant through the ESP32. With the [Bluedroid NULL-check
-patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy)
-and ESPHome 2026.2+, it works for a single Sonicare — but it has real
-drawbacks:
+from Home Assistant through the ESP32. From ESPHome 2026.7.1 (older
+builders need the [Bluedroid NULL-check
+patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy))
+it works for a single Sonicare — but it has real drawbacks:
 
 - **No notification throttling** — the full BLE stream goes over WiFi.
   With multiple Sonicares on one proxy, this overloads the WiFi socket
@@ -360,22 +362,27 @@ identity. The first connect after a flash or unpair still runs the full
 of ms and skip discovery entirely. On a brush you reconnect to often,
 this is the biggest single contributor to reconnect latency.
 
-The cache-save path in ESP-IDF 5.5's Bluedroid has the same NULL deref
-as the `bluetooth_proxy` coexistence bug, so this flag depends on the
-[Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy).
-Disable the flag if you'd rather skip the patch — the bridge still
-works, just runs the full SDP on every wake.
+The cache-save path in older Bluedroid has the same NULL deref as the
+`bluetooth_proxy` coexistence bug — fixed from ESPHome 2026.7.1
+(ESP-IDF 5.5.5). On older builders this flag depends on the
+[Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy)
+(the component enforces this at compile time). Disable the flag if
+you'd rather skip the patch — the bridge still works, just runs the
+full SDP on every wake.
 
 ## Troubleshooting
 
 ### ESP32 crashes/reboots when connecting
 
-If `bluetooth_proxy:` is enabled in your ESPHome config, the ESP32 crashes
-in the Bluedroid GATT cache during service discovery with
-`Fault - LoadProhibited / bta_gattc_cache_save`. Apply the
+On builds from ESPHome < 2026.7.1 with `bluetooth_proxy:` enabled, the
+ESP32 crashes in the Bluedroid GATT cache during service discovery with
+`Fault - LoadProhibited / bta_gattc_cache_save`. **Fixed from ESPHome
+2026.7.1** (bundles ESP-IDF 5.5.5) — update and rebuild. On an older
+builder, apply the
 [Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy)
-to fix this. If you don't need `bluetooth_proxy`, disabling it also
-resolves the crash.
+or disable `bluetooth_proxy`; since bridge firmware v1.10.0 the
+component refuses to build the crash-prone combination and prints
+these options.
 
 ### Pair-mode times out without finding the brush
 

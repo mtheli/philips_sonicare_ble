@@ -16,6 +16,8 @@ Three connection methods are supported:
 2.  **ESP32 BLE Bridge** ★ -- an ESP32 running a custom ESPHome component acts as a wireless BLE relay. Recommended for out-of-range setups; supports multiple devices and notification throttling.
 3.  **Bluetooth Proxy** -- uses an existing ESPHome `bluetooth_proxy`. Works for a single Sonicare per proxy; not recommended due to stability issues.
 
+★ = recommended method -- the most reliable option and the one most new features target.
+
 See [Configuration](#configuration) for setup instructions.
 
 ---
@@ -74,9 +76,17 @@ Any BLE-enabled Philips Sonicare toothbrush using either the standard protocol o
 
 ## Dashboard Card
 
-For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.com/mtheli/toothbrush-card) -- a custom Lovelace card with live sector tracking, pressure display, and brush head wear indicator. Works with both Philips Sonicare and Oral-B toothbrushes.
+For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.com/mtheli/toothbrush-card) -- a custom Lovelace card with live sector tracking, pressure display, and brush head wear indicator. Works with Philips Sonicare, Oral-B and Laifen toothbrushes.
+
+The card is a **separate project and not bundled with this integration** -- install it in addition, via the default HACS store (search for "Toothbrush Card"):
+
+[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=mtheli&repository=toothbrush-card&category=plugin)
 
 ![Toothbrush Card with Sonicare](screenshots/Card.png)
+
+For small displays and wall panels there is also a compact view (`tooth_style: none`) with a large standalone timer -- shown here with the header and chips still enabled. With the header hidden as well (`show_header: false`), two of these fit side by side on a 480x480 wall panel:
+
+![Toothbrush Card compact view](screenshots/CardCompact.png)
 
 ---
 
@@ -199,8 +209,8 @@ The integration supports three connection methods:
 
 ⭐ = recommended path
 
-> [!IMPORTANT]
-> Both proxy/bridge paths on ESP32 are affected by an [ESP-IDF bug](https://github.com/esphome/esphome/issues/15783) that crashes GATT service discovery. A [compile-time workaround](docs/KNOWN_ISSUES.md#workaround) is available and required until ESP-IDF v5.5.5 ships (still unreleased as of July 2026 — the fix is merged upstream but not yet tagged).
+> [!NOTE]
+> The [ESP-IDF bug](https://github.com/esphome/esphome/issues/15783) that crashed GATT service discovery on the ESP32 proxy/bridge paths is **fixed as of ESPHome 2026.7.1** (bundles ESP-IDF 5.5.5) — no workaround needed anymore. Building with an older ESPHome still requires the [compile-time workaround](docs/KNOWN_ISSUES.md#bluedroid-crash-with-bluetooth_proxy-fixed-in-esphome-202671); since bridge firmware v1.10.0 the component refuses to build the affected combination and points you to it.
 
 ### Option A: Direct Bluetooth
 
@@ -273,7 +283,7 @@ For the complete setup guide, see **[ESP32 Bridge Setup Guide](esphome/SETUP.md)
 If you already operate an [ESPHome Bluetooth Proxy](https://esphome.io/components/bluetooth_proxy.html), the integration can use it as a relay — no dedicated bridge firmware needed. Confirmed working on ESPHome 2026.2+ with `io_capability: none`.
 
 **Known caveats:**
-- **Proxy firmware needs the [Bluedroid workaround](docs/KNOWN_ISSUES.md#workaround)** until ESP-IDF v5.5.5 is released.
+- **Proxy firmware built with ESPHome < 2026.7.1 needs the [Bluedroid workaround](docs/KNOWN_ISSUES.md#bluedroid-crash-with-bluetooth_proxy-fixed-in-esphome-202671)** — from 2026.7.1 on (bundles ESP-IDF 5.5.5) no patch is needed.
 - **First connect after reboot takes ~5 s longer** than Direct BLE. Bond keys live on the proxy's NVS, so service discovery and re-encryption race briefly; the integration retries reads automatically during this window.
 - **Notify Throttle option has no effect on Proxy** — throttling is only implemented in the ESP32 BLE Bridge firmware.
 - **RSSI shown in the Connection device reflects the scanner actually carrying the link** (since v0.9.x), not the strongest advertisement.
@@ -330,7 +340,7 @@ Toothbrush wakes up
 * **Connection drops quickly**: This is normal when the toothbrush is idle. It sleeps after ~20 seconds. The integration will reconnect automatically on the next wake.
 * **Phone app conflict**: The toothbrush supports only one BLE connection. Close or uninstall the Sonicare phone app if you experience connection issues.
 * **Pairing issues**: If a model that requires bonding won't connect, remove the toothbrush from your phone's Bluetooth settings first (Settings → Bluetooth → Philips Sonicare → Forget/Unpair). The integration handles stale bonds automatically, but the phone's bond may block the connection.
-* **ESPHome Bluetooth Proxy**: Works with the [Bluedroid NULL-check patch](docs/KNOWN_ISSUES.md#workaround) until ESP-IDF v5.5.5 ships. See [Option C](#option-c-bluetooth-proxy) for scope and the dedicated [ESP32 BLE Bridge](esphome/SETUP.md) as the recommended alternative for multi-device setups.
+* **ESPHome Bluetooth Proxy**: Works out of the box from ESPHome 2026.7.1 (older builders need the [Bluedroid NULL-check patch](docs/KNOWN_ISSUES.md#bluedroid-crash-with-bluetooth_proxy-fixed-in-esphome-202671)). See [Option C](#option-c-bluetooth-proxy) for scope and the dedicated [ESP32 BLE Bridge](esphome/SETUP.md) as the recommended alternative for multi-device setups.
 * **Unsure if your model is compatible?** Run the [GATT scan script](scripts/sonicare_scan.py) to check which BLE protocol your toothbrush uses. It only needs Python 3 and `bleak` (`pip install bleak`).
 
 ### Known Issues

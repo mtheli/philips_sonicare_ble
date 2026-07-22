@@ -1,141 +1,14 @@
 # Known Issues
 
-## bluetooth_proxy requires the Bluedroid NULL-check patch
+## Contents
 
-**Status:** Worked around — ESP-IDF Bluedroid bug, fix backported but not yet in a tagged release
-
-Without the workaround below, enabling `bluetooth_proxy` on the ESP32 — either
-alone or alongside our `ble_client` component — crashes the ESP32 during GATT
-service discovery. The crash occurs on every connection attempt, regardless
-of framework, even if the proxy itself does not connect to the toothbrush.
-
-With the compile-time patch described under [Workaround](#workaround), the
-proxy path works. See [Option C: Bluetooth Proxy](../README.md#option-c-bluetooth-proxy)
-in the main README for scope and limitations of the proxy path compared to
-the dedicated [ESP32 BLE Bridge](../esphome/SETUP.md).
-
-The same patch also unlocks an optional bridge performance setting
-([`CONFIG_BT_GATTC_CACHE_NVS_FLASH`](../esphome/SETUP.md#persisted-gatt-cache-optional))
-that depends on the same NULL guards. The flag is off in a stock build
-and only relevant if you enable it explicitly.
-
-### Symptoms
-
-- ESP32 reboots every ~20 seconds in a loop
-- HA log shows repeated `Processing unexpected disconnect from ESPHome API`
-- Config flow shows "Could not connect to the toothbrush" after 7 attempts
-- Config flow detects the Sonicare (Main) service via advertisement but all
-  other services show red crosses (GATT connection never succeeds)
-
-### Root cause
-
-The crash occurs in `bta_gattc_cache_save` in the Bluedroid BLE stack during
-GATT service discovery. During characteristic descriptor discovery, the
-Sonicare returns an error response for some descriptors. The Bluedroid error
-handling path calls `bta_gattc_disc_cmpl` → `bta_gattc_cache_save` with a
-NULL `p_srcb` pointer, causing a `LoadProhibited` fault.
-
-The crash only occurs when **multiple GATT client interfaces** (`gattc_if`)
-are registered — which happens whenever `bluetooth_proxy` is present (it
-registers 3 additional connection slots). With only our `ble_client`, a single
-`gattc_if` is registered and the error response is handled gracefully via
-`ESP_GATTC_SEARCH_CMPL_EVT`.
-
-**ESP-IDF crash backtrace:**
-```
-Reason: Fault - LoadProhibited
-PC: bta_gattc_cache_save at bta_gattc_cache.c:2118
-
-bta_gattc_cache_save (line 2118)
-  → bta_gattc_explore_srvc (line 638)
-  → bta_gattc_char_dscpt_disc_cmpl (line 724)
-  → bta_gattc_char_disc_cmpl (line 681)
-  → gatt_end_operation (line 2280)
-  → gatt_proc_disc_error_rsp (line 536)
-  → gatt_process_error_rsp (line 571)
-```
-
-The Sonicare returns an error response during characteristic descriptor
-discovery, and the Bluedroid stack crashes when trying to save the incomplete
-discovery result to the GATT cache.
-
-### Tested configurations
-
-All tests on ESPHome 2026.3.1, M5Stack Atom Lite (ESP32 rev1.1), Sonicare
-HX992B (`AA:BB:CC:DD:EE:FF`).
-
-| Setup | Framework | Result |
-|-------|-----------|--------|
-| `bluetooth_proxy` only | ESP-IDF | Crash (`bta_gattc_cache_save`) |
-| `bluetooth_proxy` only | Arduino | Crash (same, less debug) |
-| `bluetooth_proxy` + `ble_adv_proxy` | ESP-IDF | Crash (`bta_gattc_cache_save`) |
-| `philips_sonicare` + `bluetooth_proxy` | ESP-IDF | Crash (`bta_gattc_cache_save`) |
-| `philips_sonicare` + `bluetooth_proxy` (cache 160) | ESP-IDF | Crash (cache size irrelevant) |
-| `philips_sonicare` only | ESP-IDF | **Works** |
-
-### Related reports
-
-- [Issue #1](https://github.com/mtheli/philips_sonicare_ble/issues/1): User
-  with `ble_adv_proxy` + `bluetooth_proxy` saw `auth fail reason=97` before
-  crash. Also crashed with our `ble_client` component when `ble_adv_proxy` and
-  `bluetooth_proxy` were still present in the YAML.
-
-### ESP-IDF fix (not yet released)
-
-The root cause is a missing NULL pointer check in `bta_gattc_disc_cmpl()`.
-This was fixed in ESP-IDF commit [`d4f3517`](https://github.com/espressif/esp-idf/commit/d4f3517da4a81144eaa3f091848e61ec68ab3700)
-(2026-02-27) which adds `if (p_clcb->p_srcb == NULL)` checks in several
-functions including `bta_gattc_disc_cmpl`, `bta_gattc_conn`, `bta_gattc_close`,
-and `bta_gattc_sm_execute`.
-
-**This fix has been backported to `release/v5.5`, `release/v5.3`, and
-`release/v5.2` but is not yet in a tagged release** (v5.5.4 was cut one
-day before the backport landed). The next 5.5.x tag — **v5.5.5, still
-unreleased as of July 2026** — will carry the fix. ESPHome will pick it
-up a few weeks after that.
-
-Once ESPHome ships with ESP-IDF v5.5.5+, `bluetooth_proxy` can coexist
-with our component without the workaround below.
-
-Related issues:
-- [esphome/esphome#15783](https://github.com/esphome/esphome/issues/15783) —
-  ESPHome issue requesting cherry-pick of the fix (filed 2026-04-16)
-- [espressif/esp-idf#4971](https://github.com/espressif/esp-idf/issues/4971) —
-  `LoadProhibited` in `bta_gattc_co_cache_find_src_addr` (open since 2020,
-  fixed in same commit)
-
-### Workaround
-
-A pre-build patch script
-([`bluedroid_null_fix.py`](../esphome/bluedroid_null_fix.py)) is included in
-this repository. It applies the critical NULL pointer checks from ESP-IDF
-commit `d4f3517` during the PlatformIO build. To use it:
-
-1. Copy `bluedroid_null_fix.py` to your ESPHome config directory
-   (typically `/config/esphome/`)
-2. Add the following to your YAML under `esphome:`:
-   ```yaml
-   esphome:
-     platformio_options:
-       extra_scripts:
-         - pre:/config/esphome/bluedroid_null_fix.py
-   ```
-3. Add `bluetooth_proxy:` to your YAML:
-   ```yaml
-   bluetooth_proxy:
-     active: true
-   ```
-4. Perform a **clean build** ("Clean Build Files" in ESPHome) before flashing
-
-The example YAMLs in this repository show the configuration (commented out).
-
-### Without the workaround
-
-Do **not** run `bluetooth_proxy` on the same ESP32 as the Sonicare component.
-Use the [ESP32 BLE Bridge](../esphome/SETUP.md) component alone. If you need a
-Bluetooth Proxy for other devices, run it on a **separate ESP32**.
-
----
+- [Notification subscription limit (default too low)](#notification-subscription-limit-default-too-low)
+- [Brushing Mode Select not available on BrushSync models](#brushing-mode-select-not-available-on-brushsync-models)
+- [Budget BT adapters can't scan while a GATT connection is active](#budget-bt-adapters-cant-scan-while-a-gatt-connection-is-active)
+- [Some USB dongles cannot complete SMP bonding](#some-usb-dongles-cannot-complete-smp-bonding)
+- [Toothbrush not reachable on charger](#toothbrush-not-reachable-on-charger)
+- [Unnecessary pair() calls in other ESPHome projects](#unnecessary-pair-calls-in-other-esphome-projects)
+- ✅ [Bluedroid crash with bluetooth_proxy](#bluedroid-crash-with-bluetooth_proxy-fixed-in-esphome-202671) — **resolved**, fixed in ESPHome 2026.7.1
 
 ## Notification subscription limit (default too low)
 
@@ -340,3 +213,147 @@ such a model.
 The `pair()` call happens to be harmless when using `ble_client` directly
 (the auth failure is handled gracefully), but it contributes to confusion
 about whether pairing is required. It is not.
+
+---
+
+## Bluedroid crash with bluetooth_proxy (fixed in ESPHome 2026.7.1)
+
+**Status: resolved.** ESP-IDF 5.5.5 ships the Bluedroid NULL-pointer fix and
+**ESPHome 2026.7.1 bundles it** — verified on the exact hardware that used to
+crash. On 2026.7.1 or newer, `bluetooth_proxy` coexists with our component
+without any workaround. When building with an **older** ESPHome, the component
+detects the affected combination at compile time and aborts with instructions
+(bridge firmware v1.10.0+) — the historical details and the workaround for old
+builders are below.
+
+<details>
+<summary>Historical details and the workaround for ESPHome &lt; 2026.7.1</summary>
+
+On older builders: without the workaround below, enabling `bluetooth_proxy` on the ESP32 — either
+alone or alongside our `ble_client` component — crashes the ESP32 during GATT
+service discovery. The crash occurs on every connection attempt, regardless
+of framework, even if the proxy itself does not connect to the toothbrush.
+
+With the compile-time patch described under [Workaround](#workaround), the
+proxy path works. See [Option C: Bluetooth Proxy](../README.md#option-c-bluetooth-proxy)
+in the main README for scope and limitations of the proxy path compared to
+the dedicated [ESP32 BLE Bridge](../esphome/SETUP.md).
+
+The same patch also unlocks an optional bridge performance setting
+([`CONFIG_BT_GATTC_CACHE_NVS_FLASH`](../esphome/SETUP.md#persisted-gatt-cache-optional))
+that depends on the same NULL guards. The flag is off in a stock build
+and only relevant if you enable it explicitly.
+
+### Symptoms
+
+- ESP32 reboots every ~20 seconds in a loop
+- HA log shows repeated `Processing unexpected disconnect from ESPHome API`
+- Config flow shows "Could not connect to the toothbrush" after 7 attempts
+- Config flow detects the Sonicare (Main) service via advertisement but all
+  other services show red crosses (GATT connection never succeeds)
+
+### Root cause
+
+The crash occurs in `bta_gattc_cache_save` in the Bluedroid BLE stack during
+GATT service discovery. During characteristic descriptor discovery, the
+Sonicare returns an error response for some descriptors. The Bluedroid error
+handling path calls `bta_gattc_disc_cmpl` → `bta_gattc_cache_save` with a
+NULL `p_srcb` pointer, causing a `LoadProhibited` fault.
+
+The crash only occurs when **multiple GATT client interfaces** (`gattc_if`)
+are registered — which happens whenever `bluetooth_proxy` is present (it
+registers 3 additional connection slots). With only our `ble_client`, a single
+`gattc_if` is registered and the error response is handled gracefully via
+`ESP_GATTC_SEARCH_CMPL_EVT`.
+
+**ESP-IDF crash backtrace:**
+```
+Reason: Fault - LoadProhibited
+PC: bta_gattc_cache_save at bta_gattc_cache.c:2118
+
+bta_gattc_cache_save (line 2118)
+  → bta_gattc_explore_srvc (line 638)
+  → bta_gattc_char_dscpt_disc_cmpl (line 724)
+  → bta_gattc_char_disc_cmpl (line 681)
+  → gatt_end_operation (line 2280)
+  → gatt_proc_disc_error_rsp (line 536)
+  → gatt_process_error_rsp (line 571)
+```
+
+The Sonicare returns an error response during characteristic descriptor
+discovery, and the Bluedroid stack crashes when trying to save the incomplete
+discovery result to the GATT cache.
+
+### Tested configurations
+
+All tests on ESPHome 2026.3.1, M5Stack Atom Lite (ESP32 rev1.1), Sonicare
+HX992B (`AA:BB:CC:DD:EE:FF`).
+
+| Setup | Framework | Result |
+|-------|-----------|--------|
+| `bluetooth_proxy` only | ESP-IDF | Crash (`bta_gattc_cache_save`) |
+| `bluetooth_proxy` only | Arduino | Crash (same, less debug) |
+| `bluetooth_proxy` + `ble_adv_proxy` | ESP-IDF | Crash (`bta_gattc_cache_save`) |
+| `philips_sonicare` + `bluetooth_proxy` | ESP-IDF | Crash (`bta_gattc_cache_save`) |
+| `philips_sonicare` + `bluetooth_proxy` (cache 160) | ESP-IDF | Crash (cache size irrelevant) |
+| `philips_sonicare` only | ESP-IDF | **Works** |
+
+### Related reports
+
+- [Issue #1](https://github.com/mtheli/philips_sonicare_ble/issues/1): User
+  with `ble_adv_proxy` + `bluetooth_proxy` saw `auth fail reason=97` before
+  crash. Also crashed with our `ble_client` component when `ble_adv_proxy` and
+  `bluetooth_proxy` were still present in the YAML.
+
+### ESP-IDF fix (released in v5.5.5)
+
+The root cause is a missing NULL pointer check in `bta_gattc_disc_cmpl()`.
+This was fixed in ESP-IDF commit [`d4f3517`](https://github.com/espressif/esp-idf/commit/d4f3517da4a81144eaa3f091848e61ec68ab3700)
+(2026-02-27) which adds `if (p_clcb->p_srcb == NULL)` checks in several
+functions including `bta_gattc_disc_cmpl`, `bta_gattc_conn`, `bta_gattc_close`,
+and `bta_gattc_sm_execute`.
+
+**The fix shipped in the ESP-IDF v5.5.5 tag (also in v6.0.2), and
+ESPHome 2026.7.1 bundles ESP-IDF 5.5.5** — verified on the exact
+hardware that used to crash. On 2026.7.1 or newer, `bluetooth_proxy`
+coexists with our component without the workaround below.
+
+Related issues:
+- [esphome/esphome#15783](https://github.com/esphome/esphome/issues/15783) —
+  ESPHome issue requesting cherry-pick of the fix (filed 2026-04-16)
+- [espressif/esp-idf#4971](https://github.com/espressif/esp-idf/issues/4971) —
+  `LoadProhibited` in `bta_gattc_co_cache_find_src_addr` (open since 2020,
+  fixed in same commit)
+
+### Workaround
+
+A pre-build patch script
+([`bluedroid_null_fix.py`](../esphome/bluedroid_null_fix.py)) is included in
+this repository. It applies the critical NULL pointer checks from ESP-IDF
+commit `d4f3517` during the PlatformIO build. To use it:
+
+1. Copy `bluedroid_null_fix.py` to your ESPHome config directory
+   (typically `/config/esphome/`)
+2. Add the following to your YAML under `esphome:`:
+   ```yaml
+   esphome:
+     platformio_options:
+       extra_scripts:
+         - pre:/config/esphome/bluedroid_null_fix.py
+   ```
+3. Add `bluetooth_proxy:` to your YAML:
+   ```yaml
+   bluetooth_proxy:
+     active: true
+   ```
+4. Perform a **clean build** ("Clean Build Files" in ESPHome) before flashing
+
+The example YAMLs in this repository show the configuration (commented out).
+
+### Without the workaround
+
+Do **not** run `bluetooth_proxy` on the same ESP32 as the Sonicare component.
+Use the [ESP32 BLE Bridge](../esphome/SETUP.md) component alone. If you need a
+Bluetooth Proxy for other devices, run it on a **separate ESP32**.
+
+</details>
