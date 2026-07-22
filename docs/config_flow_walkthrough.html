@@ -300,7 +300,7 @@ const SCREENS = {
         <div class="tsub">Discovered · Bluetooth</div>
         <div class="tactions"><span class="fakebtn">Configure</span><span class="fakebtn" style="color:var(--muted)">Ignore</span></div>
       </div>
-      <div class="meta">${meta("bluetooth","config_flow.py:1244")}</div>
+      <div class="meta">${meta("bluetooth","config_flow.py:1252")}</div>
       <div class="metanote">UI-less routing step: sets the <code>unique_id</code> from the advertised address; the discovery card title is <code>flow_title</code> = <code>{name}</code>.</div>`,
     opts: [
       ["main","Configure","bluetooth_confirm"],
@@ -314,7 +314,7 @@ const SCREENS = {
         <div class="tsub">Discovered · ESPHome (Sonicare bridge)</div>
         <div class="tactions"><span class="fakebtn">Configure</span><span class="fakebtn" style="color:var(--muted)">Ignore</span></div>
       </div>
-      <div class="meta">${meta("zeroconf","config_flow.py:1145")}</div>
+      <div class="meta">${meta("zeroconf","config_flow.py:1153")}</div>
       <div class="metanote">UI-less routing step: checks whether the ESPHome device hosts Sonicare bridge services, then continues based on the slot situation.</div>`,
     opts: [
       ["cond","Bridge hosts several slots → device selection","esp_select_device"],
@@ -329,7 +329,7 @@ const SCREENS = {
       `<p>Choose how to connect to your toothbrush.</p>
        <div class="menuopt"><span class="ic">🖥</span> Direct Bluetooth <span class="chev">›</span></div>
        <div class="menuopt"><span class="ic">📡</span> ESP32 Bridge (ESPHome) <span class="chev">›</span></div>`,
-      [], meta("user","config_flow.py:1535")),
+      [], meta("user","config_flow.py:1543")),
     opts: [
       ["main","Direct Bluetooth","user_bleak"],
       ["main","ESP32 Bridge (ESPHome)","esp_bridge"],
@@ -342,7 +342,7 @@ const SCREENS = {
        <p><b>Philips Sonicare</b> discovered at <code>${MAC}</code> via Direct Bluetooth.</p>
        <p>Make sure your toothbrush is <b>turned on</b> (press the button), then click <b>Submit</b>.</p>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
-      ["Submit"], meta("bluetooth_confirm","config_flow.py:1300")),
+      ["Submit"], meta("bluetooth_confirm","config_flow.py:1308")),
     opts: [
       {group:"Direct BLE"},
       ["main","Submit — probe succeeds (services + device info read)","show_capabilities_direct"],
@@ -369,7 +369,7 @@ const SCREENS = {
          <div class="fbox"><span>Philips Sonicare — ${MAC} (−80 dBm, 3 s)</span><span class="caret">▾</span></div>
        </div>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
-      ["Submit"], meta("user_bleak","config_flow.py:1547"),
+      ["Submit"], meta("user_bleak","config_flow.py:1555"),
       "The picker lists discovered devices with advertisement age + RSSI; a sentinel entry allows free-form MAC input."),
     opts: [
       {group:"Direct BLE"},
@@ -402,7 +402,7 @@ trust ${MAC}
 exit</pre>
        <p>Then click <b>Retry</b>.</p>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
-      ["Retry"], meta("not_paired","config_flow.py:2706"),
+      ["Retry"], meta("not_paired","config_flow.py:2714"),
       "The “Last attempt” line (<code>{pair_error}</code>) only appears after a failed auto-pair; the help text differs between HassOS and a generic terminal. Probes carried by a Bluetooth proxy don't land here but in the proxy variant (S19) — the switch follows the transport of the last connected probe."),
     opts: [
       ["main","Retry — pairing worked, probe succeeds","show_capabilities_direct"],
@@ -423,7 +423,7 @@ exit</pre>
        <p>3. <b>You run several Bluetooth proxies:</b> bonds do not move between proxies, and Home Assistant picks whichever proxy has the best signal. Move the brush next to one proxy and click <b>Retry</b>.</p>
        <p>4. Some models <b>reject pairing entirely</b>. If every retry fails immediately, set the brush up via the host's Bluetooth adapter or the dedicated ESP32 bridge instead.</p>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
-      ["Retry"], meta("not_paired_proxy","config_flow.py:2745"),
+      ["Retry"], meta("not_paired_proxy","config_flow.py:2753"),
       "The proxy/host switch is set after every connected probe from the connection path; on the proxy path the D-Bus auto-pair is skipped — it cannot touch the proxy's own bond store. The proxy name comes from the connection path (fallback “unknown”). Retry follows the transport: if the connection flips to the host adapter, the host dialog (S6) is rendered instead. Background: the proxy firmware pairs lazily on an authenticated read, so a retry genuinely restarts the pairing."),
     opts: [
       ["main","Retry — bond cleared on the brush, proxy pairing succeeds now","show_capabilities_direct"],
@@ -441,7 +441,7 @@ exit</pre>
          <div class="fbox"><span>sonicare-bridge &nbsp;(1 paired / 1 free slots)</span><span class="caret">▾</span></div>
        </div>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
-      ["Submit"], meta("esp_bridge","config_flow.py:1657"),
+      ["Submit"], meta("esp_bridge","config_flow.py:1665"),
       "Candidates are verified with a <code>ble_get_info</code> probe (non-Sonicare bridges are filtered out); results are cached for the next step."),
     opts: [
       ["main","Submit — bridge hosts several slots","esp_select_device"],
@@ -459,7 +459,7 @@ exit</pre>
        <div class="radio"><span class="dot"></span><span>✅ ⚪ Kids — HX6340 — ${MAC2}</span></div>
        <div class="radio"><span class="dot"></span><span>sonicare_2</span></div>
        <div class="field" style="margin-top:6px"><div class="fhelp">Entries without status icons are empty bridges in pair-mode. Switch on the toothbrush you want to bond before submitting.</div></div>`,
-      ["Submit"], meta("esp_select_device","config_flow.py:1709"),
+      ["Submit"], meta("esp_select_device","config_flow.py:1717"),
       "Legend (<code>{legend}</code>) and pair hint (<code>{pair_hint}</code>) are built dynamically from the states that actually occur; label priority: friendly name → model/BLE name → bridge id."),
     opts: [
       ["main","Bonded slot WITHOUT an entry selected → action menu","esp_slot_action"],
@@ -479,7 +479,7 @@ exit</pre>
        </tbody></table>
        <p>Make sure the toothbrush is <b>turned on</b> (press button or pick up from charger) and <b>keep it on</b>, then click <b>Read capabilities</b> to finish setup.</p>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
-      ["Read capabilities"], meta("esp_bridge_status","config_flow.py:1998"),
+      ["Read capabilities"], meta("esp_bridge_status","config_flow.py:2006"),
       "Plain status/read form — unpair vs. setup is decided beforehand by the S9 menu. “Read capabilities” runs behind <code>async_show_progress</code> (“Reading the toothbrush…”), the result is handled in <code>esp_read_finish</code>; a read error is injected as an <code>&lt;ha-alert&gt;</code> into the status placeholder, because <code>errors[]</code> does not render on schema-less forms."),
     opts: [
       ["main","Read capabilities — brush awake, read succeeds","show_capabilities_esp"],
@@ -497,7 +497,7 @@ exit</pre>
          <tr><td><b>MAC</b></td><td><code>${MAC}</code></td></tr>
        </tbody></table>
        <p>The bridge is already connected to your toothbrush. <b>Keep the toothbrush switched on</b> — click <b>Read capabilities</b> to finish setup.</p>`,
-      ["Read capabilities"], meta("esp_bridge_status_connected","config_flow.py:1987"),
+      ["Read capabilities"], meta("esp_bridge_status_connected","config_flow.py:1995"),
       "Alias of <code>esp_bridge_status</code> with its own text. The green success alert appears once, right after <code>wait_pair</code>."),
     opts: [
       ["main","Read capabilities","show_capabilities_esp"],
@@ -510,7 +510,7 @@ exit</pre>
        <p>What would you like to do?</p>
        <div class="menuopt"><span class="ic">🪥</span> Set up this toothbrush <span class="chev">›</span></div>
        <div class="menuopt"><span class="ic">🔓</span> Unpair it from the bridge <span class="chev">›</span></div>`,
-      [], meta("esp_slot_action","config_flow.py:1963"),
+      [], meta("esp_slot_action","config_flow.py:1971"),
       "Appears when a bonded slot WITHOUT a config entry is selected — e.g. an orphaned bond left behind after its entry was deleted while the bridge was offline (the unpair call was skipped). Bond ≠ entry: <code>already_configured</code> only triggers when an entry exists."),
     opts: [
       ["main","Set up this toothbrush (bond already exists → just read capabilities)","esp_bridge_status"],
@@ -525,7 +525,7 @@ exit</pre>
        <p>1. <b>Switch on</b> the Sonicare you want to bond and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.</p>
        <p>2. Click <b>Start pairing</b>. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.</p>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
-      ["Start pairing"], meta("request_pair","config_flow.py:2179")),
+      ["Start pairing"], meta("request_pair","config_flow.py:2187")),
     opts: [
       ["main","Start pairing","wait_pair"],
     ],
@@ -541,7 +541,7 @@ exit</pre>
         `<div class="progressbar"><div></div></div>
          <p style="color:var(--muted)">${label}</p>
          <p style="font-size:12px;color:var(--muted)">Phase ${scanning ? "2 / 2 — Scanning &amp; bonding" : "1 / 2 — Arming"}</p>`,
-        [], meta(scanning ? "wait_pair · pair_scanning" : "wait_pair · pair_arming","config_flow.py:2267"),
+        [], meta(scanning ? "wait_pair · pair_scanning" : "wait_pair · pair_arming","config_flow.py:2275"),
         "Two <code>async_show_progress</code> phases (<code>pair_arming</code> → <code>pair_scanning</code>) instead of one blocking 65-second spinner. Each phase runs as a background task; when it finishes, Home Assistant re-invokes the step. The result lands in <code>_pair_result</code> and <code>async_step_pair_finish</code> renders it. (Indeterminate spinner — a determinate bar via <code>async_update_progress</code> would need a newer HA baseline.)");
     },
     opts: [
@@ -558,7 +558,7 @@ exit</pre>
        <p>Bridge <b>sonicare-bridge / sonicare_1</b> is currently bonded to <b>${MAC2}</b>.</p>
        <p>Clicking <b>Submit</b> will remove the BLE bond on the bridge and clear the saved identity. After that you can pair a different Sonicare.</p>
        <p>The Sonicare keeps its own half of the bond, but there's nothing to clear on the brush itself — re-pairing this same brush later works without any extra steps.</p>`,
-      ["Unpair and reset"], meta("reset_bridge","config_flow.py:2456"),
+      ["Unpair and reset"], meta("reset_bridge","config_flow.py:2464"),
       "Reached via the S9 menu (“Release the bond on the bridge”). Waits for the bridge's “unpaired” event (~4 s, shared helper with <code>async_remove_entry</code>) and only continues to pair-mode on confirmed success. Errors are injected as an <code>&lt;ha-alert&gt;</code> at the top of the description — <code>errors[\"base\"]</code> does not render on this schema-less step. The unpair itself runs behind <code>async_show_progress</code> (“Removing the bond…”), the result is handled in <code>reset_finish</code>."),
     opts: [
       ["main","Confirmed (unpaired event) → slot empty → pair-mode + success notice","request_pair",{variant:"unpaired"}],
@@ -569,13 +569,13 @@ exit</pre>
   },
 
   show_capabilities_direct: {
-    render: () => capDialog("✅ Connected via <b>Direct Bluetooth</b> (hci0)."),
+    render: () => capDialog("Connected via <b>Direct Bluetooth</b> (hci0)."),
     opts: [
       ["main","Set up — entry is created","created"],
     ],
   },
   show_capabilities_esp: {
-    render: () => capDialog("✅ Connected via <b>ESP32 Bridge</b> (Master Bath / sonicare_1)."),
+    render: () => capDialog("Connected via <b>ESP32 Bridge</b> (Master Bath / sonicare_1)."),
     opts: [
       ["main","Set up — entry is created","created"],
     ],
@@ -600,7 +600,7 @@ exit</pre>
        <div class="switchrow"><div><div class="sl">Notification throttle (ms)</div><div class="sd">Minimum interval between BLE notification events forwarded by the ESP bridge. Lower values give faster updates but may overload the ESP.</div></div><span class="mono" style="color:var(--muted)">250</span></div>
        <div class="switchrow"><div><div class="sl">Pipelined GATT reads</div><div class="sd">Send poll reads to the ESP bridge as one concurrent batch. Requires bridge firmware 1.7.0+.</div></div><span class="toggle on"></span></div>
        <div class="switchrow"><div><div class="sl">Warn about counterfeit brush heads</div><div class="sd">Warn if no valid brush head NFC serial is detected after 30 seconds of brushing.</div></div><span class="toggle on"></span></div>`,
-      ["Submit"], meta("options · init","config_flow.py:2766"),
+      ["Submit"], meta("options · init","config_flow.py:2774"),
       "Second flow class (OptionsFlow), reachable at any time from the integration page."),
     opts: [
       ["main","Submit — options saved (entry reload)","created"],
@@ -610,7 +610,7 @@ exit</pre>
 
 function capDialog(statusLine) {
   return dlg("Philips Sonicare — HX9992",
-    `<p>${statusLine}</p>
+    `<div class="alert" style="background:var(--ok-soft);color:var(--ok)">✅ <span>${statusLine}</span></div>
      <p><b>Device Information</b></p>
      <table><tbody>
        <tr><td><b>Model</b></td><td>HX9992</td></tr>
@@ -635,7 +635,7 @@ function capDialog(statusLine) {
        <div class="fbox"><span>Master Bath</span></div>
        <div class="fhelp">How this toothbrush appears in Home Assistant. Pick something that distinguishes it from any other brushes you have (e.g., "Master Bath", "Jane's").</div>
      </div>`,
-    ["Set up"], meta("show_capabilities","config_flow.py:2587"),
+    ["Set up"], meta("show_capabilities","config_flow.py:2595"),
     "The tables are runtime HTML in placeholders (<code>{device_info}</code>, <code>{services}</code>); the ❌ footer only appears when services are missing.");
 }
 

@@ -975,6 +975,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         itself. ``via_proxy`` marks a TRANSPORT_BLEAK probe that rode a
         remote scanner — labelling that "Direct Bluetooth" would hide
         the very path distinction the pairing dialogs are keyed on.
+
+        Rendered as a success <ha-alert> (same style as the pairing
+        confirmation); ha-markdown does not parse markdown inside the
+        HTML block, so emphasis uses <b>. The step is only reachable
+        after a successful capability read, so there is no
+        disconnected variant.
         """
         if transport_type == TRANSPORT_ESP_BRIDGE:
             transport_label = "ESP32 Bridge"
@@ -982,9 +988,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             transport_label = "Bluetooth proxy"
         else:
             transport_label = "Direct Bluetooth"
-        if path:
-            return f"✅ Connected via **{transport_label}** ({path})."
-        return f"✅ Connected via **{transport_label}**."
+        suffix = f" ({path})" if path else ""
+        return (
+            '<ha-alert alert-type="success">Connected via '
+            f"<b>{transport_label}</b>{suffix}.</ha-alert>"
+        )
 
     # ------------------------------------------------------------------
     # ESP bridge helpers
