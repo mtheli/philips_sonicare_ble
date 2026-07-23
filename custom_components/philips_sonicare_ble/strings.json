@@ -40,12 +40,12 @@
       },
       "esp_select_device": {
         "title": "Select BLE Device",
-        "description": "This ESP bridge hosts multiple Sonicare toothbrushes. Select the one you want to add.\n\n{legend}",
+        "description": "This ESP bridge hosts multiple Sonicare toothbrushes. Select the one you want to add.\n\n✅ already configured · 🔒 bonded · 🔓 unpaired · 🟢 online · ⚪ offline",
         "data": {
           "esp_bridge_id": "BLE Device"
         },
         "data_description": {
-          "esp_bridge_id": "{pair_hint}"
+          "esp_bridge_id": "Entries without status icons are empty bridges in pair-mode. Switch on the toothbrush you want to bond before submitting."
         }
       },
       "esp_slot_action": {
@@ -106,7 +106,7 @@
       "unknown": "Unexpected error. Check the logs (Settings → System → Logs) for details."
     },
     "progress": {
-      "ble_probing": "Connecting to {name} and reading its data — this can take up to half a minute…",
+      "ble_probing": "Connecting to {name} and reading its data — usually a few seconds; if several connection attempts are needed (weak signal, first contact after a pairing problem) this can take up to two minutes…",
       "pair_arming": "Arming pair-mode on {target}…",
       "pair_scanning": "Looking for your Sonicare and bonding — switch it on and hold it within ~1 m of the bridge. This can take up to a minute.",
       "unpairing": "Removing the bond on {target}…",

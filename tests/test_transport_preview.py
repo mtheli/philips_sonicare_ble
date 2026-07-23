@@ -183,3 +183,57 @@ def test_describe_available_paths_sorts_and_classifies(monkeypatch) -> None:
     assert [p["name"] for p in paths] == ["atom-lite", "hci0 (00:0A:CD:46:B2:2D)"]
     assert paths[0]["is_local"] is False
     assert paths[1]["is_local"] is True
+
+
+def test_available_paths_drop_stale_rssi_invalidation(monkeypatch) -> None:
+    """A BlueZ -127 invalidation entry must not be offered as a carrier.
+
+    Seen live 2026-07-22 (shaver flow): a sleeping device rendered as
+    "via Direct Bluetooth (hci0, -127 dBm)" although hci0 did not see it
+    at all — the -127 sentinel is a stale history entry, the same one
+    the sleep gate keys on.
+    """
+    from custom_components.philips_sonicare_ble import transport
+
+    class _FakeHaScanner(transport.HaScanner):
+        # Bypass HaScanner.__init__ — only isinstance matters here.
+        def __init__(self, name):
+            self.name = name
+
+    stale = _FakeHaScanner.__new__(_FakeHaScanner)
+    stale.name = "hci0 (00:0A:CD:46:B2:2D)"
+
+    devices = [
+        SimpleNamespace(scanner=stale, advertisement=SimpleNamespace(rssi=-127)),
+        SimpleNamespace(
+            scanner=SimpleNamespace(name="atom-lite", source="F4:65:0B:01:B9:6E"),
+            advertisement=SimpleNamespace(rssi=-61),
+        ),
+    ]
+    monkeypatch.setattr(
+        transport, "async_scanner_devices_by_address",
+        MagicMock(return_value=devices),
+    )
+
+    paths = transport.describe_available_paths(SimpleNamespace(), ADDRESS)
+
+    assert len(paths) == 1
+    assert paths[0]["name"] == "atom-lite"
+    assert paths[0]["is_local"] is False
+
+
+def test_available_paths_all_stale_yields_empty(monkeypatch) -> None:
+    from custom_components.philips_sonicare_ble import transport
+
+    devices = [
+        SimpleNamespace(
+            scanner=SimpleNamespace(name="hci0", source=None),
+            advertisement=SimpleNamespace(rssi=-127),
+        ),
+    ]
+    monkeypatch.setattr(
+        transport, "async_scanner_devices_by_address",
+        MagicMock(return_value=devices),
+    )
+
+    assert transport.describe_available_paths(SimpleNamespace(), ADDRESS) == []

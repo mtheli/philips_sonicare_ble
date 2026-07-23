@@ -15,7 +15,14 @@ from homeassistant.components.bluetooth import (
     async_discovered_service_info,
     async_last_service_info,
 )
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow
+
+try:  # HA ≥ 2025.8
+    from homeassistant.config_entries import OptionsFlowWithReload
+except ImportError:  # pragma: no cover — older cores + the pinned CI
+    # test stack (pytest-homeassistant-custom-component ships HA 2025.1).
+    # Fallback loses only the automatic entry reload on options save.
+    from homeassistant.config_entries import OptionsFlow as OptionsFlowWithReload
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import Event, callback
 from homeassistant.data_entry_flow import AbortFlow, FlowResult
@@ -218,6 +225,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._probed_bridges: dict[str, list[tuple[str, dict[str, str]]]] = {}
         self._manual_address_entry: bool = False
         self._configured_bridge_ids: set[str] = set()
+        # One-shot: the ESP auto-route in bluetooth_confirm runs multi-second
+        # slot probes — check once per flow, not on every re-render.
+        self._esp_redirect_checked: bool = False
         # Transport of the last probe that actually connected. None until a
         # probe establishes a connection; deliberately NOT reset on failed
         # connects so a retry that never reaches the device keeps showing
@@ -384,6 +394,27 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if update is not None:
             update(min(1.0, max(0.0, value)))
 
+    async def _creep_progress(
+        self, start: float, end: float, duration: float
+    ) -> None:
+        """Creep the bar on wall-clock time while a long single await runs.
+
+        ``establish_connection`` retries internally for up to ~90 s
+        against an unreachable device or a stale bond without any
+        callback we could hook — without this the bar sits frozen at the
+        pre-connect milestone the whole time. The caller cancels the
+        task the moment the await returns; real milestones then overwrite
+        whatever the creep reached.
+        """
+        loop = self.hass.loop
+        t0 = loop.time()
+        while True:
+            await asyncio.sleep(2.0)
+            frac = min(1.0, (loop.time() - t0) / duration)
+            self._bump_progress(start + (end - start) * frac)
+            if frac >= 1.0:
+                return
+
     async def _async_fetch_capabilities(self, address: str) -> dict[str, Any]:
         """Connect to the device and read capabilities via direct BLE."""
         self._probe_needed_encryption = False
@@ -438,10 +469,19 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             # the longest leg, so the bar sits low until it lands, then
             # advances per characteristic read.
             self._bump_progress(0.05)
-            client = await bleak_establish(
-                BleakClient, device, "philips_sonicare_ble",
-                use_services_cache=True, timeout=30.0,
+            # A stale bond makes establish_connection retry internally for
+            # up to ~90 s (4 attempts) — creep the bar toward the
+            # post-connect milestone so the dialog visibly keeps working.
+            creep = self.hass.async_create_task(
+                self._creep_progress(0.05, 0.38, 90.0)
             )
+            try:
+                client = await bleak_establish(
+                    BleakClient, device, "philips_sonicare_ble",
+                    use_services_cache=True, timeout=30.0,
+                )
+            finally:
+                creep.cancel()
             if not client or not client.is_connected:
                 return result
             self._bump_progress(0.4)
@@ -453,8 +493,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             # dialog (host instructions vs. proxy guidance) and decide
             # whether the D-Bus auto-pair machinery applies at all.
             self._probe_via_proxy = not is_local_bluez_connection(client)
+            # Scanner names carry the adapter MAC in parentheses — strip it
+            # for the dialog (same as _short_scanner in the preview).
             self._probe_proxy_name = (
-                connection_path if self._probe_via_proxy else None
+                connection_path.split(" (")[0]
+                if self._probe_via_proxy else None
             )
             _LOGGER.info(
                 "%s: capabilities probe connected via %s",
@@ -1317,12 +1360,18 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         # Auto-route to ESP only when an ESP slot already has this MAC
         # bonded — otherwise fall through to Direct BLE confirm so the
-        # user can pick the manual ESP path themselves if needed.
-        match = await self._find_esp_bridge_for_mac(self._address or "")
-        if match:
-            self._esp_device_name, self._esp_bridge_id = match
-            self._esp_bridge_ids = self._detect_esp_bridge_ids(self._esp_device_name)
-            return await self._esp_bridge_health_check()
+        # user can pick the manual ESP path themselves if needed. Checked
+        # once per flow: submits and re-renders after a failed probe must
+        # not repeat the multi-second slot probes.
+        if user_input is None and not self._esp_redirect_checked:
+            self._esp_redirect_checked = True
+            match = await self._find_esp_bridge_for_mac(self._address or "")
+            if match:
+                self._esp_device_name, self._esp_bridge_id = match
+                self._esp_bridge_ids = self._detect_esp_bridge_ids(
+                    self._esp_device_name
+                )
+                return await self._esp_bridge_health_check()
 
         if user_input is not None:
             return self._start_ble_probe("bluetooth_confirm", self._address)
@@ -1747,7 +1796,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._configured_bridge_ids = set()
         options: list[SelectOptionDict] = []
         has_available = False
-        shown_states: set[str] = set()
 
         for did, info in cached:
             mac = info.get("mac", "")
@@ -1758,23 +1806,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             if is_configured:
                 self._configured_bridge_ids.add(did)
                 options.append(SelectOptionDict(value=did, label=f"✅ {label}"))
-                shown_states.add("already_configured")
             else:
                 has_available = True
                 options.append(SelectOptionDict(value=did, label=label))
-
-            if info.get("pair_capable") == "true":
-                shown_states.add("pair_required")
-                continue
-            paired = info.get("paired", "")
-            if paired == "true":
-                shown_states.add("bonded")
-            elif paired == "false":
-                shown_states.add("open_gatt")
-            if info.get("ble_connected") == "true":
-                shown_states.add("online")
-            else:
-                shown_states.add("offline")
 
         if not cached:
             return self.async_abort(reason="no_devices_found")
@@ -1795,25 +1829,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # the already-configured ✅ entry every time.
         default_value = unconfigured[0]["value"] if unconfigured else options[0]["value"]
 
-        legend_parts: list[str] = []
-        if "already_configured" in shown_states:
-            legend_parts.append("✅ already configured")
-        if "bonded" in shown_states:
-            legend_parts.append("🔒 bonded")
-        if "open_gatt" in shown_states:
-            legend_parts.append("🔓 unpaired")
-        if "online" in shown_states:
-            legend_parts.append("🟢 online")
-        if "offline" in shown_states:
-            legend_parts.append("⚪ offline")
-
-        pair_hint = (
-            "Entries without status icons are empty bridges in pair-mode. "
-            "Switch on the toothbrush you want to bond before submitting."
-            if "pair_required" in shown_states
-            else ""
-        )
-
+        # The legend + pair hint live as static, translated text in this
+        # step's description / data_description (see translations). They must
+        # NOT be built here as dynamic placeholders: config-flow descriptions
+        # render in the user's FRONTEND language, which a flow handler cannot
+        # read (hass.config.language is the *server* language and can differ),
+        # producing a mixed-language dialog. Static json keeps them in sync.
         return self.async_show_form(
             step_id="esp_select_device",
             data_schema=vol.Schema(
@@ -1823,10 +1844,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     ),
                 }
             ),
-            description_placeholders={
-                "legend": " · ".join(legend_parts),
-                "pair_hint": pair_hint,
-            },
         )
 
     @staticmethod
@@ -2761,21 +2778,20 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     # ------------------------------------------------------------------
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        return PhilipsSonicareOptionsFlow(config_entry)
+    def async_get_options_flow(
+        config_entry: ConfigEntry,
+    ) -> PhilipsSonicareOptionsFlow:
+        return PhilipsSonicareOptionsFlow()
 
 
-class PhilipsSonicareOptionsFlow(OptionsFlow):
+class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
     """Options flow for Philips Sonicare BLE."""
-
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        self._config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         is_esp = (
-            self._config_entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
+            self.config_entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
         )
 
         if user_input is not None:
@@ -2792,7 +2808,7 @@ class PhilipsSonicareOptionsFlow(OptionsFlow):
                     data[CONF_PIPELINED_READS] = bool(user_input[CONF_PIPELINED_READS])
             return self.async_create_entry(title="", data=data)
 
-        options = self._config_entry.options
+        options = self.config_entry.options
         schema_fields: dict = {}
         schema_fields[vol.Required(
                 CONF_SENSOR_PRESSURE,

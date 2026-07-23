@@ -290,3 +290,26 @@ async def test_scan_and_bond_ticks_progress() -> None:
         0.0 <= c.args[0] <= 1.0
         for c in flow.async_update_progress.call_args_list
     )
+
+
+async def test_esp_autoroute_checked_once_per_flow() -> None:
+    """The ESP auto-route runs multi-second slot probes — once per flow.
+
+    Re-renders after a failed probe and submits must not repeat them
+    (shaver-flow-review finding, 2026-07-22).
+    """
+    flow = _flow()
+    flow._find_esp_bridge_for_mac = AsyncMock(return_value=None)
+
+    result = await flow.async_step_bluetooth_confirm()
+    assert result["type"] == FlowResultType.FORM
+    assert flow._find_esp_bridge_for_mac.await_count == 1
+
+    # Re-render (e.g. after a failed probe): no second slot probe.
+    await flow.async_step_bluetooth_confirm()
+    assert flow._find_esp_bridge_for_mac.await_count == 1
+
+    # Submit goes straight to the BLE probe as well.
+    result = await flow.async_step_bluetooth_confirm({})
+    assert result["type"] == FlowResultType.SHOW_PROGRESS
+    assert flow._find_esp_bridge_for_mac.await_count == 1

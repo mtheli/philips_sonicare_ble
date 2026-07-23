@@ -454,13 +454,13 @@ exit</pre>
   esp_select_device: {
     render: () => dlg("Select BLE Device",
       `<p>This ESP bridge hosts multiple Sonicare toothbrushes. Select the one you want to add.</p>
-       <p>✅ already configured · 🔒 bonded · 🟢 online · ⚪ offline</p>
+       <p>✅ already configured · 🔒 bonded · 🔓 unpaired · 🟢 online · ⚪ offline</p>
        <div class="radio sel"><span class="dot"></span><span>🔒 🟢 Master Bath — HX9992 / Philips Sonicare — ${MAC}</span></div>
        <div class="radio"><span class="dot"></span><span>✅ ⚪ Kids — HX6340 — ${MAC2}</span></div>
        <div class="radio"><span class="dot"></span><span>sonicare_2</span></div>
        <div class="field" style="margin-top:6px"><div class="fhelp">Entries without status icons are empty bridges in pair-mode. Switch on the toothbrush you want to bond before submitting.</div></div>`,
       ["Submit"], meta("esp_select_device","config_flow.py:1717"),
-      "Legend (<code>{legend}</code>) and pair hint (<code>{pair_hint}</code>) are built dynamically from the states that actually occur; label priority: friendly name → model/BLE name → bridge id."),
+      "Legend and pair hint are static translated text (dynamic placeholders would render in the server language, not the user's frontend language); label priority: friendly name → model/BLE name → bridge id."),
     opts: [
       ["main","Bonded slot WITHOUT an entry selected → action menu","esp_slot_action"],
       ["cond","Empty pair-mode slot selected (sonicare_2)","request_pair"],

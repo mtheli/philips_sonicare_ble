@@ -158,6 +158,14 @@ def describe_available_paths(
     paths: list[dict[str, object]] = []
     try:
         for sd in async_scanner_devices_by_address(hass, address, connectable=True):
+            rssi = getattr(sd.advertisement, "rssi", None)
+            # A BlueZ RSSI-invalidation event leaves a stale -127 entry in
+            # the history without a packet on the air — that scanner does
+            # NOT currently see the device, so listing it would present a
+            # dead path as the likely carrier (same sentinel the sleep
+            # gate keys on).
+            if rssi is not None and rssi <= -127:
+                continue
             scanner = sd.scanner
             name = (
                 getattr(scanner, "name", None)
@@ -166,7 +174,7 @@ def describe_available_paths(
             )
             paths.append({
                 "name": name,
-                "rssi": getattr(sd.advertisement, "rssi", None),
+                "rssi": rssi,
                 "is_local": isinstance(scanner, HaScanner),
             })
     except Exception:  # noqa: BLE001 — preview only, never break the flow
