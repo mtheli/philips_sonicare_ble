@@ -659,7 +659,12 @@ class SonicareBrushHeadSerialSensor(PhilipsBrushHeadEntity, SensorEntity):
     def native_value(self) -> str | None:
         if not self.coordinator.data:
             return None
-        return self.coordinator.data.get("brushhead_serial")
+        serial = self.coordinator.data.get("brushhead_serial")
+        # Defensive: never surface the all-zeros "no chip read" placeholder as a
+        # real serial (matches the coordinator's _is_valid_serial() logic).
+        if serial and not any(c not in "0:" for c in serial):
+            return None
+        return serial
 
 
 # ---------------------------------------------------------------------------

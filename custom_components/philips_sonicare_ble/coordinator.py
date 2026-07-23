@@ -109,6 +109,9 @@ UNPERSISTED_KEYS = {
     "pressure_alarm",
     "pressure_state",
     "temperature",
+    # Never restore a stale counterfeit verdict across a restart — re-derive it
+    # from a live serial read instead.
+    "brushhead_counterfeit",
 }
 
 
@@ -655,6 +658,18 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _update_counterfeit(self, old: dict, new_data: dict) -> None:
         """Manage the counterfeit detection timer and issue state."""
+        # Honour the user's "warn about counterfeit brush head" preference as a
+        # real off switch: when disabled, turn the whole feature off (sensor
+        # stays False, timer cancelled, any issue cleared) — not just the repair.
+        if not self.entry.options.get(CONF_WARN_COUNTERFEIT, DEFAULT_WARN_COUNTERFEIT):
+            self._cancel_counterfeit_timer()
+            if self._counterfeit_detected or not self._counterfeit_cleanup_done:
+                self._clear_counterfeit_issue()
+            self._counterfeit_detected = False
+            self._counterfeit_cleanup_done = True
+            new_data["brushhead_counterfeit"] = False
+            return
+
         # Devices without a brush-head NFC service (e.g. HX63xx Kids) never
         # report a serial — skip detection entirely so we don't flag every
         # session. Drop any issue an earlier build may have raised, once.
