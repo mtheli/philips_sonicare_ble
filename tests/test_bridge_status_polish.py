@@ -9,6 +9,7 @@ is still acknowledged with a success alert on the next status render.
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -115,15 +116,20 @@ async def test_status_form_has_no_schema() -> None:
 # --- success alert (unchanged behaviour) ---------------------------------
 
 async def test_just_paired_renders_success_alert_once() -> None:
+    """The acknowledgement is a step of its own, so its wording is
+    translatable; it must still be one-shot."""
     flow = _flow(dict(BONDED_INFO))
     flow._just_paired = True
 
     first = await flow.async_step_esp_bridge_status()
-    assert "Pairing successful" in first["description_placeholders"]["status"]
+    assert first["step_id"] == "esp_bridge_status_paired"
+    assert first["description_placeholders"]["alert_open"] == (
+        '<ha-alert alert-type="success">'
+    )
     assert flow._just_paired is False
 
     second = await flow.async_step_esp_bridge_status()
-    assert "Pairing successful" not in second["description_placeholders"]["status"]
+    assert second["step_id"] != "esp_bridge_status_paired"
 
 
 async def test_no_alert_without_fresh_pairing() -> None:
@@ -132,7 +138,7 @@ async def test_no_alert_without_fresh_pairing() -> None:
 
     result = await flow.async_step_esp_bridge_status()
 
-    assert "Pairing successful" not in result["description_placeholders"]["status"]
+    assert result["step_id"] != "esp_bridge_status_paired"
 
 
 # --- ESP capabilities read as a progress task (review point #2) -----------
@@ -179,7 +185,35 @@ async def test_read_finish_error_rerenders_with_alert() -> None:
     result = await flow.async_step_esp_read_finish()
 
     assert result["type"] == FlowResultType.FORM
-    status = result["description_placeholders"]["status"]
-    assert 'ha-alert alert-type="error"' in status
+    # The failure wording lives in the translations, so the outcome picks
+    # a step rather than injecting an English sentence.
+    assert result["step_id"] == "esp_bridge_status_read_failed"
+    assert result["description_placeholders"]["alert_open"] == (
+        '<ha-alert alert-type="error">'
+    )
     # one-shot: cleared after rendering
     assert flow._esp_read_error == ""
+
+
+async def test_read_finish_unknown_error_uses_its_own_step() -> None:
+    flow = _flow(dict(BONDED_INFO))
+    flow._esp_caps_result = {"ok": False, "error": "unknown"}
+    flow._slot_action_chosen = True
+
+    result = await flow.async_step_esp_read_finish()
+
+    assert result["step_id"] == "esp_bridge_status_read_error"
+
+
+async def test_status_table_values_are_language_neutral() -> None:
+    """Row labels come from the translations; only symbols/IDs are passed."""
+    flow = _flow(dict(BONDED_INFO))
+    flow._slot_action_chosen = True
+
+    ph = (await flow.async_step_esp_bridge_status())["description_placeholders"]
+
+    assert ph["security"] in ("🔒", "🔓", "—")
+    assert ph["ble_state"] in ("✅", "❌")
+    assert ph["version"].startswith("v")
+    for value in (ph["ble_state"], ph["security"], ph["mac"], ph["version"]):
+        assert not re.search(r"[A-Za-z]{3,}", value), value

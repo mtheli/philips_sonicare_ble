@@ -41,7 +41,19 @@ def test_pair_error_rendered_when_reason_recorded() -> None:
     assert placeholders["pair_error"].endswith("\n\n")
 
 
-def test_hassio_help_points_at_ssh_addon() -> None:
+async def test_hassio_help_points_at_ssh_addon() -> None:
+    """Supervised installs get the addon wording via their own step.
+
+    The two "where do I get a terminal" wordings are separate steps, not
+    a placeholder: placeholder text is built in Python and would stay
+    English in a translated frontend.
+    """
     flow = _flow()
     flow.hass = SimpleNamespace(config=SimpleNamespace(components={"hassio"}))
-    assert "Terminal & SSH" in flow._not_paired_placeholders()["pairing_help"]
+    result = await flow.async_step_not_paired()
+    assert result["step_id"] == "not_paired_hassio"
+
+
+async def test_host_install_gets_plain_terminal_step() -> None:
+    result = await _flow().async_step_not_paired()
+    assert result["step_id"] == "not_paired"

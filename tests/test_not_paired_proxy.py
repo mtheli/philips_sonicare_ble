@@ -154,15 +154,19 @@ async def test_retry_follows_transport_flip_to_host() -> None:
     assert result["errors"] == {"base": "pairing_failed"}
 
 
-async def test_proxy_name_falls_back_to_unknown() -> None:
-    """A missing connection path must not break the template."""
+async def test_proxy_name_falls_back_to_placeholder_dash() -> None:
+    """A missing connection path must not break the template.
+
+    The fallback is a dash, not a word: placeholder values are built in
+    Python and cannot follow the frontend language.
+    """
     flow = _flow()
     flow._probe_via_proxy = True
     flow._probe_proxy_name = None
 
     result = await flow.async_step_not_paired()
 
-    assert result["description_placeholders"]["proxy_name"] == "unknown"
+    assert result["description_placeholders"]["proxy_name"] == "—"
 
 
 def test_strings_define_proxy_step_with_matching_placeholders() -> None:

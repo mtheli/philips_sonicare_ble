@@ -38,17 +38,20 @@ def _patch_paths(monkeypatch, paths) -> None:
 
 def test_no_paths_yields_empty_lines(monkeypatch) -> None:
     _patch_paths(monkeypatch, [])
-    assert _flow()._transport_lines() == ("", "")
+    via, variant, values = _flow()._transport_lines()
+    assert (via, variant) == ("", "")
+    # The template always needs every key present.
+    assert values["proxy_name"] == "" and values["local_name"] == ""
 
 
 def test_local_adapter_via_direct_bluetooth(monkeypatch) -> None:
     _patch_paths(monkeypatch, [
         {"name": "hci0 (00:0A:CD:46:B2:2D)", "rssi": -76, "is_local": True},
     ])
-    via, warning = _flow()._transport_lines()
+    via, variant, _values = _flow()._transport_lines()
     # Same "via <class> (<detail>)" framing as the capabilities dialog.
     assert via == " via **Direct Bluetooth** (hci0, -76 dBm)"
-    assert warning == ""
+    assert variant == ""
 
 
 def test_proxy_via_and_warning(monkeypatch) -> None:
@@ -57,15 +60,16 @@ def test_proxy_via_and_warning(monkeypatch) -> None:
         # the label must show the bare name, no doubled parens.
         {"name": "atom-s3r (98:88:E0:0E:DA:D2)", "rssi": -61, "is_local": False},
     ])
-    via, warning = _flow()._transport_lines()
+    via, variant, values = _flow()._transport_lines()
     assert via == " via **Bluetooth proxy** (atom-s3r, -61 dBm)"
     assert "98:88" not in via
-    assert 'ha-alert alert-type="warning"' in warning
-    assert "<b>atom-s3r</b> (-61 dBm)" in warning
+    # No local adapter in range → the variant without the "move it
+    # closer" hint. The wording itself lives in that step's translation.
+    assert variant == "proxy"
+    assert values["proxy_name"] == "<b>atom-s3r</b>"
+    assert values["proxy_rssi"] == " (-61 dBm)"
     # Paragraph breaks via <br> — markdown isn't parsed inside the alert.
-    assert warning.count("<br><br>") == 2
-    assert "can be unreliable" in warning
-    assert "ESP32 bridge" in warning
+    assert values["nl"] == "<br><br>"
 
 
 def test_proxy_preferred_with_local_fallback_hint(monkeypatch) -> None:
@@ -73,11 +77,11 @@ def test_proxy_preferred_with_local_fallback_hint(monkeypatch) -> None:
         {"name": "atom-lite", "rssi": -64, "is_local": False},
         {"name": "hci0 (00:0A:CD:46:B2:2D)", "rssi": -82, "is_local": True},
     ])
-    via, warning = _flow()._transport_lines()
+    via, variant, values = _flow()._transport_lines()
     assert via == " via **Bluetooth proxy** (atom-lite, -64 dBm)"
-    assert 'ha-alert alert-type="warning"' in warning
-    assert "<b>hci0</b>" in warning
-    assert "strongest signal" in warning
+    assert variant == "proxy_local"
+    assert values["local_name"] == "<b>hci0</b>"
+    assert values["local_rssi"] == " (-82 dBm)"
 
 
 def test_local_strongest_wins_over_weaker_proxy(monkeypatch) -> None:
@@ -87,9 +91,9 @@ def test_local_strongest_wins_over_weaker_proxy(monkeypatch) -> None:
         {"name": "hci0 (00:0A:CD:46:B2:2D)", "rssi": -60, "is_local": True},
         {"name": "atom-lite", "rssi": -85, "is_local": False},
     ])
-    via, warning = _flow()._transport_lines()
+    via, variant, _values = _flow()._transport_lines()
     assert via == " via **Direct Bluetooth** (hci0, -60 dBm)"
-    assert warning == ""
+    assert variant == ""
 
 
 async def test_picker_labels_name_the_carrying_scanner(monkeypatch) -> None:
@@ -148,13 +152,29 @@ async def test_picker_labels_strip_local_adapter_mac(monkeypatch) -> None:
 
 
 def test_capabilities_label_distinguishes_proxy() -> None:
-    text = PhilipsSonicareConfigFlow._get_connection_status_text
+    ph = PhilipsSonicareConfigFlow._connection_status_placeholders
 
-    assert "Direct Bluetooth" in text("bleak", "hci0 (00:0A:CD:46:B2:2D)")
-    assert "Bluetooth proxy" in text("bleak", "atom-lite", via_proxy=True)
-    assert "ESP32 Bridge" in text("esp_bridge", "Atom Lite / sonicare_1")
+    assert "Direct Bluetooth" in ph("bleak", "hci0 (00:0A:CD:46:B2:2D)")["transport"]
+    assert "Bluetooth proxy" in ph("bleak", "atom-lite", via_proxy=True)["transport"]
+    assert "ESP32 Bridge" in ph("esp_bridge", "Atom Lite / sonicare_1")["transport"]
     # ESP labelling is untouched by the proxy flag.
-    assert "ESP32 Bridge" in text("esp_bridge", "x", via_proxy=True)
+    assert "ESP32 Bridge" in ph("esp_bridge", "x", via_proxy=True)["transport"]
+
+
+def test_capabilities_sentence_lives_in_translations() -> None:
+    """Only the product name, the detail and the alert wrapper are
+    injected — the sentence itself must come from strings.json so it
+    follows the user's frontend language."""
+    ph = PhilipsSonicareConfigFlow._connection_status_placeholders
+
+    values = ph("bleak", "hci0")
+    assert values["detail"] == " (hci0)"
+    assert values["alert_open"].startswith("<ha-alert")
+    assert values["alert_close"] == "</ha-alert>"
+    # No English prose smuggled in through a placeholder.
+    assert "Connected" not in "".join(values.values())
+    # A missing path leaves the sentence intact.
+    assert ph("bleak", None)["detail"] == ""
 
 
 def test_describe_available_paths_sorts_and_classifies(monkeypatch) -> None:

@@ -273,7 +273,7 @@ const ERRORS = {
 };
 const ABORTS = {
   device_asleep: "The toothbrush is asleep and could not be reached. Wake it (press the power button or lift it off the charger), then start setup again.",
-  already_configured: "Device is already configured. — Detail variant: “This toothbrush is already configured via ESP32 Bridge (status: loaded). Remove or re-enable the existing entry first.”",
+  already_configured: "Device is already configured. — Detail variants: “This toothbrush is already configured via ESP32 Bridge. Remove the existing entry first.” / for a disabled entry: “…, but that entry is disabled. Re-enable it, or remove it first.”",
   no_esphome_devices: "No ESPHome bridge found. Set up an ESPHome device with the Sonicare BLE bridge component first — click the help icon (top-right) for the setup guide.",
   no_devices_found: "No supported Philips Sonicare devices were found on this ESP bridge.",
   not_supported: "This ESPHome device does not host a Philips Sonicare bridge component.",
@@ -342,7 +342,7 @@ const SCREENS = {
        <p><b>Philips Sonicare</b> discovered at <code>${MAC}</code> via Direct Bluetooth.</p>
        <p>Make sure your toothbrush is <b>turned on</b> (press the button), then click <b>Submit</b>.</p>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
-      ["Submit"], meta("bluetooth_confirm","config_flow.py:1308")),
+      ["Submit"], meta("bluetooth_confirm (+ _asleep / _failed / _proxy / _proxy_local)","config_flow.py:1355")),
     opts: [
       {group:"Direct BLE"},
       ["main","Submit — probe succeeds (services + device info read)","show_capabilities_direct"],
@@ -402,8 +402,8 @@ trust ${MAC}
 exit</pre>
        <p>Then click <b>Retry</b>.</p>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
-      ["Retry"], meta("not_paired","config_flow.py:2714"),
-      "The “Last attempt” line (<code>{pair_error}</code>) only appears after a failed auto-pair; the help text differs between HassOS and a generic terminal. Probes carried by a Bluetooth proxy don't land here but in the proxy variant (S19) — the switch follows the transport of the last connected probe."),
+      ["Retry"], meta("not_paired / not_paired_hassio","config_flow.py:2702"),
+      "The “Last attempt” line (<code>{pair_error}</code>) only appears after a failed auto-pair. The terminal wording differs between a Supervised install (shown here: the <b>Terminal &amp; SSH</b> addon, step <code>not_paired_hassio</code>) and a plain host install (step <code>not_paired</code>) — two steps rather than one placeholder, so the text follows the user's frontend language. Probes carried by a Bluetooth proxy don't land here but in the proxy variant (S19) — the switch follows the transport of the last connected probe."),
     opts: [
       ["main","Retry — pairing worked, probe succeeds","show_capabilities_direct"],
       ["err","Retry — still not paired (pairing_failed)","not_paired",{error:"pairing_failed"}],
@@ -479,7 +479,7 @@ exit</pre>
        </tbody></table>
        <p>Make sure the toothbrush is <b>turned on</b> (press button or pick up from charger) and <b>keep it on</b>, then click <b>Read capabilities</b> to finish setup.</p>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
-      ["Read capabilities"], meta("esp_bridge_status","config_flow.py:2006"),
+      ["Read capabilities"], meta("esp_bridge_status (+ _read_failed / _read_error)","config_flow.py:2073"),
       "Plain status/read form — unpair vs. setup is decided beforehand by the S9 menu. “Read capabilities” runs behind <code>async_show_progress</code> (“Reading the toothbrush…”), the result is handled in <code>esp_read_finish</code>; a read error is injected as an <code>&lt;ha-alert&gt;</code> into the status placeholder, because <code>errors[]</code> does not render on schema-less forms."),
     opts: [
       ["main","Read capabilities — brush awake, read succeeds","show_capabilities_esp"],
@@ -497,7 +497,7 @@ exit</pre>
          <tr><td><b>MAC</b></td><td><code>${MAC}</code></td></tr>
        </tbody></table>
        <p>The bridge is already connected to your toothbrush. <b>Keep the toothbrush switched on</b> — click <b>Read capabilities</b> to finish setup.</p>`,
-      ["Read capabilities"], meta("esp_bridge_status_connected","config_flow.py:1995"),
+      ["Read capabilities"], meta("esp_bridge_status_connected (+ _paired)","config_flow.py:2073"),
       "Alias of <code>esp_bridge_status</code> with its own text. The green success alert appears once, right after <code>wait_pair</code>."),
     opts: [
       ["main","Read capabilities","show_capabilities_esp"],
@@ -525,7 +525,7 @@ exit</pre>
        <p>1. <b>Switch on</b> the Sonicare you want to bond and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.</p>
        <p>2. Click <b>Start pairing</b>. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.</p>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
-      ["Start pairing"], meta("request_pair","config_flow.py:2187")),
+      ["Start pairing"], meta("request_pair (+ _after_reset)","config_flow.py:2243")),
     opts: [
       ["main","Start pairing","wait_pair"],
     ],
@@ -558,7 +558,7 @@ exit</pre>
        <p>Bridge <b>sonicare-bridge / sonicare_1</b> is currently bonded to <b>${MAC2}</b>.</p>
        <p>Clicking <b>Submit</b> will remove the BLE bond on the bridge and clear the saved identity. After that you can pair a different Sonicare.</p>
        <p>The Sonicare keeps its own half of the bond, but there's nothing to clear on the brush itself — re-pairing this same brush later works without any extra steps.</p>`,
-      ["Unpair and reset"], meta("reset_bridge","config_flow.py:2464"),
+      ["Unpair and reset"], meta("reset_bridge (+ _offline / _unconfirmed)","config_flow.py:2534"),
       "Reached via the S9 menu (“Release the bond on the bridge”). Waits for the bridge's “unpaired” event (~4 s, shared helper with <code>async_remove_entry</code>) and only continues to pair-mode on confirmed success. Errors are injected as an <code>&lt;ha-alert&gt;</code> at the top of the description — <code>errors[\"base\"]</code> does not render on this schema-less step. The unpair itself runs behind <code>async_show_progress</code> (“Removing the bond…”), the result is handled in <code>reset_finish</code>."),
     opts: [
       ["main","Confirmed (unpaired event) → slot empty → pair-mode + success notice","request_pair",{variant:"unpaired"}],
@@ -635,7 +635,7 @@ function capDialog(statusLine) {
        <div class="fbox"><span>Master Bath</span></div>
        <div class="fhelp">How this toothbrush appears in Home Assistant. Pick something that distinguishes it from any other brushes you have (e.g., "Master Bath", "Jane's").</div>
      </div>`,
-    ["Set up"], meta("show_capabilities","config_flow.py:2595"),
+    ["Set up"], meta("show_capabilities","config_flow.py:2663"),
     "The tables are runtime HTML in placeholders (<code>{device_info}</code>, <code>{services}</code>); the ❌ footer only appears when services are missing.");
 }
 

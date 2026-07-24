@@ -200,10 +200,12 @@ async def test_finish_discovery_asleep_renders_alert() -> None:
     result = await flow.async_step_ble_probe_finish()
 
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "bluetooth_confirm"
-    status = result["description_placeholders"]["status"]
-    assert "asleep" in status
-    assert status.startswith('<ha-alert alert-type="error">')
+    # The failure wording lives in this step's translated description;
+    # only the <ha-alert> wrapper is injected.
+    assert result["step_id"] == "bluetooth_confirm_asleep"
+    assert result["description_placeholders"]["alert_open"] == (
+        '<ha-alert alert-type="error">'
+    )
     # One-shot: consumed by the render above.
     assert flow._confirm_status == ""
 
@@ -216,8 +218,10 @@ async def test_finish_discovery_failure_renders_alert() -> None:
     result = await flow.async_step_ble_probe_finish()
 
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "bluetooth_confirm"
-    assert "Could not read" in result["description_placeholders"]["status"]
+    assert result["step_id"] == "bluetooth_confirm_failed"
+    assert result["description_placeholders"]["alert_open"] == (
+        '<ha-alert alert-type="error">'
+    )
 
 
 # --- probe wrapper ----------------------------------------------------------
