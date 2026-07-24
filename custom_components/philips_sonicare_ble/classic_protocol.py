@@ -325,8 +325,10 @@ class ClassicProtocol(SonicareProtocol):
             if raw := results.get(uuid):
                 out[key] = int.from_bytes(raw[:4], "little")
 
-        # Brush head identity and payload
-        if raw := results.get(CHAR_BRUSHHEAD_SERIAL):
+        # Brush head identity and payload. Only publish a real NFC read — an
+        # all-zeros serial is the "chip not scanned" placeholder (head removal
+        # is handled separately via the serial notification).
+        if (raw := results.get(CHAR_BRUSHHEAD_SERIAL)) and any(b != 0 for b in raw):
             out["brushhead_serial"] = ":".join(f"{b:02X}" for b in raw)
         if raw := results.get(CHAR_BRUSHHEAD_DATE):
             out["brushhead_date"] = raw.decode("utf-8", "ignore").strip()

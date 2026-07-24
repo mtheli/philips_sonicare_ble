@@ -202,7 +202,11 @@ def _map_brush_head(props: dict[str, Any], out: dict[str, Any]) -> None:
     is a build-tag flag with no user-facing equivalent.
     """
     v = props.get("SerialNumber")
-    if isinstance(v, list) and v:
+    # Only publish a real NFC read. An all-zeros SerialNumber is the handle's
+    # "chip not scanned this cycle" placeholder — storing it would clobber a
+    # known-good serial and, via _is_valid_serial(), trip a false counterfeit
+    # alert on a genuine head. Keep the last-known value instead.
+    if isinstance(v, list) and any(b != 0 for b in v):
         out["brushhead_serial"] = ":".join(f"{b:02X}" for b in v)
     if (v := props.get("LifetimeLimit")) is not None:
         out["brushhead_lifetime_limit"] = v
