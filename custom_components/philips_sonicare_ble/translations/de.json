@@ -1,0 +1,465 @@
+{
+  "issues": {
+    "esp_bridge_outdated": {
+      "title": "Firmware-Update der ESP-Bridge erforderlich",
+      "description": "Deine ESP-Bridge läuft mit **v{version}**, für den vollen Funktionsumfang wird aber **v{min_version}** oder neuer benötigt.\n\nBaue dein ESPHome-Gerät neu und flashe es, um die aktuelle Firmware zu erhalten. Details stehen im ESP-Bridge-Changelog im Repository."
+    },
+    "brushhead_counterfeit": {
+      "title": "Möglicherweise gefälschter oder fehlender Bürstenkopf — {device}",
+      "description": "**{device}** läuft seit 30 Sekunden, ohne dass eine gültige NFC-Seriennummer vom Bürstenkopf gelesen werden konnte.\n\nDas deutet meist auf einen gefälschten oder nicht originalen Bürstenkopf ohne NFC-Chip hin — oder darauf, dass gar kein Bürstenkopf aufgesteckt ist.\n\n**Lösung:** Setze einen originalen Philips-Sonicare-Bürstenkopf auf. Die Warnung verschwindet automatisch, sobald eine gültige Seriennummer gelesen wird.\n\nDu kannst diese Warnung in den Optionen der Integration deaktivieren."
+    }
+  },
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "bluetooth_confirm": {
+        "title": "Philips Sonicare bestätigen",
+        "description": "**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
+      },
+      "bluetooth_confirm_asleep": {
+        "title": "Philips Sonicare bestätigen",
+        "description": "{alert_open}Die Zahnbürste schläft — wecke sie (Power-Knopf drücken oder von der Ladestation nehmen) und klicke dann erneut auf Senden.{alert_close}\n\n**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
+      },
+      "bluetooth_confirm_failed": {
+        "title": "Philips Sonicare bestätigen",
+        "description": "{alert_open}Die Zahnbürste konnte nicht gelesen werden. Stelle sicher, dass sie wach und in Reichweite ist, und klicke dann erneut auf Senden.{alert_close}\n\n**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
+      },
+      "bluetooth_confirm_proxy": {
+        "title": "Philips Sonicare bestätigen",
+        "description": "{alert_open}Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein.{nl}Für zuverlässiges Pairing und Live-Updates nutze einen lokalen Bluetooth-Adapter oder die ESP32-Bridge.{alert_close}\n\n**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
+      },
+      "bluetooth_confirm_proxy_local": {
+        "title": "Philips Sonicare bestätigen",
+        "description": "{alert_open}Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein.{nl}Dein lokaler Adapter {local_name} sieht die Zahnbürste ebenfalls{local_rssi} — Home Assistant verbindet über das stärkste Signal, lege die Zahnbürste also näher an ihn heran, damit dieser Weg bevorzugt wird.{alert_close}\n\n**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
+      },
+      "user": {
+        "title": "Philips Sonicare hinzufügen",
+        "description": "Wähle, wie die Verbindung zu deiner Zahnbürste hergestellt werden soll.",
+        "menu_options": {
+          "user_bleak": "Direktes Bluetooth",
+          "esp_bridge": "ESP32 Bridge (ESPHome)"
+        }
+      },
+      "user_bleak": {
+        "title": "Direktes Bluetooth",
+        "description": "Wähle die BLE-Adresse deiner Sonicare aus oder gib sie ein.\n\n**Wichtig:** **Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), bevor du auf Senden klickst — sie muss eingeschaltet bleiben, damit ihre Dienste gelesen werden können.",
+        "data": {
+          "address": "BLE-Adresse"
+        }
+      },
+      "esp_bridge": {
+        "title": "ESP32 Bridge (ESPHome)",
+        "description": "Wähle das ESPHome-Gerät, das als BLE-Bridge für deine Zahnbürste dient.",
+        "data": {
+          "esp_device_name": "ESPHome Bridge-Gerät"
+        }
+      },
+      "esp_select_device": {
+        "title": "BLE-Gerät auswählen",
+        "description": "Diese ESP-Bridge betreibt mehrere Sonicare-Zahnbürsten. Wähle die aus, die du hinzufügen möchtest.\n\n✅ bereits konfiguriert · 🔒 gebondet · 🔓 ungekoppelt · 🟢 online · ⚪ offline",
+        "data": {
+          "esp_bridge_id": "BLE-Gerät"
+        },
+        "data_description": {
+          "esp_bridge_id": "Einträge ohne Status-Icons sind leere Bridges im Pair-Modus. Schalte die Zahnbürste ein, die du koppeln möchtest, bevor du bestätigst."
+        }
+      },
+      "esp_slot_action": {
+        "title": "Gekoppelte Zahnbürste gefunden",
+        "description": "Der Slot **{target}** ist auf der Bridge bereits mit einer Zahnbürste gebondet, aber noch nicht in Home Assistant eingerichtet.\n\nWie möchtest du fortfahren?",
+        "menu_options": {
+          "slot_setup": "Diese Zahnbürste einrichten",
+          "slot_unpair": "Von der Bridge entkoppeln"
+        }
+      },
+      "esp_bridge_status": {
+        "title": "Verbindung über ESP32 Bridge",
+        "description": "Einrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
+        "submit": "Fähigkeiten auslesen"
+      },
+      "esp_bridge_status_connected": {
+        "title": "Verbindung über ESP32 Bridge",
+        "description": "Einrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\nDie Bridge ist bereits mit deiner Zahnbürste verbunden. **Lass deine Sonicare eingeschaltet** — klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
+        "submit": "Fähigkeiten auslesen"
+      },
+      "esp_bridge_status_paired": {
+        "title": "Verbindung über ESP32 Bridge",
+        "description": "{alert_open}Pairing erfolgreich — die Bridge ist jetzt mit deiner Zahnbürste gebondet.{alert_close}\n\nEinrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Lass deine Sonicare eingeschaltet** — klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
+        "submit": "Fähigkeiten auslesen"
+      },
+      "esp_bridge_status_read_failed": {
+        "title": "Verbindung über ESP32 Bridge",
+        "description": "{alert_open}Die Zahnbürste konnte über die Bridge nicht gelesen werden. Stelle sicher, dass sie eingeschaltet und die Bridge online ist, und versuche es erneut.{alert_close}\n\nEinrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um es erneut zu versuchen.",
+        "submit": "Fähigkeiten auslesen"
+      },
+      "esp_bridge_status_read_error": {
+        "title": "Verbindung über ESP32 Bridge",
+        "description": "{alert_open}Beim Lesen der Zahnbürste ist etwas schiefgelaufen. Sieh im Protokoll nach (Einstellungen → System → Protokolle) und versuche es erneut.{alert_close}\n\nEinrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um es erneut zu versuchen.",
+        "submit": "Fähigkeiten auslesen"
+      },
+      "request_pair": {
+        "title": "Zahnbürste mit der Bridge koppeln",
+        "description": "Am Slot **{target}** ist noch keine Zahnbürste gebondet.\n\n1. **Schalte** die Sonicare ein, die du koppeln möchtest (Power-Knopf drücken oder von der Ladestation nehmen), und halte sie innerhalb von ~1 m zur Bridge. Wenn mehrere Zahnbürsten in der Nähe sind, lass die anderen ausgeschaltet.\n2. Klicke auf **Pairing starten**. Der Dialog wartet bis zu ~60 s, während die Bridge scannt und sich mit der ersten gefundenen Sonicare bondet. Schließe diesen Dialog nicht.",
+        "submit": "Pairing starten"
+      },
+      "request_pair_after_reset": {
+        "title": "Zahnbürste mit der Bridge koppeln",
+        "description": "{alert_open}Bond entfernt — der Slot ist frei. Schalte die Sonicare ein, die du koppeln möchtest, und starte dann das Pairing.{alert_close}\n\nAm Slot **{target}** ist noch keine Zahnbürste gebondet.\n\n1. **Schalte** die Sonicare ein, die du koppeln möchtest (Power-Knopf drücken oder von der Ladestation nehmen), und halte sie innerhalb von ~1 m zur Bridge. Wenn mehrere Zahnbürsten in der Nähe sind, lass die anderen ausgeschaltet.\n2. Klicke auf **Pairing starten**. Der Dialog wartet bis zu ~60 s, während die Bridge scannt und sich mit der ersten gefundenen Sonicare bondet. Schließe diesen Dialog nicht.",
+        "submit": "Pairing starten"
+      },
+      "reset_bridge": {
+        "title": "Bridge-Bond zurücksetzen",
+        "description": "Slot **{target}** ist aktuell mit **{identity_address}** gebondet.\n\nMit **Entkoppeln und zurücksetzen** wird der BLE-Bond auf der Bridge entfernt und die gespeicherte Identität gelöscht. Danach kannst du eine andere Sonicare koppeln.\n\nDie Sonicare behält ihre eigene Hälfte des Bonds, an der Bürste selbst gibt es aber nichts zu löschen — dieselbe Bürste später erneut zu koppeln funktioniert ohne Zusatzschritte.",
+        "submit": "Entkoppeln und zurücksetzen"
+      },
+      "reset_bridge_offline": {
+        "title": "Bridge-Bond zurücksetzen",
+        "description": "{alert_open}Die ESP-Bridge war nicht erreichbar, um den Bond zu löschen. Stelle sicher, dass sie online und mit Strom versorgt ist, und versuche es erneut.{alert_close}\n\nSlot **{target}** ist aktuell mit **{identity_address}** gebondet.\n\nMit **Entkoppeln und zurücksetzen** wird der BLE-Bond auf der Bridge entfernt und die gespeicherte Identität gelöscht. Danach kannst du eine andere Sonicare koppeln.\n\nDie Sonicare behält ihre eigene Hälfte des Bonds, an der Bürste selbst gibt es aber nichts zu löschen — dieselbe Bürste später erneut zu koppeln funktioniert ohne Zusatzschritte.",
+        "submit": "Entkoppeln und zurücksetzen"
+      },
+      "reset_bridge_unconfirmed": {
+        "title": "Bridge-Bond zurücksetzen",
+        "description": "{alert_open}Die Bridge hat das Löschen des Bonds nicht bestätigt — eventuell braucht sie einen Neustart. Stelle sicher, dass sie online ist, und versuche es erneut.{alert_close}\n\nSlot **{target}** ist aktuell mit **{identity_address}** gebondet.\n\nMit **Entkoppeln und zurücksetzen** wird der BLE-Bond auf der Bridge entfernt und die gespeicherte Identität gelöscht. Danach kannst du eine andere Sonicare koppeln.\n\nDie Sonicare behält ihre eigene Hälfte des Bonds, an der Bürste selbst gibt es aber nichts zu löschen — dieselbe Bürste später erneut zu koppeln funktioniert ohne Zusatzschritte.",
+        "submit": "Entkoppeln und zurücksetzen"
+      },
+      "show_capabilities": {
+        "title": "Philips Sonicare — {name}",
+        "description": "{alert_open}Verbunden über {transport}{detail}.{alert_close}\n\n**Geräteinformationen**\n\n| | |\n|---|---|\n| **Modell** | {model} |\n| **Seriennummer** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Akku** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE-Sicherheit** | {ble_security} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Erkannte Dienste**\n\n{services}",
+        "submit": "Einrichten",
+        "data": {
+          "device_name": "Name"
+        },
+        "data_description": {
+          "device_name": "So erscheint diese Zahnbürste in Home Assistant. Wähle etwas, das sie von deinen anderen Bürsten unterscheidet (z. B. „Bad oben“, „Annas“)."
+        }
+      },
+      "not_paired": {
+        "title": "BLE-Pairing erforderlich",
+        "description": "Deine Zahnbürste unter `{address}` benötigt ein **BLE-Bonding**, bevor Charakteristiken gelesen werden können. Das automatische Pairing war nicht erfolgreich.\n\n{pair_error}Öffne eine Konsole auf dem Rechner, auf dem Home Assistant läuft, und führe das Pairing-Skript aus:\n\n`{pair_cmd}`\n\nDas Skript registriert den benötigten Pairing-Agenten, koppelt die Zahnbürste und stuft sie als vertrauenswürdig ein — halte sie währenddessen einfach **wach** (Power-Knopf drücken).\n\nAlternativ kannst du manuell in einer interaktiven `bluetoothctl`-Sitzung koppeln: Ein einfaches `bluetoothctl pair` registriert keinen Agenten, und manche Modelle lehnen das Pairing ohne einen solchen ab:\n\n```\nbluetoothctl\nagent NoInputNoOutput\ndefault-agent\npair {address}\ntrust {address}\nexit\n```\n\nKlicke anschließend auf **Erneut versuchen**.",
+        "submit": "Erneut versuchen"
+      },
+      "not_paired_hassio": {
+        "title": "BLE-Pairing erforderlich",
+        "description": "Deine Zahnbürste unter `{address}` benötigt ein **BLE-Bonding**, bevor Charakteristiken gelesen werden können. Das automatische Pairing war nicht erfolgreich.\n\n{pair_error}Öffne das Add-on **Terminal & SSH** ([zuerst installieren](/hassio/addon/core_ssh/info), falls nötig) und führe das Pairing-Skript aus:\n\n`{pair_cmd}`\n\nDas Skript registriert den benötigten Pairing-Agenten, koppelt die Zahnbürste und stuft sie als vertrauenswürdig ein — halte sie währenddessen einfach **wach** (Power-Knopf drücken).\n\nAlternativ kannst du manuell in einer interaktiven `bluetoothctl`-Sitzung koppeln: Ein einfaches `bluetoothctl pair` registriert keinen Agenten, und manche Modelle lehnen das Pairing ohne einen solchen ab:\n\n```\nbluetoothctl\nagent NoInputNoOutput\ndefault-agent\npair {address}\ntrust {address}\nexit\n```\n\nKlicke anschließend auf **Erneut versuchen**.",
+        "submit": "Erneut versuchen"
+      },
+      "not_paired_proxy": {
+        "title": "BLE-Pairing erforderlich",
+        "description": "Deine Zahnbürste unter `{address}` benötigt ein **BLE-Bonding**, bevor Charakteristiken gelesen werden können.\n\nDiese Verbindung läuft über einen **Bluetooth-Proxy** (`{proxy_name}`). Der Proxy koppelt sich **automatisch beim Lesen** mit der Zahnbürste — Pairing-Werkzeuge auf dem Home-Assistant-Host (`bluetoothctl`, Pairing-Skripte) haben auf diese Verbindung keinen Einfluss.\n\nDas automatische Pairing ist nicht abgeschlossen. Die wahrscheinlichsten Ursachen:\n\n1. **Die Zahnbürste hält noch einen alten Bond** zu einem Handy oder einem anderen Adapter. Entferne die Bürste in der Philips-Sonicare-App (oder über „Gerät vergessen“ in den Bluetooth-Einstellungen des Handys), wecke die Bürste und klicke auf **Erneut versuchen** — ein neuer Versuch startet das Pairing neu.\n2. **Die Zahnbürste ist während der Einrichtung eingeschlafen** — drücke den Power-Knopf, halte sie wach und klicke auf **Erneut versuchen**.\n3. **Du betreibst mehrere Bluetooth-Proxys:** Bonds wandern nicht von einem Proxy zum anderen, und Home Assistant wählt den Proxy mit dem besten Signal. Lege die Bürste direkt neben einen Proxy und klicke auf **Erneut versuchen**.\n4. Manche Modelle **verweigern das Pairing grundsätzlich**. Wenn jeder Versuch sofort scheitert, richte die Bürste stattdessen über den Bluetooth-Adapter des Hosts oder die dedizierte ESP32-Bridge ein.",
+        "submit": "Erneut versuchen"
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zur Zahnbürste nicht möglich. Stelle sicher, dass sie wach (Knopf drücken oder auf die Ladestation stellen) und in Reichweite ist.",
+      "not_a_sonicare": "Mit dem Gerät verbunden, es wurden aber keine Philips-Sonicare-Charakteristiken gefunden. Prüfe, ob die Adresse wirklich zu einer Sonicare-Zahnbürste gehört.",
+      "pairing_failed": "Das Gerät ist weiterhin nicht gekoppelt. Stelle sicher, dass die Zahnbürste wach ist, und versuche das Pairing erneut.",
+      "pair_timeout": "Innerhalb des Zeitfensters wurde keine Sonicare gekoppelt. Drücke den Power-Knopf der Zahnbürste, um sie zu wecken, und versuche es erneut.",
+      "unknown": "Unerwarteter Fehler. Details stehen im Protokoll (Einstellungen → System → Protokolle)."
+    },
+    "progress": {
+      "ble_probing": "Verbinde mit {name} und lese die Daten aus — normalerweise wenige Sekunden; falls mehrere Verbindungsversuche nötig sind (schwaches Signal, erster Kontakt nach einem Pairing-Problem), kann es bis zu zwei Minuten dauern…",
+      "pair_arming": "Aktiviere den Pair-Modus auf {target}…",
+      "pair_scanning": "Suche deine Sonicare und bonde sie — schalte sie ein und halte sie innerhalb von ~1 m zur Bridge. Das kann bis zu einer Minute dauern.",
+      "unpairing": "Entferne den Bond auf {target}…",
+      "esp_reading": "Lese die Zahnbürste über {target} aus…"
+    },
+    "abort": {
+      "device_asleep": "Die Zahnbürste schläft und war nicht erreichbar. Wecke sie (Power-Knopf drücken oder von der Ladestation nehmen) und starte die Einrichtung erneut.",
+      "already_configured": "Gerät ist bereits konfiguriert.",
+      "already_configured_detail": "Diese Zahnbürste ist bereits über **{transport}** konfiguriert. Entferne zuerst den vorhandenen Eintrag.",
+      "already_configured_disabled": "Diese Zahnbürste ist bereits über **{transport}** konfiguriert, dieser Eintrag ist aber deaktiviert. Aktiviere ihn wieder oder entferne ihn zuerst.",
+      "already_in_progress": "Der Konfigurationsvorgang läuft bereits.",
+      "no_devices_found": "Auf dieser ESP-Bridge wurden keine unterstützten Philips-Sonicare-Geräte gefunden.",
+      "no_esphome_devices": "Keine ESPHome-Bridge gefunden. Richte zuerst ein ESPHome-Gerät mit der Sonicare-BLE-Bridge-Komponente ein — die Anleitung erreichst du über das Hilfe-Symbol (oben rechts).",
+      "not_supported": "Dieses ESPHome-Gerät stellt keine Philips-Sonicare-Bridge-Komponente bereit."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Philips Sonicare Optionen",
+        "data": {
+          "sensor_pressure": "Drucksensor aktivieren",
+          "sensor_temperature": "Temperatursensor aktivieren",
+          "sensor_gyroscope": "Gyroskop-Sensor aktivieren",
+          "notify_throttle_ms": "Benachrichtigungs-Drosselung (ms)",
+          "pipelined_reads": "Gebündelte GATT-Lesevorgänge",
+          "warn_counterfeit_brushhead": "Vor gefälschten Bürstenköpfen warnen"
+        },
+        "data_description": {
+          "sensor_pressure": "Druckdaten während der Putzsitzung streamen.",
+          "sensor_temperature": "Temperaturdaten während der Putzsitzung streamen.",
+          "sensor_gyroscope": "6-Achsen-Bewegungsdaten während der Putzsitzung streamen. Hohe Bandbreite — auf einem vollwertigen ESP32 in der Regel unproblematisch, auf kleineren Boards wie dem ESP32-C3 kann es zu Aussetzern kommen. Nur bei Modellen mit eingebautem Bewegungssensor verfügbar.",
+          "notify_throttle_ms": "Mindestabstand zwischen BLE-Benachrichtigungen, die die ESP-Bridge weiterleitet. Niedrigere Werte liefern schnellere Aktualisierungen, können den ESP aber überlasten.",
+          "pipelined_reads": "Lesevorgänge als einen gleichzeitigen Stapel an die ESP-Bridge senden statt einzeln nacheinander. Erfordert Bridge-Firmware 1.7.0 oder neuer (ältere Bridges lesen immer sequenziell). Deaktiviere die Option nur, wenn nach einem Bridge-Update Lesefehler auftreten.",
+          "warn_counterfeit_brushhead": "Warnen, wenn nach 30 Sekunden Putzen keine gültige NFC-Seriennummer des Bürstenkopfs erkannt wurde."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "Akku"
+      },
+      "handle_state": {
+        "name": "Handstück-Status",
+        "state": {
+          "off": "Aus",
+          "standby": "Bereit",
+          "run": "Putzen",
+          "charge": "Laden",
+          "shutdown": "Ausschalten",
+          "validate": "Prüfung",
+          "background": "Hintergrund"
+        }
+      },
+      "brushing_mode": {
+        "name": "Putzmodus",
+        "state": {
+          "clean": "Reinigung",
+          "white_plus": "White+",
+          "white": "White",
+          "gum_health": "Zahnfleischschutz",
+          "gum_care": "Zahnfleischpflege",
+          "deep_clean_plus": "Tiefenreinigung+",
+          "deep_clean": "Tiefenreinigung",
+          "sensitive": "Sensitiv",
+          "tongue_care": "Zungenpflege"
+        }
+      },
+      "brushing_state": {
+        "name": "Putzstatus",
+        "state": {
+          "off": "Aus",
+          "on": "Ein",
+          "pause": "Pause",
+          "session_complete": "Sitzung abgeschlossen",
+          "session_aborted": "Sitzung abgebrochen"
+        }
+      },
+      "intensity": {
+        "name": "Intensität",
+        "state": {
+          "low": "Niedrig",
+          "medium": "Mittel",
+          "high": "Hoch"
+        }
+      },
+      "brushing_time": {
+        "name": "Putzdauer"
+      },
+      "routine_length": {
+        "name": "Routine-Dauer"
+      },
+      "routine_countdown": {
+        "name": "Routine-Countdown"
+      },
+      "number_of_sectors": {
+        "name": "Anzahl Sektoren"
+      },
+      "sector": {
+        "name": "Sektor",
+        "state": {
+          "sector_1": "Sektor 1",
+          "sector_2": "Sektor 2",
+          "sector_3": "Sektor 3",
+          "sector_4": "Sektor 4",
+          "sector_5": "Sektor 5",
+          "sector_6": "Sektor 6",
+          "success": "Abgeschlossen",
+          "no_sector": "Kein Sektor"
+        }
+      },
+      "session_id": {
+        "name": "Sitzungs-ID"
+      },
+      "latest_session_id": {
+        "name": "Letzte Sitzungs-ID"
+      },
+      "session_count": {
+        "name": "Anzahl Sitzungen"
+      },
+      "motor_runtime": {
+        "name": "Motorlaufzeit"
+      },
+      "brushhead_wear": {
+        "name": "Verschleiß"
+      },
+      "brushhead_sessions_left": {
+        "name": "Verbleibende Sitzungen"
+      },
+      "brushhead_usage": {
+        "name": "Nutzung"
+      },
+      "brushhead_limit": {
+        "name": "Lebensdauer-Limit"
+      },
+      "brushhead_serial": {
+        "name": "Seriennummer"
+      },
+      "brushhead_date": {
+        "name": "Produktionsdatum"
+      },
+      "brushhead_ring_id": {
+        "name": "NFC-Ring-ID"
+      },
+      "brushhead_nfc_version": {
+        "name": "NFC-Version"
+      },
+      "brushhead_type": {
+        "name": "Typ",
+        "state": {
+          "adaptive_clean": "Adaptive Clean",
+          "adaptive_white": "Adaptive White",
+          "adaptive_gums": "Adaptive Gums",
+          "tongue_clean": "Tongue Clean",
+          "premium_all_in_one": "Premium All-in-One",
+          "sensitive": "Sensitive",
+          "non_rfid": "Ohne RFID"
+        }
+      },
+      "brushhead_payload": {
+        "name": "NFC-Daten"
+      },
+      "bridge_version": {
+        "name": "Bridge-Version"
+      },
+      "bridge_build": {
+        "name": "ESP-Build"
+      },
+      "bridge_boot_time": {
+        "name": "ESP letzter Start"
+      },
+      "model_number": {
+        "name": "Modellnummer"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "last_seen": {
+        "name": "Zuletzt gesehen"
+      },
+      "pressure": {
+        "name": "Druck"
+      },
+      "pressure_state": {
+        "name": "Druckstatus",
+        "state": {
+          "ok": "OK",
+          "optimal": "Optimal",
+          "too_high": "Zu hoch"
+        }
+      },
+      "temperature": {
+        "name": "Temperatur"
+      },
+      "handle_time": {
+        "name": "Gerätezeit"
+      },
+      "activity": {
+        "name": "Aktivität",
+        "state": {
+          "initializing": "Initialisierung",
+          "off": "Aus",
+          "standby": "Bereit",
+          "brushing": "Putzen",
+          "paused": "Pausiert",
+          "charging": "Lädt"
+        }
+      },
+      "rssi": {
+        "name": "RSSI"
+      },
+      "adapter": {
+        "name": "Adapter"
+      },
+      "adapter_type": {
+        "name": "Adaptertyp",
+        "state": {
+          "direct_ble": "Direktes Bluetooth",
+          "esp_bridge": "ESP-Bridge",
+          "stock_proxy": "Bluetooth-Proxy",
+          "unknown": "Unbekannt"
+        }
+      }
+    },
+    "binary_sensor": {
+      "is_brushing": {
+        "name": "Putzen"
+      },
+      "is_charging": {
+        "name": "Lädt",
+        "state": {
+          "off": "Lädt nicht",
+          "on": "Lädt"
+        }
+      },
+      "pressure_alert": {
+        "name": "Druckwarnung",
+        "state": {
+          "off": "OK",
+          "on": "Problem"
+        }
+      },
+      "esp_bridge_alive": {
+        "name": "ESP verbunden",
+        "state": {
+          "off": "Getrennt",
+          "on": "Verbunden"
+        }
+      },
+      "ble_connected": {
+        "name": "BLE verbunden",
+        "state": {
+          "off": "Getrennt",
+          "on": "Verbunden"
+        }
+      },
+      "brushhead_counterfeit": {
+        "name": "Gefälschter Bürstenkopf",
+        "state": {
+          "off": "OK",
+          "on": "Problem"
+        }
+      }
+    },
+    "select": {
+      "brushing_mode_select": {
+        "name": "Putzmodus",
+        "state": {
+          "clean": "Reinigung",
+          "white_plus": "White+",
+          "gum_health": "Zahnfleischschutz",
+          "deep_clean_plus": "Tiefenreinigung+",
+          "sensitive": "Sensitiv",
+          "tongue_care": "Zungenpflege"
+        }
+      },
+      "intensity_select": {
+        "name": "Intensität",
+        "state": {
+          "low": "Niedrig",
+          "medium": "Mittel",
+          "high": "Hoch"
+        }
+      }
+    },
+    "switch": {
+      "adaptive_intensity": {
+        "name": "Adaptive Intensität"
+      },
+      "scrubbing_feedback": {
+        "name": "Schrubb-Feedback"
+      },
+      "pressure_feedback": {
+        "name": "Druck-Feedback"
+      }
+    },
+    "update": {
+      "bridge_firmware": {
+        "name": "Bridge-Firmware"
+      }
+    }
+  }
+}
