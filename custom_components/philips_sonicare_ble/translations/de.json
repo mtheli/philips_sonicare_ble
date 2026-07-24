@@ -24,13 +24,21 @@
         "title": "Philips Sonicare bestätigen",
         "description": "{alert_open}Die Zahnbürste konnte nicht gelesen werden. Stelle sicher, dass sie wach und in Reichweite ist, und klicke dann erneut auf Senden.{alert_close}\n\n**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
       },
+      "bluetooth_confirm_asleep_proxy": {
+        "title": "Philips Sonicare bestätigen",
+        "description": "{alert_open}Die Zahnbürste schläft — wecke sie (Power-Knopf drücken oder von der Ladestation nehmen) und klicke dann erneut auf Senden.{alert_close}\n\n{warn_open}Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein. Wenn wiederholte Versuche scheitern, nutze stattdessen einen lokalen Bluetooth-Adapter oder die ESP32-Bridge.{warn_close}\n\n**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
+      },
+      "bluetooth_confirm_failed_proxy": {
+        "title": "Philips Sonicare bestätigen",
+        "description": "{alert_open}Die Zahnbürste konnte nicht gelesen werden. Stelle sicher, dass sie wach und in Reichweite ist, und klicke dann erneut auf Senden.{alert_close}\n\n{warn_open}Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein. Wenn wiederholte Versuche scheitern, nutze stattdessen einen lokalen Bluetooth-Adapter oder die ESP32-Bridge.{warn_close}\n\n**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
+      },
       "bluetooth_confirm_proxy": {
         "title": "Philips Sonicare bestätigen",
-        "description": "{alert_open}Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein.{nl}Für zuverlässiges Pairing und Live-Updates nutze einen lokalen Bluetooth-Adapter oder die ESP32-Bridge.{alert_close}\n\n**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
+        "description": "{warn_open}Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein.{nl}Für zuverlässiges Pairing und Live-Updates nutze einen lokalen Bluetooth-Adapter oder die ESP32-Bridge.{warn_close}\n\n**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
       },
       "bluetooth_confirm_proxy_local": {
         "title": "Philips Sonicare bestätigen",
-        "description": "{alert_open}Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein.{nl}Dein lokaler Adapter {local_name} sieht die Zahnbürste ebenfalls{local_rssi} — Home Assistant verbindet über das stärkste Signal, lege die Zahnbürste also näher an ihn heran, damit dieser Weg bevorzugt wird.{alert_close}\n\n**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
+        "description": "{warn_open}Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein.{nl}Dein lokaler Adapter {local_name} sieht die Zahnbürste ebenfalls{local_rssi} — Home Assistant verbindet über das stärkste Signal, lege die Zahnbürste also näher an ihn heran, damit dieser Weg bevorzugt wird.{warn_close}\n\n**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**."
       },
       "user": {
         "title": "Philips Sonicare hinzufügen",
@@ -74,27 +82,27 @@
       },
       "esp_bridge_status": {
         "title": "Verbindung über ESP32 Bridge",
-        "description": "Einrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
+        "description": "Einrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n✅ verbunden · ❌ getrennt · 🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
         "submit": "Fähigkeiten auslesen"
       },
       "esp_bridge_status_connected": {
         "title": "Verbindung über ESP32 Bridge",
-        "description": "Einrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\nDie Bridge ist bereits mit deiner Zahnbürste verbunden. **Lass deine Sonicare eingeschaltet** — klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
+        "description": "Einrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n✅ verbunden · ❌ getrennt · 🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\nDie Bridge ist bereits mit deiner Zahnbürste verbunden. **Lass deine Sonicare eingeschaltet** — klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
         "submit": "Fähigkeiten auslesen"
       },
       "esp_bridge_status_paired": {
         "title": "Verbindung über ESP32 Bridge",
-        "description": "{alert_open}Pairing erfolgreich — die Bridge ist jetzt mit deiner Zahnbürste gebondet.{alert_close}\n\nEinrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Lass deine Sonicare eingeschaltet** — klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
+        "description": "{alert_open}Pairing erfolgreich — die Bridge ist jetzt mit deiner Zahnbürste gebondet.{alert_close}\n\nEinrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n✅ verbunden · ❌ getrennt · 🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
         "submit": "Fähigkeiten auslesen"
       },
       "esp_bridge_status_read_failed": {
         "title": "Verbindung über ESP32 Bridge",
-        "description": "{alert_open}Die Zahnbürste konnte über die Bridge nicht gelesen werden. Stelle sicher, dass sie eingeschaltet und die Bridge online ist, und versuche es erneut.{alert_close}\n\nEinrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um es erneut zu versuchen.",
+        "description": "{alert_open}Die Zahnbürste konnte über die Bridge nicht gelesen werden. Stelle sicher, dass sie eingeschaltet und die Bridge online ist, und versuche es erneut.{alert_close}\n\nEinrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n✅ verbunden · ❌ getrennt · 🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um es erneut zu versuchen.",
         "submit": "Fähigkeiten auslesen"
       },
       "esp_bridge_status_read_error": {
         "title": "Verbindung über ESP32 Bridge",
-        "description": "{alert_open}Beim Lesen der Zahnbürste ist etwas schiefgelaufen. Sieh im Protokoll nach (Einstellungen → System → Protokolle) und versuche es erneut.{alert_close}\n\nEinrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um es erneut zu versuchen.",
+        "description": "{alert_open}Beim Lesen der Zahnbürste ist etwas schiefgelaufen. Sieh im Protokoll nach (Einstellungen → System → Protokolle) und versuche es erneut.{alert_close}\n\nEinrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n✅ verbunden · ❌ getrennt · 🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um es erneut zu versuchen.",
         "submit": "Fähigkeiten auslesen"
       },
       "request_pair": {
@@ -124,7 +132,7 @@
       },
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",
-        "description": "{alert_open}Verbunden über {transport}{detail}.{alert_close}\n\n**Geräteinformationen**\n\n| | |\n|---|---|\n| **Modell** | {model} |\n| **Seriennummer** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Akku** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE-Sicherheit** | {ble_security} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Erkannte Dienste**\n\n{services}",
+        "description": "{alert_open}Verbunden über {transport}{detail}.{alert_close}\n\n**Geräteinformationen**\n\n| | |\n|---|---|\n| **Modell** | {model} |\n| **Seriennummer** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Akku** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE-Sicherheit** | {ble_security} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Erkannte Dienste**\n\n{services}\n\n❌ bedeutet: auf diesem Modell nicht verfügbar.",
         "submit": "Einrichten",
         "data": {
           "device_name": "Name"
@@ -132,6 +140,17 @@
         "data_description": {
           "device_name": "So erscheint diese Zahnbürste in Home Assistant. Wähle etwas, das sie von deinen anderen Bürsten unterscheidet (z. B. „Bad oben“, „Annas“)."
         }
+      },
+      "show_capabilities_condor": {
+        "title": "Philips Sonicare — {name}",
+        "submit": "Einrichten",
+        "data": {
+          "device_name": "Name"
+        },
+        "data_description": {
+          "device_name": "So erscheint diese Zahnbürste in Home Assistant. Wähle etwas, das sie von deinen anderen Bürsten unterscheidet (z. B. „Bad oben“, „Annas“)."
+        },
+        "description": "{alert_open}Verbunden über {transport}{detail}.{alert_close}\n\n**Geräteinformationen**\n\n| | |\n|---|---|\n| **Modell** | {model} |\n| **Seriennummer** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Akku** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE-Sicherheit** | {ble_security} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Erkannte Dienste**\n\n{services}\n\n❌ bedeutet: auf diesem Modell nicht verfügbar. Bei diesem Handstück werden die Classic-Funktionsdienste durch das Condor-Protokoll ersetzt."
       },
       "not_paired": {
         "title": "BLE-Pairing erforderlich",

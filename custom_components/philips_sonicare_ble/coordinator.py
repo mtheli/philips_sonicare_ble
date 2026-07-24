@@ -613,24 +613,37 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             new_data["last_seen"] = last
 
-        # Device registry: only update when model or firmware actually changed
+        # Device registry: only update when identity data actually changed
         model = new_data.get("model_number")
         firmware = new_data.get("firmware")
+        serial = new_data.get("serial_number")
+        hardware = new_data.get("hardware_revision")
         # Keep the protocol's mode-decode table in sync if we learn the model
         # from a live read (covers fresh pairs whose entry had no model yet).
         if model and not self._use_condor and self._protocol.model != model:
             self._protocol.model = model
-        if changed and (model or firmware):
+        if changed and (model or firmware or serial or hardware):
             dev_reg = dr.async_get(self.hass)
             device = dev_reg.async_get_device(
                 identifiers={(DOMAIN, self.address)}
             )
-            if device and (device.model != model or device.sw_version != firmware):
-                dev_reg.async_update_device(
-                    device.id,
-                    model=model or "Philips Sonicare",
-                    sw_version=firmware,
-                )
+            if device:
+                resolved_model = model or "Philips Sonicare"
+                updates: dict[str, str] = {}
+                if device.model != resolved_model:
+                    updates["model"] = resolved_model
+                # Only ever fill a field we actually read — a partial read
+                # must not wipe what an earlier one established.
+                if firmware and device.sw_version != firmware:
+                    updates["sw_version"] = firmware
+                # Handles that expose no serial answer with all zeros; that
+                # is "unknown", not a serial number worth showing.
+                if self._is_valid_serial(serial) and device.serial_number != serial:
+                    updates["serial_number"] = serial
+                if hardware and device.hw_version != hardware:
+                    updates["hw_version"] = hardware
+                if updates:
+                    dev_reg.async_update_device(device.id, **updates)
 
         return new_data
 

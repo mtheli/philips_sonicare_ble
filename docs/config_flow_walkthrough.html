@@ -480,7 +480,7 @@ exit</pre>
        <p>Make sure the toothbrush is <b>turned on</b> (press button or pick up from charger) and <b>keep it on</b>, then click <b>Read capabilities</b> to finish setup.</p>
        ${s.error ? errline(s.error, ERRORS[s.error]) : ""}`,
       ["Read capabilities"], meta("esp_bridge_status (+ _read_failed / _read_error)","config_flow.py:2073"),
-      "Plain status/read form — unpair vs. setup is decided beforehand by the S9 menu. “Read capabilities” runs behind <code>async_show_progress</code> (“Reading the toothbrush…”), the result is handled in <code>esp_read_finish</code>; a read error is injected as an <code>&lt;ha-alert&gt;</code> into the status placeholder, because <code>errors[]</code> does not render on schema-less forms."),
+      "Plain status/read form — unpair vs. setup is decided beforehand by the S9 menu. “Read capabilities” runs behind <code>async_show_progress</code> (“Reading the toothbrush…”), the result is handled in <code>esp_read_finish</code>; a read error routes to its own step (<code>esp_bridge_status_read_failed</code> / <code>_read_error</code>) whose text carries the alert, because <code>errors[]</code> does not render on schema-less forms."),
     opts: [
       ["main","Read capabilities — brush awake, read succeeds","show_capabilities_esp"],
       ["err","Brush asleep / bridge timeout (cannot_connect)","esp_bridge_status",{error:"cannot_connect"}],
@@ -636,7 +636,7 @@ function capDialog(statusLine) {
        <div class="fhelp">How this toothbrush appears in Home Assistant. Pick something that distinguishes it from any other brushes you have (e.g., "Master Bath", "Jane's").</div>
      </div>`,
     ["Set up"], meta("show_capabilities","config_flow.py:2663"),
-    "The tables are runtime HTML in placeholders (<code>{device_info}</code>, <code>{services}</code>); the ❌ footer only appears when services are missing.");
+    "The device-info table is a markdown table in the translated text with only the readings passed in as placeholders; <code>{services}</code> is still runtime HTML. The ❌ footer only appears when services are missing.");
 }
 
 // abort screens generated from ABORTS

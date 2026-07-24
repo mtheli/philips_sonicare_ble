@@ -24,13 +24,21 @@
         "title": "Confirm Philips Sonicare",
         "description": "{alert_open}Could not read the toothbrush. Make sure it is awake and in range, then click Submit to try again.{alert_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
       },
+      "bluetooth_confirm_asleep_proxy": {
+        "title": "Confirm Philips Sonicare",
+        "description": "{alert_open}The toothbrush is asleep — wake it (press the power button or lift it off the charger), then click Submit again.{alert_close}\n\n{warn_open}This connection goes through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable. If retrying keeps failing, use a local Bluetooth adapter or the ESP32 bridge instead.{warn_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
+      },
+      "bluetooth_confirm_failed_proxy": {
+        "title": "Confirm Philips Sonicare",
+        "description": "{alert_open}Could not read the toothbrush. Make sure it is awake and in range, then click Submit to try again.{alert_close}\n\n{warn_open}This connection goes through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable. If retrying keeps failing, use a local Bluetooth adapter or the ESP32 bridge instead.{warn_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
+      },
       "bluetooth_confirm_proxy": {
         "title": "Confirm Philips Sonicare",
-        "description": "{alert_open}This connection will go through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable.{nl}For reliable pairing and live updates use a local Bluetooth adapter or the ESP32 bridge.{alert_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
+        "description": "{warn_open}This connection will go through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable.{nl}For reliable pairing and live updates use a local Bluetooth adapter or the ESP32 bridge.{warn_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
       },
       "bluetooth_confirm_proxy_local": {
         "title": "Confirm Philips Sonicare",
-        "description": "{alert_open}This connection will go through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable.{nl}Your local adapter {local_name} also sees the toothbrush{local_rssi} — Home Assistant connects through the strongest signal, so move the toothbrush closer to it to prefer that path.{alert_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
+        "description": "{warn_open}This connection will go through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable.{nl}Your local adapter {local_name} also sees the toothbrush{local_rssi} — Home Assistant connects through the strongest signal, so move the toothbrush closer to it to prefer that path.{warn_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
       },
       "user": {
         "title": "Add Philips Sonicare",
@@ -74,27 +82,27 @@
       },
       "esp_bridge_status": {
         "title": "Connection via ESP32 Bridge",
-        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to finish setup.",
+        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to finish setup.",
         "submit": "Read capabilities"
       },
       "esp_bridge_status_connected": {
         "title": "Connection via ESP32 Bridge",
-        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\nThe bridge is already connected to your toothbrush. **Keep your Sonicare switched on** — click **Read capabilities** to finish setup.",
+        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\nThe bridge is already connected to your toothbrush. **Keep your Sonicare switched on** — click **Read capabilities** to finish setup.",
         "submit": "Read capabilities"
       },
       "esp_bridge_status_paired": {
         "title": "Connection via ESP32 Bridge",
-        "description": "{alert_open}Pairing successful — the bridge is now bonded to your toothbrush.{alert_close}\n\nSetting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Keep your Sonicare switched on** — click **Read capabilities** to finish setup.",
+        "description": "{alert_open}Pairing successful — the bridge is now bonded to your toothbrush.{alert_close}\n\nSetting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to finish setup.",
         "submit": "Read capabilities"
       },
       "esp_bridge_status_read_failed": {
         "title": "Connection via ESP32 Bridge",
-        "description": "{alert_open}Couldn't read the toothbrush over the bridge. Make sure it's switched on and the bridge is online, then try again.{alert_close}\n\nSetting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to try again.",
+        "description": "{alert_open}Couldn't read the toothbrush over the bridge. Make sure it's switched on and the bridge is online, then try again.{alert_close}\n\nSetting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to try again.",
         "submit": "Read capabilities"
       },
       "esp_bridge_status_read_error": {
         "title": "Connection via ESP32 Bridge",
-        "description": "{alert_open}Something went wrong reading the toothbrush. Check the logs (Settings → System → Logs) and try again.{alert_close}\n\nSetting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to try again.",
+        "description": "{alert_open}Something went wrong reading the toothbrush. Check the logs (Settings → System → Logs) and try again.{alert_close}\n\nSetting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to try again.",
         "submit": "Read capabilities"
       },
       "request_pair": {
@@ -124,7 +132,7 @@
       },
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",
-        "description": "{alert_open}Connected via {transport}{detail}.{alert_close}\n\n**Device Information**\n\n| | |\n|---|---|\n| **Model** | {model} |\n| **Serial** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Battery** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE security** | {ble_security} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Detected Services**\n\n{services}",
+        "description": "{alert_open}Connected via {transport}{detail}.{alert_close}\n\n**Device Information**\n\n| | |\n|---|---|\n| **Model** | {model} |\n| **Serial** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Battery** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE security** | {ble_security} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Detected Services**\n\n{services}\n\n❌ entries are not available on this model.",
         "submit": "Set up",
         "data": {
           "device_name": "Name"
@@ -132,6 +140,17 @@
         "data_description": {
           "device_name": "How this toothbrush appears in Home Assistant. Pick something that distinguishes it from any other brushes you have (e.g., \"Master Bath\", \"Jane's\")."
         }
+      },
+      "show_capabilities_condor": {
+        "title": "Philips Sonicare — {name}",
+        "submit": "Set up",
+        "data": {
+          "device_name": "Name"
+        },
+        "data_description": {
+          "device_name": "How this toothbrush appears in Home Assistant. Pick something that distinguishes it from any other brushes you have (e.g., \"Master Bath\", \"Jane's\")."
+        },
+        "description": "{alert_open}Connected via {transport}{detail}.{alert_close}\n\n**Device Information**\n\n| | |\n|---|---|\n| **Model** | {model} |\n| **Serial** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Battery** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE security** | {ble_security} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Detected Services**\n\n{services}\n\n❌ entries are not available on this model. On this handle the Classic feature services are replaced by the Condor protocol."
       },
       "not_paired": {
         "title": "BLE Pairing Required",
@@ -199,7 +218,9 @@
   },
   "entity": {
     "sensor": {
-      "battery": { "name": "Battery" },
+      "battery": {
+        "name": "Battery"
+      },
       "handle_state": {
         "name": "Handle State",
         "state": {
@@ -244,10 +265,18 @@
           "high": "High"
         }
       },
-      "brushing_time": { "name": "Brushing Time" },
-      "routine_length": { "name": "Routine Length" },
-      "routine_countdown": { "name": "Routine Countdown" },
-      "number_of_sectors": { "name": "Number of Sectors" },
+      "brushing_time": {
+        "name": "Brushing Time"
+      },
+      "routine_length": {
+        "name": "Routine Length"
+      },
+      "routine_countdown": {
+        "name": "Routine Countdown"
+      },
+      "number_of_sectors": {
+        "name": "Number of Sectors"
+      },
       "sector": {
         "name": "Sector",
         "state": {
@@ -261,18 +290,42 @@
           "no_sector": "No Sector"
         }
       },
-      "session_id": { "name": "Session ID" },
-      "latest_session_id": { "name": "Latest Session ID" },
-      "session_count": { "name": "Session Count" },
-      "motor_runtime": { "name": "Motor Runtime" },
-      "brushhead_wear": { "name": "Wear" },
-      "brushhead_sessions_left": { "name": "Sessions Left" },
-      "brushhead_usage": { "name": "Usage" },
-      "brushhead_limit": { "name": "Lifetime Limit" },
-      "brushhead_serial": { "name": "Serial" },
-      "brushhead_date": { "name": "Production Date" },
-      "brushhead_ring_id": { "name": "NFC Ring ID" },
-      "brushhead_nfc_version": { "name": "NFC Version" },
+      "session_id": {
+        "name": "Session ID"
+      },
+      "latest_session_id": {
+        "name": "Latest Session ID"
+      },
+      "session_count": {
+        "name": "Session Count"
+      },
+      "motor_runtime": {
+        "name": "Motor Runtime"
+      },
+      "brushhead_wear": {
+        "name": "Wear"
+      },
+      "brushhead_sessions_left": {
+        "name": "Sessions Left"
+      },
+      "brushhead_usage": {
+        "name": "Usage"
+      },
+      "brushhead_limit": {
+        "name": "Lifetime Limit"
+      },
+      "brushhead_serial": {
+        "name": "Serial"
+      },
+      "brushhead_date": {
+        "name": "Production Date"
+      },
+      "brushhead_ring_id": {
+        "name": "NFC Ring ID"
+      },
+      "brushhead_nfc_version": {
+        "name": "NFC Version"
+      },
       "brushhead_type": {
         "name": "Type",
         "state": {
@@ -285,14 +338,30 @@
           "non_rfid": "Non-RFID"
         }
       },
-      "brushhead_payload": { "name": "NFC Payload" },
-      "bridge_version": { "name": "Bridge Version" },
-      "bridge_build": { "name": "ESP Build" },
-      "bridge_boot_time": { "name": "ESP Last Boot" },
-      "model_number": { "name": "Model Number" },
-      "firmware": { "name": "Firmware" },
-      "last_seen": { "name": "Last Seen" },
-      "pressure": { "name": "Pressure" },
+      "brushhead_payload": {
+        "name": "NFC Payload"
+      },
+      "bridge_version": {
+        "name": "Bridge Version"
+      },
+      "bridge_build": {
+        "name": "ESP Build"
+      },
+      "bridge_boot_time": {
+        "name": "ESP Last Boot"
+      },
+      "model_number": {
+        "name": "Model Number"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "last_seen": {
+        "name": "Last Seen"
+      },
+      "pressure": {
+        "name": "Pressure"
+      },
       "pressure_state": {
         "name": "Pressure State",
         "state": {
@@ -301,8 +370,12 @@
           "too_high": "Too High"
         }
       },
-      "temperature": { "name": "Temperature" },
-      "handle_time": { "name": "Handle Time" },
+      "temperature": {
+        "name": "Temperature"
+      },
+      "handle_time": {
+        "name": "Handle Time"
+      },
       "activity": {
         "name": "Activity",
         "state": {
@@ -314,8 +387,12 @@
           "charging": "Charging"
         }
       },
-      "rssi": { "name": "RSSI" },
-      "adapter": { "name": "Adapter" },
+      "rssi": {
+        "name": "RSSI"
+      },
+      "adapter": {
+        "name": "Adapter"
+      },
       "adapter_type": {
         "name": "Adapter Type",
         "state": {
@@ -327,26 +404,43 @@
       }
     },
     "binary_sensor": {
-      "is_brushing": { "name": "Brushing" },
+      "is_brushing": {
+        "name": "Brushing"
+      },
       "is_charging": {
         "name": "Charging",
-        "state": { "off": "Not charging", "on": "Charging" }
+        "state": {
+          "off": "Not charging",
+          "on": "Charging"
+        }
       },
       "pressure_alert": {
         "name": "Pressure Alert",
-        "state": { "off": "OK", "on": "Problem" }
+        "state": {
+          "off": "OK",
+          "on": "Problem"
+        }
       },
       "esp_bridge_alive": {
         "name": "ESP Connected",
-        "state": { "off": "Disconnected", "on": "Connected" }
+        "state": {
+          "off": "Disconnected",
+          "on": "Connected"
+        }
       },
       "ble_connected": {
         "name": "BLE Connected",
-        "state": { "off": "Disconnected", "on": "Connected" }
+        "state": {
+          "off": "Disconnected",
+          "on": "Connected"
+        }
       },
       "brushhead_counterfeit": {
         "name": "Counterfeit Brush Head",
-        "state": { "off": "OK", "on": "Problem" }
+        "state": {
+          "off": "OK",
+          "on": "Problem"
+        }
       }
     },
     "select": {
@@ -371,12 +465,20 @@
       }
     },
     "switch": {
-      "adaptive_intensity": { "name": "Adaptive Intensity" },
-      "scrubbing_feedback": { "name": "Scrubbing Feedback" },
-      "pressure_feedback": { "name": "Pressure Feedback" }
+      "adaptive_intensity": {
+        "name": "Adaptive Intensity"
+      },
+      "scrubbing_feedback": {
+        "name": "Scrubbing Feedback"
+      },
+      "pressure_feedback": {
+        "name": "Pressure Feedback"
+      }
     },
     "update": {
-      "bridge_firmware": { "name": "Bridge Firmware" }
+      "bridge_firmware": {
+        "name": "Bridge Firmware"
+      }
     }
   }
 }

@@ -895,14 +895,17 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     @classmethod
     def _get_service_status_text(
         cls, fetched_uuids: list[str], model: str = ""
-    ) -> str:
-        """Format found and missing services as a 2-column HTML table.
+    ) -> tuple[str, bool]:
+        """Return ``(table, needs_condor_note)`` for the services block.
 
-        Left column: ✅ available services. Right column: ❌ services not
-        present on this model. Service-name only — descriptions are
-        omitted to keep the dialog compact (Service-Name is sprechend
-        genug, and the dialog now fits the viewport without scroll).
-        The *why* of missing services collapses into a footer.
+        The table is a 2-column HTML table — left column: ✅ available
+        services, right column: ❌ services not present on this model.
+        Its row count depends on the model, so unlike the device-info
+        table it cannot become static translated text; the service names
+        it lists are protocol identifiers and stay as they are.
+
+        ``needs_condor_note`` selects the step variant that explains why
+        the Classic feature services are absent on a Condor handle.
         """
         fetched_lower = {s.lower() for s in fetched_uuids} - _STANDARD_BLE_SERVICES
         family = cls._detect_family(fetched_lower, model)
@@ -933,7 +936,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             found.append(name)
 
         if not found and not missing:
-            return "No services detected"
+            # A dash, not a sentence — this value is built here and could
+            # not follow the user's frontend language.
+            return "—", False
 
         # Layout: ✅ left column, ❌ right column when both groups are non-empty.
         # When only one group is present (e.g. premium model with all services
@@ -959,17 +964,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         table = f"<table><tbody>{''.join(rows)}</tbody></table>"
 
-        footer_for = {
-            "not on this model":
-                "❌ entries are not available on this model.",
-            "via Condor protocol":
-                "Classic feature services are replaced by the Condor "
-                "protocol on this model.",
-        }
-        notes = [footer_for[r] for r in sorted(used_reasons) if r in footer_for]
-        if notes:
-            table += "\n\n" + "\n\n".join(notes)
-        return table
+        # The "❌ = not on this model" note is a static legend in the
+        # step's translated text. The Condor note is model-specific, so
+        # it selects a step variant instead — neither can be a sentence
+        # built here, which would not follow the frontend language.
+        return table, "via Condor protocol" in used_reasons
 
     @staticmethod
     def _get_device_info_values(
@@ -1383,24 +1382,29 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # One-shot outcome from ble_probe_finish. errors["base"] does not
         # render on this schema-less confirmation step, so the outcome
         # selects a step variant that carries the wording in its own
-        # translation; only the <ha-alert> wrapper is injected, because
-        # hassfest rejects HTML inside translation values. A failure
-        # takes precedence over the proxy warning — the user needs the
-        # error first, and the proxy caveat reappears on the next clean
-        # render.
+        # translation; only the <ha-alert> wrappers are injected, because
+        # hassfest rejects HTML inside translation values.
+        #
+        # A failure over a proxy keeps BOTH notices: a probe that fails on
+        # a proxy-carried connection is the very symptom the proxy caveat
+        # warns about, and every retry re-enters through this failure
+        # branch — dropping the caveat here would hide it for the rest of
+        # the flow, exactly when it matters most.
         outcome = self._confirm_status
         self._confirm_status = ""
 
         via, warning_variant, warning_values = self._transport_lines()
-        if outcome:
+        if outcome and warning_variant:
+            # The combined variants carry the generic proxy caveat; the
+            # "a local adapter also sees it" detail is dropped here to
+            # keep the step matrix at two combinations instead of four.
+            step_id = f"bluetooth_confirm_{outcome}_proxy"
+        elif outcome:
             step_id = f"bluetooth_confirm_{outcome}"
-            alert_type = "error"
         elif warning_variant:
             step_id = f"bluetooth_confirm_{warning_variant}"
-            alert_type = "warning"
         else:
             step_id = "bluetooth_confirm"
-            alert_type = ""
 
         return self.async_show_form(
             step_id=step_id,
@@ -1408,13 +1412,31 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "name": self._name,
                 "address": self._address,
                 "via": via,
+                # Two independent slots: the probe failure and the proxy
+                # caveat can appear together.
                 "alert_open": (
-                    f'<ha-alert alert-type="{alert_type}">' if alert_type else ""
+                    '<ha-alert alert-type="error">' if outcome else ""
                 ),
-                "alert_close": "</ha-alert>" if alert_type else "",
+                "alert_close": "</ha-alert>" if outcome else "",
+                "warn_open": (
+                    '<ha-alert alert-type="warning">' if warning_variant else ""
+                ),
+                "warn_close": "</ha-alert>" if warning_variant else "",
                 **warning_values,
             },
         )
+
+    async def async_step_bluetooth_confirm_asleep_proxy(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Alias step: asleep, and the carrier is a proxy."""
+        return await self.async_step_bluetooth_confirm(user_input)
+
+    async def async_step_bluetooth_confirm_failed_proxy(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Alias step: read failed, and the carrier is a proxy."""
+        return await self.async_step_bluetooth_confirm(user_input)
 
     async def async_step_bluetooth_confirm_asleep(
         self, user_input: dict[str, Any] | None = None
@@ -2125,18 +2147,22 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # step so their wording lives in the translations. errors[] does
         # not render on this schema-less step — same quirk as
         # reset_bridge — which rules out plain error keys here.
+        # Both flags are consumed unconditionally: leaving one set because
+        # the other won the race would resurface a stale notice on the
+        # next render of this step.
+        just_paired, self._just_paired = self._just_paired, False
+        read_error, self._esp_read_error = self._esp_read_error, ""
+
         alert_type = "success"
-        if self._just_paired:
-            self._just_paired = False
+        if just_paired:
             step_id = "esp_bridge_status_paired"
-        elif self._esp_read_error:
+        elif read_error:
             alert_type = "error"
             step_id = (
                 "esp_bridge_status_read_failed"
-                if self._esp_read_error == "cannot_connect"
+                if read_error == "cannot_connect"
                 else "esp_bridge_status_read_error"
             )
-            self._esp_read_error = ""
         elif ble_connected:
             step_id = "esp_bridge_status_connected"
         else:
@@ -2660,6 +2686,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         base = f"Sonicare {model}" if model else "Sonicare"
         return f"{base} ({suffix})" if suffix else base
 
+    async def async_step_show_capabilities_condor(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Alias step: adds why the Classic services are absent on Condor."""
+        return await self.async_step_show_capabilities(user_input)
+
     async def async_step_show_capabilities(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -2696,7 +2728,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 data=entry_data,
             )
 
-        services_text = self._get_service_status_text(
+        services_text, condor_note = self._get_service_status_text(
             self._fetched_data.get("services", []),
             self._fetched_data.get("model") or "",
         )
@@ -2704,7 +2736,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         path = self._fetched_data.get("connection_path")
 
         return self.async_show_form(
-            step_id="show_capabilities",
+            step_id=(
+                "show_capabilities_condor" if condor_note else "show_capabilities"
+            ),
             data_schema=vol.Schema({
                 vol.Required(CONF_DEVICE_NAME, default=default_name): str,
             }),
