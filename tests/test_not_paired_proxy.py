@@ -131,7 +131,9 @@ async def test_proxy_retry_failure_stays_in_proxy_dialog() -> None:
     result = await flow.async_step_not_paired_proxy({})
 
     assert result["step_id"] == "not_paired_proxy"
-    assert result["errors"] == {"base": "pairing_failed"}
+    # errors[] is invisible on a field-less form, so the reason is an
+    # alert built from the same config.error string.
+    assert "still not paired" in result["description_placeholders"]["alert"]
 
 
 async def test_retry_follows_transport_flip_to_host() -> None:
@@ -151,7 +153,7 @@ async def test_retry_follows_transport_flip_to_host() -> None:
     result = await flow.async_step_not_paired_proxy({})
 
     assert result["step_id"] == "not_paired"
-    assert result["errors"] == {"base": "pairing_failed"}
+    assert "still not paired" in result["description_placeholders"]["alert"]
 
 
 async def test_proxy_name_falls_back_to_placeholder_dash() -> None:
@@ -176,7 +178,7 @@ def test_strings_define_proxy_step_with_matching_placeholders() -> None:
         data = json.loads((COMPONENT_DIR / name).read_text(encoding="utf-8"))
         step = data["config"]["step"]["not_paired_proxy"]
         used = set(re.findall(r"\{(\w+)\}", step["description"]))
-        assert used == {"address", "proxy_name"}, name
+        assert used == {"address", "proxy_name", "alert"}, name
         assert "<" not in step["description"], name  # hassfest: no HTML
 
 

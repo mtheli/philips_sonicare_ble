@@ -42,18 +42,21 @@ def test_pair_error_rendered_when_reason_recorded() -> None:
 
 
 async def test_hassio_help_points_at_ssh_addon() -> None:
-    """Supervised installs get the addon wording via their own step.
+    """Supervised installs are pointed at the addon, hosts at a shell.
 
-    The two "where do I get a terminal" wordings are separate steps, not
-    a placeholder: placeholder text is built in Python and would stay
-    English in a translated frontend.
+    Both wordings are translated text blocks injected into one step —
+    only where to find a terminal differs, the walkthrough is shared.
     """
     flow = _flow()
     flow.hass = SimpleNamespace(config=SimpleNamespace(components={"hassio"}))
     result = await flow.async_step_not_paired()
-    assert result["step_id"] == "not_paired_hassio"
+    assert result["step_id"] == "not_paired"
+    assert "Terminal & SSH" in result["description_placeholders"]["terminal"]
 
 
 async def test_host_install_gets_plain_terminal_step() -> None:
     result = await _flow().async_step_not_paired()
     assert result["step_id"] == "not_paired"
+    assert "terminal on the machine" in (
+        result["description_placeholders"]["terminal"]
+    )

@@ -64,7 +64,7 @@ class _FakeServices:
 
 def _hass(services: _FakeServices, bus: _FakeBus):
     services._bus = bus
-    return SimpleNamespace(services=services, bus=bus)
+    return SimpleNamespace(services=services, bus=bus, data={})
 
 
 BRIDGE = "atom-lite"
@@ -176,12 +176,10 @@ async def test_reset_finish_unconfirmed_shows_alert() -> None:
     result = await flow.async_step_reset_finish()
 
     assert result["type"] == FlowResultType.FORM
-    # The wording lives in this step's own translated description; only
-    # the <ha-alert> wrapper is injected.
-    assert result["step_id"] == "reset_bridge_unconfirmed"
-    assert result["description_placeholders"]["alert_open"] == (
-        '<ha-alert alert-type="error">'
-    )
+    # The wording is a translated text block; only the <ha-alert>
+    # wrapper is built in Python.
+    assert result["step_id"] == "reset_bridge"
+    assert "reboot" in result["description_placeholders"]["alert"]
     flow._esp_bridge_health_check.assert_not_awaited()
 
 
@@ -191,10 +189,8 @@ async def test_reset_finish_offline_shows_alert() -> None:
 
     result = await flow.async_step_reset_finish()
 
-    assert result["step_id"] == "reset_bridge_offline"
-    assert result["description_placeholders"]["alert_open"] == (
-        '<ha-alert alert-type="error">'
-    )
+    assert result["step_id"] == "reset_bridge"
+    assert "online" in result["description_placeholders"]["alert"]
 
 
 async def test_reset_bridge_initial_render_has_empty_error() -> None:
@@ -203,8 +199,7 @@ async def test_reset_bridge_initial_render_has_empty_error() -> None:
     result = await flow.async_step_reset_bridge()
 
     assert result["step_id"] == "reset_bridge"
-    assert result["description_placeholders"]["alert_open"] == ""
-    assert result["description_placeholders"]["alert_close"] == ""
+    assert result["description_placeholders"]["alert"] == ""
 
 
 async def test_reset_finish_success_sets_unpaired_notice() -> None:
@@ -217,23 +212,24 @@ async def test_reset_finish_success_sets_unpaired_notice() -> None:
     assert flow._just_unpaired is True
 
 
-async def test_request_pair_shows_unpaired_notice_once() -> None:
+async def test_request_pair_shows_unpaired_notice_once(flow_text_blocks) -> None:
     flow = _flow()
     flow._just_unpaired = True
 
     first = await flow.async_step_request_pair()
-    assert first["step_id"] == "request_pair_after_reset"
-    assert first["description_placeholders"]["alert_open"] == (
+    assert first["step_id"] == "request_pair"
+    assert first["description_placeholders"]["alert"] == (
         '<ha-alert alert-type="success">'
+        f'{flow_text_blocks["pair_status_unpaired"]}</ha-alert>\n\n'
     )
     assert flow._just_unpaired is False
 
     second = await flow.async_step_request_pair()
-    assert second["step_id"] == "request_pair"
+    assert second["description_placeholders"]["alert"] == ""
 
 
 async def test_request_pair_no_notice_by_default() -> None:
     flow = _flow()
     result = await flow.async_step_request_pair()
     assert result["step_id"] == "request_pair"
-    assert result["description_placeholders"]["alert_open"] == ""
+    assert result["description_placeholders"]["alert"] == ""

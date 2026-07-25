@@ -53,6 +53,72 @@ def chars_as_bytes(snapshot: dict[str, Any]) -> dict[str, bytes]:
     return out
 
 
+@pytest.fixture(autouse=True)
+def flow_text_blocks(monkeypatch) -> dict[str, str]:
+    """Serve the real ``flow_text`` blocks to the config-flow tests.
+
+    In production the flow resolves these through Home Assistant's
+    translation cache. The lightweight ``hass`` doubles used here have no
+    such cache, so without this the flow would fall back on empty strings
+    and the tests could not tell a correct block from a missing one.
+    """
+    import custom_components.philips_sonicare_ble.config_flow as cf
+
+    strings = json.loads(
+        (
+            Path(__file__).parent.parent
+            / "custom_components"
+            / "philips_sonicare_ble"
+            / "strings.json"
+        ).read_text(encoding="utf-8")
+    )
+    blocks = strings.get("flow_text", {})
+
+    def _flatten(obj, prefix=""):
+        """Mirror how HA keys a category: dotted path below the domain."""
+        out = {}
+        for key, value in obj.items():
+            path = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, dict):
+                out.update(_flatten(value, path))
+            elif isinstance(value, str):
+                out[path] = value
+        return out
+
+    async def _fake_text_blocks(hass, category="flow_text"):
+        if category == "flow_text":
+            return dict(blocks)
+        return _flatten(strings.get(category, {}))
+
+    # Kept reachable so the resolver itself stays testable — see
+    # ``unpatched_text_blocks``.
+    _fake_text_blocks.unpatched = cf._async_text_blocks
+    monkeypatch.setattr(cf, "_async_text_blocks", _fake_text_blocks)
+    return blocks
+
+
+@pytest.fixture
+def error_texts() -> dict[str, str]:
+    """The ``config.error`` strings, which schema-less forms show as alerts."""
+    strings = json.loads(
+        (
+            Path(__file__).parent.parent
+            / "custom_components"
+            / "philips_sonicare_ble"
+            / "strings.json"
+        ).read_text(encoding="utf-8")
+    )
+    return strings["config"]["error"]
+
+
+@pytest.fixture
+def unpatched_text_blocks():
+    """The real block resolver, which ``flow_text_blocks`` patches out."""
+    import custom_components.philips_sonicare_ble.config_flow as cf
+
+    return cf._async_text_blocks.unpatched
+
+
 @pytest.fixture
 def condor_hx742x() -> dict[str, Any]:
     """A full Condor (newer protocol) probe snapshot from an HX742X brush."""

@@ -14,31 +14,7 @@
     "step": {
       "bluetooth_confirm": {
         "title": "Confirm Philips Sonicare",
-        "description": "**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
-      },
-      "bluetooth_confirm_asleep": {
-        "title": "Confirm Philips Sonicare",
-        "description": "{alert_open}The toothbrush is asleep — wake it (press the power button or lift it off the charger), then click Submit again.{alert_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
-      },
-      "bluetooth_confirm_failed": {
-        "title": "Confirm Philips Sonicare",
-        "description": "{alert_open}Could not read the toothbrush. Make sure it is awake and in range, then click Submit to try again.{alert_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
-      },
-      "bluetooth_confirm_asleep_proxy": {
-        "title": "Confirm Philips Sonicare",
-        "description": "{alert_open}The toothbrush is asleep — wake it (press the power button or lift it off the charger), then click Submit again.{alert_close}\n\n{warn_open}This connection goes through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable. If retrying keeps failing, use a local Bluetooth adapter or the ESP32 bridge instead.{warn_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
-      },
-      "bluetooth_confirm_failed_proxy": {
-        "title": "Confirm Philips Sonicare",
-        "description": "{alert_open}Could not read the toothbrush. Make sure it is awake and in range, then click Submit to try again.{alert_close}\n\n{warn_open}This connection goes through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable. If retrying keeps failing, use a local Bluetooth adapter or the ESP32 bridge instead.{warn_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
-      },
-      "bluetooth_confirm_proxy": {
-        "title": "Confirm Philips Sonicare",
-        "description": "{warn_open}This connection will go through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable.{nl}For reliable pairing and live updates use a local Bluetooth adapter or the ESP32 bridge.{warn_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
-      },
-      "bluetooth_confirm_proxy_local": {
-        "title": "Confirm Philips Sonicare",
-        "description": "{warn_open}This connection will go through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable.{nl}Your local adapter {local_name} also sees the toothbrush{local_rssi} — Home Assistant connects through the strongest signal, so move the toothbrush closer to it to prefer that path.{warn_close}\n\n**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
+        "description": "{alert}{warn}**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**."
       },
       "user": {
         "title": "Add Philips Sonicare",
@@ -82,57 +58,22 @@
       },
       "esp_bridge_status": {
         "title": "Connection via ESP32 Bridge",
-        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to finish setup.",
-        "submit": "Read capabilities"
-      },
-      "esp_bridge_status_connected": {
-        "title": "Connection via ESP32 Bridge",
-        "description": "Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\nThe bridge is already connected to your toothbrush. **Keep your Sonicare switched on** — click **Read capabilities** to finish setup.",
-        "submit": "Read capabilities"
-      },
-      "esp_bridge_status_paired": {
-        "title": "Connection via ESP32 Bridge",
-        "description": "{alert_open}Pairing successful — the bridge is now bonded to your toothbrush.{alert_close}\n\nSetting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to finish setup.",
-        "submit": "Read capabilities"
-      },
-      "esp_bridge_status_read_failed": {
-        "title": "Connection via ESP32 Bridge",
-        "description": "{alert_open}Couldn't read the toothbrush over the bridge. Make sure it's switched on and the bridge is online, then try again.{alert_close}\n\nSetting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to try again.",
-        "submit": "Read capabilities"
-      },
-      "esp_bridge_status_read_error": {
-        "title": "Connection via ESP32 Bridge",
-        "description": "{alert_open}Something went wrong reading the toothbrush. Check the logs (Settings → System → Logs) and try again.{alert_close}\n\nSetting up toothbrush via **ESP32 Bridge** ({target}).\n\n| | |\n|---|---|\n| **BLE** | {ble_state} |\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to try again.",
+        "description": "{alert}Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n| **BLE** | {ble_state} |\n|---|---|\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n{action}",
         "submit": "Read capabilities"
       },
       "request_pair": {
         "title": "Pair toothbrush with bridge",
-        "description": "Slot **{target}** has no toothbrush bonded yet.\n\n1. **Switch on** the Sonicare you want to bond (press the power button or pick it up from the charger) and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.\n2. Click **Start pairing**. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.",
-        "submit": "Start pairing"
-      },
-      "request_pair_after_reset": {
-        "title": "Pair toothbrush with bridge",
-        "description": "{alert_open}Bond removed — the slot is free. Switch on the Sonicare you want to bond, then start pairing.{alert_close}\n\nSlot **{target}** has no toothbrush bonded yet.\n\n1. **Switch on** the Sonicare you want to bond (press the power button or pick it up from the charger) and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.\n2. Click **Start pairing**. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.",
+        "description": "{alert}Slot **{target}** has no toothbrush bonded yet.\n\n1. **Switch on** the Sonicare you want to bond (press the power button or pick it up from the charger) and hold it within ~1 m of the bridge. If you have multiple toothbrushes nearby, keep the others off.\n2. Click **Start pairing**. The dialog will wait up to ~60 s while the bridge scans and bonds with the first Sonicare it finds. Don't close this dialog.",
         "submit": "Start pairing"
       },
       "reset_bridge": {
         "title": "Reset bridge bond",
-        "description": "Slot **{target}** is currently bonded to **{identity_address}**.\n\nClicking **Submit** will remove the BLE bond on the bridge and clear the saved identity. After that you can pair a different Sonicare.\n\nThe Sonicare keeps its own half of the bond, but there's nothing to clear on the brush itself — re-pairing this same brush later works without any extra steps.",
-        "submit": "Unpair and reset"
-      },
-      "reset_bridge_offline": {
-        "title": "Reset bridge bond",
-        "description": "{alert_open}Couldn't reach the ESP bridge to clear the bond. Make sure it's online and powered, then try again.{alert_close}\n\nSlot **{target}** is currently bonded to **{identity_address}**.\n\nClicking **Submit** will remove the BLE bond on the bridge and clear the saved identity. After that you can pair a different Sonicare.\n\nThe Sonicare keeps its own half of the bond, but there's nothing to clear on the brush itself — re-pairing this same brush later works without any extra steps.",
-        "submit": "Unpair and reset"
-      },
-      "reset_bridge_unconfirmed": {
-        "title": "Reset bridge bond",
-        "description": "{alert_open}Couldn't confirm the bridge cleared the bond — it may need a reboot. Make sure it's online, then try again.{alert_close}\n\nSlot **{target}** is currently bonded to **{identity_address}**.\n\nClicking **Submit** will remove the BLE bond on the bridge and clear the saved identity. After that you can pair a different Sonicare.\n\nThe Sonicare keeps its own half of the bond, but there's nothing to clear on the brush itself — re-pairing this same brush later works without any extra steps.",
+        "description": "{alert}Slot **{target}** is currently bonded to **{identity_address}**.\n\nClicking **Submit** will remove the BLE bond on the bridge and clear the saved identity. After that you can pair a different Sonicare.\n\nThe Sonicare keeps its own half of the bond, but there's nothing to clear on the brush itself — re-pairing this same brush later works without any extra steps.",
         "submit": "Unpair and reset"
       },
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",
-        "description": "{alert_open}Connected via {transport}{detail}.{alert_close}\n\n**Device Information**\n\n| | |\n|---|---|\n| **Model** | {model} |\n| **Serial** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Battery** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE security** | {ble_security} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Detected Services**\n\n{services}\n\n❌ entries are not available on this model.",
+        "description": "{alert_open}Connected via {transport}{detail}.{alert_close}\n\n**Device Information**\n\n| **Model** | {model} |\n|---|---|\n| **Serial** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Battery** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE security** | {ble_security} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Detected Services**\n\n{services}\n\n❌ entries are not available on this model.{condor_note}",
         "submit": "Set up",
         "data": {
           "device_name": "Name"
@@ -141,30 +82,14 @@
           "device_name": "How this toothbrush appears in Home Assistant. Pick something that distinguishes it from any other brushes you have (e.g., \"Master Bath\", \"Jane's\")."
         }
       },
-      "show_capabilities_condor": {
-        "title": "Philips Sonicare — {name}",
-        "submit": "Set up",
-        "data": {
-          "device_name": "Name"
-        },
-        "data_description": {
-          "device_name": "How this toothbrush appears in Home Assistant. Pick something that distinguishes it from any other brushes you have (e.g., \"Master Bath\", \"Jane's\")."
-        },
-        "description": "{alert_open}Connected via {transport}{detail}.{alert_close}\n\n**Device Information**\n\n| | |\n|---|---|\n| **Model** | {model} |\n| **Serial** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Battery** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE security** | {ble_security} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Detected Services**\n\n{services}\n\n❌ entries are not available on this model. On this handle the Classic feature services are replaced by the Condor protocol."
-      },
       "not_paired": {
         "title": "BLE Pairing Required",
-        "description": "Your toothbrush at `{address}` requires **BLE bonding** before characteristics can be read. Auto-pairing was not successful.\n\n{pair_error}Open a terminal on the machine running Home Assistant and run the pairing script:\n\n`{pair_cmd}`\n\nThe script registers the required pairing agent, then pairs and trusts the toothbrush — just keep it **awake** (press the power button) while it runs.\n\nAlternatively, pair manually in an interactive `bluetoothctl` session — a plain `bluetoothctl pair` registers no agent, and some models reject the pairing without one:\n\n```\nbluetoothctl\nagent NoInputNoOutput\ndefault-agent\npair {address}\ntrust {address}\nexit\n```\n\nThen click **Retry**.",
-        "submit": "Retry"
-      },
-      "not_paired_hassio": {
-        "title": "BLE Pairing Required",
-        "description": "Your toothbrush at `{address}` requires **BLE bonding** before characteristics can be read. Auto-pairing was not successful.\n\n{pair_error}Open the **Terminal & SSH** addon ([install it first](/hassio/addon/core_ssh/info) if needed) and run the pairing script:\n\n`{pair_cmd}`\n\nThe script registers the required pairing agent, then pairs and trusts the toothbrush — just keep it **awake** (press the power button) while it runs.\n\nAlternatively, pair manually in an interactive `bluetoothctl` session — a plain `bluetoothctl pair` registers no agent, and some models reject the pairing without one:\n\n```\nbluetoothctl\nagent NoInputNoOutput\ndefault-agent\npair {address}\ntrust {address}\nexit\n```\n\nThen click **Retry**.",
+        "description": "{alert}Your toothbrush at `{address}` requires **BLE bonding** before characteristics can be read. Auto-pairing was not successful.\n\n{pair_error}Open {terminal} and run the pairing script:\n\n`{pair_cmd}`\n\nThe script registers the required pairing agent, then pairs and trusts the toothbrush — just keep it **awake** (press the power button) while it runs.\n\nAlternatively, pair manually in an interactive `bluetoothctl` session — a plain `bluetoothctl pair` registers no agent, and some models reject the pairing without one:\n\n```\nbluetoothctl\nagent NoInputNoOutput\ndefault-agent\npair {address}\ntrust {address}\nexit\n```\n\nThen click **Retry**.",
         "submit": "Retry"
       },
       "not_paired_proxy": {
         "title": "BLE Pairing Required",
-        "description": "Your toothbrush at `{address}` requires **BLE bonding** before characteristics can be read.\n\nThis connection runs through a **Bluetooth proxy** (`{proxy_name}`). The proxy pairs with the toothbrush **automatically while reading** — pairing tools on the Home Assistant host (`bluetoothctl`, pairing scripts) have no effect on this connection.\n\nThe automatic pairing has not completed. Most likely causes:\n\n1. **The toothbrush still holds an old bond** for a phone or another adapter. Remove the brush from the Philips Sonicare app (or forget it in your phone's Bluetooth settings), wake the brush, and click **Retry** — retrying restarts the pairing.\n2. **The toothbrush fell asleep** during setup — press the power button, keep it awake, and click **Retry**.\n3. **You run several Bluetooth proxies:** bonds do not move between proxies, and Home Assistant picks whichever proxy has the best signal. Move the brush next to one proxy and click **Retry**.\n4. Some models **reject pairing entirely**. If every retry fails immediately, set the brush up via the host's Bluetooth adapter or the dedicated ESP32 bridge instead.",
+        "description": "{alert}Your toothbrush at `{address}` requires **BLE bonding** before characteristics can be read.\n\nThis connection runs through a **Bluetooth proxy** (`{proxy_name}`). The proxy pairs with the toothbrush **automatically while reading** — pairing tools on the Home Assistant host (`bluetoothctl`, pairing scripts) have no effect on this connection.\n\nThe automatic pairing has not completed. Most likely causes:\n\n1. **The toothbrush still holds an old bond** for a phone or another adapter. Remove the brush from the Philips Sonicare app (or forget it in your phone's Bluetooth settings), wake the brush, and click **Retry** — retrying restarts the pairing.\n2. **The toothbrush fell asleep** during setup — press the power button, keep it awake, and click **Retry**.\n3. **You run several Bluetooth proxies:** bonds do not move between proxies, and Home Assistant picks whichever proxy has the best signal. Move the brush next to one proxy and click **Retry**.\n4. Some models **reject pairing entirely**. If every retry fails immediately, set the brush up via the host's Bluetooth adapter or the dedicated ESP32 bridge instead.",
         "submit": "Retry"
       }
     },
@@ -480,5 +405,24 @@
         "name": "Bridge Firmware"
       }
     }
+  },
+  "flow_text": {
+    "caps_condor_note": " On this handle the Classic feature services are replaced by the Condor protocol.",
+    "confirm_alert_asleep": "The toothbrush is asleep — wake it (press the power button or lift it off the charger), then click Submit again.",
+    "confirm_alert_failed": "Could not read the toothbrush. Make sure it is awake and in range, then click Submit to try again.",
+    "confirm_warn_proxy": "This connection will go through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable.{nl}For reliable pairing and live updates use a local Bluetooth adapter or the ESP32 bridge.",
+    "confirm_warn_proxy_local": "This connection will go through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable.{nl}Your local adapter {local_name} also sees the toothbrush{local_rssi} — Home Assistant connects through the strongest signal, so move the toothbrush closer to it to prefer that path.",
+    "confirm_warn_proxy_retry": "This connection goes through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable. If retrying keeps failing, use a local Bluetooth adapter or the ESP32 bridge instead.",
+    "esp_action_connected": "The bridge is already connected to your toothbrush. **Keep your Sonicare switched on** — click **Read capabilities** to finish setup.",
+    "esp_action_retry": "**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to try again.",
+    "esp_action_switch_on": "**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to finish setup.",
+    "esp_status_paired": "Pairing successful — the bridge is now bonded to your toothbrush.",
+    "esp_status_read_error": "Something went wrong reading the toothbrush. Check the logs (Settings → System → Logs) and try again.",
+    "esp_status_read_failed": "Couldn't read the toothbrush over the bridge. Make sure it's switched on and the bridge is online, then try again.",
+    "not_paired_terminal_hassio": "the **Terminal & SSH** addon ([install it first](/hassio/addon/core_ssh/info) if needed)",
+    "not_paired_terminal_host": "a terminal on the machine running Home Assistant",
+    "pair_status_unpaired": "Bond removed — the slot is free. Switch on the Sonicare you want to bond, then start pairing.",
+    "reset_alert_offline": "Couldn't reach the ESP bridge to clear the bond. Make sure it's online and powered, then try again.",
+    "reset_alert_unconfirmed": "Couldn't confirm the bridge cleared the bond — it may need a reboot. Make sure it's online, then try again."
   }
 }

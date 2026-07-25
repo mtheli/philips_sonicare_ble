@@ -26,8 +26,11 @@ except ImportError:  # pragma: no cover — older cores + the pinned CI
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import Event, callback
 from homeassistant.data_entry_flow import AbortFlow, FlowResult
+from homeassistant.helpers import http as ha_http
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
+from homeassistant.helpers.translation import async_get_translations
 from homeassistant.util import dt as dt_util
+from homeassistant.util import language as language_util
 from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
@@ -85,6 +88,7 @@ from .transport import (
     describe_available_paths,
     describe_connection_path,
     is_local_bluez_connection,
+    slot_changed_at,
     UNPAIR_OK,
     UNPAIR_FAILED,
     UNPAIR_UNAVAILABLE,
@@ -97,6 +101,150 @@ _LOGGER = logging.getLogger(__name__)
 def _is_hassio(hass) -> bool:
     """Check if Home Assistant is running on HAOS / Supervised."""
     return "hassio" in hass.config.components
+
+
+def _alert(alert_type: str, text: str) -> str:
+    """Wrap a notice for injection into a step description.
+
+    Markup only ever travels in placeholder *values* — hassfest rejects
+    HTML inside translation strings themselves. An empty notice yields an
+    empty string so the step renders without a gap.
+    """
+    if not text:
+        return ""
+    return f'<ha-alert alert-type="{alert_type}">{text}</ha-alert>\n\n'
+
+
+# The languages we ship translations for. Kept as a constant so the flow
+# needs no file access; tests/test_translation_coverage.py pins it against
+# the contents of translations/.
+_TRANSLATED_LANGUAGES = ("en", "de")
+
+
+def _language_from_accept_header(header: str | None) -> str | None:
+    """Best match between the browser's languages and the ones we ship.
+
+    Only relevant when the user never picked a language: the frontend
+    then renders from ``navigator.language``, which the browser derives
+    from the same setting it builds this header from. Matching is left
+    to Home Assistant's own helper so that regional tags resolve the way
+    they do elsewhere (``de-DE`` → ``de``, but ``pt-BR`` ≠ ``pt``).
+    """
+    if not header:
+        return None
+
+    ranked: list[tuple[float, int, str]] = []
+    for index, part in enumerate(header.split(",")):
+        tag, _, params = part.strip().partition(";")
+        if not tag or tag == "*":
+            continue
+        quality = 1.0
+        for param in params.split(";"):
+            key, _, value = param.partition("=")
+            if key.strip() == "q":
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0.0
+        # Negated so a plain sort puts the highest quality first; the
+        # index keeps equally-weighted tags in the order they were sent.
+        ranked.append((-quality, index, tag))
+
+    for _quality, _index, tag in sorted(ranked):
+        if matched := language_util.matches(tag, _TRANSLATED_LANGUAGES):
+            return matched[0]
+    return None
+
+
+async def _async_user_language(hass) -> str:
+    """The language the dialog is most likely being rendered in.
+
+    The frontend localises step text in the *user's* profile language,
+    while ``hass.config.language`` is the server's — the two differ
+    routinely, and a placeholder built from the server language then
+    lands in an otherwise differently-worded dialog.
+
+    Every render a user actually sees runs inside an HTTP request: the
+    flow view re-runs the step on each GET rather than serving a stored
+    result, so even a discovery flow started in the background has a
+    request in context by the time anyone looks at it. That request
+    carries the authenticated user, whose profile language the frontend
+    persists in its own per-user store — the same store the core reads
+    when it initialises ``hass.config.language``.
+
+    Falls back to the server language, which is what the placeholder
+    would have used anyway, so this can only ever be an improvement.
+    """
+    try:
+        if (request := ha_http.current_request.get()) is not None:
+            if (user := request.get("hass_user")) is not None:
+                from homeassistant.components.frontend import (  # noqa: PLC0415
+                    storage as frontend_store,
+                )
+
+                store = await frontend_store.async_user_store(hass, user.id)
+                if language := (store.data.get("language") or {}).get("language"):
+                    _LOGGER.debug("Flow text: using profile language %s", language)
+                    return language
+            # No stored preference — the frontend renders from the browser's
+            # own language in that case, and so do we.
+            if language := _language_from_accept_header(
+                request.headers.get("Accept-Language")
+            ):
+                _LOGGER.debug("Flow text: using Accept-Language %s", language)
+                return language
+    except Exception:  # noqa: BLE001 — never break a dialog over wording
+        _LOGGER.debug("Could not resolve the user's language", exc_info=True)
+    _LOGGER.debug(
+        "Flow text: falling back to server language %s", hass.config.language
+    )
+    return hass.config.language
+
+
+async def _async_text_blocks(hass, category: str = "flow_text") -> dict[str, str]:
+    """Resolve the reusable sentence fragments in the user's language.
+
+    A step description can only reference a *whole* other translation
+    value (``[%key:...%]``), never a fragment of one. Text shared by
+    several outcomes of the same dialog would therefore have to be
+    repeated once per outcome and once per language — and a dialog with
+    no input fields cannot fall back on ``errors["base"]``, because the
+    frontend only renders that inside ``ha-form``.
+
+    Keeping the parts that actually vary as their own keys and injecting
+    them as placeholders sidesteps both limits: one step covers what
+    used to need five, and the wording still follows the language the
+    dialog is rendered in (see ``_async_user_language``). Home Assistant
+    overlays the requested language on top of English, so a fragment
+    missing from a translation falls back on its English text rather
+    than disappearing.
+
+    ``category`` selects which section to read. ``config`` returns the
+    step/error/abort texts keyed by their path below the domain — which
+    is how the ``config.error.*`` strings become usable as notices on
+    forms that cannot render ``errors[]`` at all.
+    """
+    prefix = f"component.{DOMAIN}.{category}."
+    try:
+        resources = await async_get_translations(
+            hass, await _async_user_language(hass), category, [DOMAIN]
+        )
+    except Exception:  # noqa: BLE001 — wording is cosmetic, never fatal
+        _LOGGER.debug("Could not load flow text blocks", exc_info=True)
+        return {}
+    return {
+        key[len(prefix):]: value
+        for key, value in resources.items()
+        if key.startswith(prefix)
+    }
+
+
+# How long a slot probe may be reused. Long enough to carry the dropdown's
+# probe into the picker and the picker's into the health check that follows
+# a submit; short enough that a flow rendered again later — a discovery
+# banner opened hours after it appeared — re-probes instead of showing the
+# bridge state from when the flow was created.
+_PROBE_CACHE_MAX_AGE = 30.0
 
 
 # Sentinel option in the Direct-BLE picker that switches to free-text entry.
@@ -222,7 +370,16 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._esp_bridge_id: str = ""
         self._esp_bridge_ids: list[str] = []
         self._bridge_info: dict[str, str] | None = None
-        self._probed_bridges: dict[str, list[tuple[str, dict[str, str]]]] = {}
+        self._probed_bridges: dict[
+            str, list[tuple[str, dict[str, str] | None]]
+        ] = {}
+        # When each ESP's slots were last probed, so a stale reuse can be
+        # told apart from a fresh one (see _PROBE_CACHE_MAX_AGE).
+        self._probed_at: dict[str, float] = {}
+        # ESP dropdown values listed without a probe because the node is
+        # offline — the sole-ESP auto-select must not skip the picker for
+        # one of these.
+        self._offline_esp_values: set[str] = set()
         self._manual_address_entry: bool = False
         self._configured_bridge_ids: set[str] = set()
         # One-shot: the ESP auto-route in bluetooth_confirm runs multi-second
@@ -904,8 +1061,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         table it cannot become static translated text; the service names
         it lists are protocol identifiers and stay as they are.
 
-        ``needs_condor_note`` selects the step variant that explains why
-        the Classic feature services are absent on a Condor handle.
+        ``needs_condor_note`` asks for the text block explaining why the
+        Classic feature services are absent on a Condor handle.
         """
         fetched_lower = {s.lower() for s in fetched_uuids} - _STANDARD_BLE_SERVICES
         family = cls._detect_family(fetched_lower, model)
@@ -966,7 +1123,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         # The "❌ = not on this model" note is a static legend in the
         # step's translated text. The Condor note is model-specific, so
-        # it selects a step variant instead — neither can be a sentence
+        # it rides in as a translated block — neither may be a sentence
         # built here, which would not follow the frontend language.
         return table, "via Condor protocol" in used_reasons
 
@@ -1054,8 +1211,26 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         esphome_entries = self.hass.config_entries.async_entries("esphome")
         options: list[SelectOptionDict] = []
         self._probed_bridges = {}
+        self._probed_at = {}
+        self._offline_esp_values = set()
+
+        # An offline ESP cannot be probed, and the probe is what tells our
+        # bridge apart from a philips_shaver one — the service names are
+        # identical. So an offline node is only worth showing when an
+        # existing entry already vouches for it being ours; anything else
+        # stays hidden rather than advertising someone else's hardware.
+        ours = {
+            esphome_service_id(name)
+            for entry in self._async_current_entries()
+            if (name := entry.data.get(CONF_ESP_DEVICE_NAME))
+        }
+
         for entry in esphome_entries:
-            if self._esp_entry_unreachable(entry, "esp_select"):
+            if entry.disabled_by:
+                _LOGGER.debug(
+                    "esp_select: skipping disabled ESPHome entry '%s'",
+                    entry.title,
+                )
                 continue
             device_name = entry.data.get("device_name")
             if not device_name:
@@ -1064,22 +1239,64 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             bridge_ids = self._detect_esp_bridge_ids(device_name)
             if not bridge_ids:
                 continue
-            sonicare = await self._probe_sonicare_bridges(device_name, bridge_ids)
-            if not sonicare:
+
+            # ESPHome already knows the link is down — don't burn the probe
+            # timeout, show it as offline instead of dropping it silently.
+            runtime = getattr(entry, "runtime_data", None)
+            if runtime is not None and getattr(runtime, "available", True) is False:
+                if device_name not in ours:
+                    _LOGGER.debug(
+                        "esp_select: skipping offline ESPHome entry '%s' "
+                        "— never set up as a Sonicare bridge",
+                        entry.title,
+                    )
+                    continue
                 _LOGGER.debug(
-                    "Skipping ESP %s: no philips_sonicare bridge responded", device_name
+                    "esp_select: ESPHome entry '%s' is offline — listing it "
+                    "without a probe", entry.title,
                 )
+                options.append(
+                    SelectOptionDict(value=device_name, label=f"⚪ {entry.title}")
+                )
+                self._offline_esp_values.add(device_name)
+                continue
+
+            sonicare = await self._probe_sonicare_bridges(device_name, bridge_ids)
+            # Nothing answered on our event channel. That means either our
+            # bridge is unreachable, or this ESP was never ours —
+            # philips_shaver registers the same service names, and a failed
+            # probe looks identical either way. An existing entry is the
+            # only thing that can tell them apart.
+            if not any(info is not None for _, info in sonicare):
+                if device_name not in ours:
+                    _LOGGER.debug(
+                        "esp_select: '%s' answered no probe and was never set "
+                        "up as a Sonicare bridge — not listing it", device_name
+                    )
+                    continue
+                # Ours, but unreachable: list it so the user can see why it
+                # is there but leads nowhere.
+                _LOGGER.debug(
+                    "esp_select: '%s' answered no probe — listing as offline",
+                    device_name,
+                )
+                options.append(
+                    SelectOptionDict(value=device_name, label=f"⚪ {entry.title}")
+                )
+                self._offline_esp_values.add(device_name)
                 continue
             self._probed_bridges[device_name] = sonicare
+            self._probed_at[device_name] = time.monotonic()
 
             slot_info = ""
-            if len(sonicare) > 1:
+            answered = [info for _, info in sonicare if info is not None]
+            if len(answered) > 1:
                 paired_count = sum(
-                    1 for _, info in sonicare
+                    1 for info in answered
                     if info.get("pair_capable") != "true"
                     and info.get("mac", "") not in ("", "00:00:00:00:00:00")
                 )
-                free_count = len(sonicare) - paired_count
+                free_count = len(answered) - paired_count
                 parts = []
                 if paired_count:
                     parts.append(f"{paired_count} paired")
@@ -1186,12 +1403,20 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def _probe_sonicare_bridges(
         self, esp_device_name: str, bridge_ids: list[str],
-    ) -> list[tuple[str, dict[str, str]]]:
-        """Probe all bridge_ids on an ESP in parallel; keep responders only."""
+    ) -> list[tuple[str, dict[str, str] | None]]:
+        """Probe all bridge_ids on an ESP in parallel.
+
+        Returns ``(bridge_id, info | None)`` for **every** slot — ``None``
+        marks one that did not answer on our event channel: offline, busy,
+        or a different component (philips_shaver registers the same service
+        names but fires its own event). Callers that only care about
+        responders filter the Nones; the picker keeps them so a slot that
+        needs attention stays visible instead of silently disappearing.
+        """
         results = await asyncio.gather(
             *(self._probe_bridge_info(esp_device_name, did) for did in bridge_ids)
         )
-        return [(did, info) for did, info in zip(bridge_ids, results) if info is not None]
+        return list(zip(bridge_ids, results))
 
     # ------------------------------------------------------------------
     # Discovery flow
@@ -1346,6 +1571,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 continue
             sonicare = await self._probe_sonicare_bridges(device_name, bridge_ids)
             for bridge_id, info in sonicare:
+                if info is None:
+                    continue
                 mac = info.get("mac", "").upper()
                 if mac and mac == target:
                     return (device_name, bridge_id)
@@ -1381,9 +1608,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         # One-shot outcome from ble_probe_finish. errors["base"] does not
         # render on this schema-less confirmation step, so the outcome
-        # selects a step variant that carries the wording in its own
-        # translation; only the <ha-alert> wrappers are injected, because
-        # hassfest rejects HTML inside translation values.
+        # picks a translated text block; only the <ha-alert> wrapper is
+        # injected, because hassfest rejects HTML in translation values.
         #
         # A failure over a proxy keeps BOTH notices: a probe that fails on
         # a proxy-carried connection is the very symptom the proxy caveat
@@ -1394,73 +1620,35 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._confirm_status = ""
 
         via, warning_variant, warning_values = self._transport_lines()
-        if outcome and warning_variant:
-            # The combined variants carry the generic proxy caveat; the
-            # "a local adapter also sees it" detail is dropped here to
-            # keep the step matrix at two combinations instead of four.
-            step_id = f"bluetooth_confirm_{outcome}_proxy"
-        elif outcome:
-            step_id = f"bluetooth_confirm_{outcome}"
-        elif warning_variant:
-            step_id = f"bluetooth_confirm_{warning_variant}"
-        else:
-            step_id = "bluetooth_confirm"
+        text = await _async_text_blocks(self.hass)
+
+        # Two independent slots: the probe failure and the proxy caveat
+        # can appear together.
+        alert = _alert("error", text.get(f"confirm_alert_{outcome}", ""))
+        warn = ""
+        if warning_variant:
+            # After a failure the caveat is phrased for a retry, and the
+            # "a local adapter also sees it" detail is dropped — that
+            # advice belongs to the first attempt, not to a retry.
+            caveat = text.get(
+                "confirm_warn_proxy_retry" if outcome
+                else f"confirm_warn_{warning_variant}",
+                "",
+            )
+            # The caveat names the scanners, so it carries placeholders of
+            # its own that no longer reach the frontend once it is a value.
+            warn = _alert("warning", caveat.format(**warning_values))
 
         return self.async_show_form(
-            step_id=step_id,
+            step_id="bluetooth_confirm",
             description_placeholders={
                 "name": self._name,
                 "address": self._address,
                 "via": via,
-                # Two independent slots: the probe failure and the proxy
-                # caveat can appear together.
-                "alert_open": (
-                    '<ha-alert alert-type="error">' if outcome else ""
-                ),
-                "alert_close": "</ha-alert>" if outcome else "",
-                "warn_open": (
-                    '<ha-alert alert-type="warning">' if warning_variant else ""
-                ),
-                "warn_close": "</ha-alert>" if warning_variant else "",
-                **warning_values,
+                "alert": alert,
+                "warn": warn,
             },
         )
-
-    async def async_step_bluetooth_confirm_asleep_proxy(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step: asleep, and the carrier is a proxy."""
-        return await self.async_step_bluetooth_confirm(user_input)
-
-    async def async_step_bluetooth_confirm_failed_proxy(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step: read failed, and the carrier is a proxy."""
-        return await self.async_step_bluetooth_confirm(user_input)
-
-    async def async_step_bluetooth_confirm_asleep(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step: the probe found the toothbrush asleep."""
-        return await self.async_step_bluetooth_confirm(user_input)
-
-    async def async_step_bluetooth_confirm_failed(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step: the probe could not read the toothbrush."""
-        return await self.async_step_bluetooth_confirm(user_input)
-
-    async def async_step_bluetooth_confirm_proxy(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step: the likely carrier is a proxy, no local adapter."""
-        return await self.async_step_bluetooth_confirm(user_input)
-
-    async def async_step_bluetooth_confirm_proxy_local(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step: a proxy carries it, but a local adapter sees it too."""
-        return await self.async_step_bluetooth_confirm(user_input)
 
     @staticmethod
     def _short_scanner(p: dict) -> str:
@@ -1478,13 +1666,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         transport classes stay untranslated on purpose — they are the
         product names used throughout the docs.
 
-        ``warning_variant`` selects the proxy-only warning step (""
-        for a local carrier). Pairing over a standard proxy is
-        model-dependent — some models never trigger the proxy-side
-        bonding and fail every read; see not_paired_proxy. The wording
-        lives in those steps' translations; only names, signal strengths
-        and the markup that ha-markdown needs inside an HTML block are
-        passed as values.
+        ``warning_variant`` names the proxy-only caveat block ("" for a
+        local carrier). Pairing over a standard proxy is model-dependent
+        — some models never trigger the proxy-side bonding and fail every
+        read; see not_paired_proxy. The wording lives in the translated
+        blocks; only names, signal strengths and the markup that
+        ha-markdown needs inside an HTML block are passed as values.
 
         habluetooth routes by signal strength, so the strongest scanner
         is only the *likely* carrier; recomputed each render so the
@@ -1793,7 +1980,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if not esp_options:
             return self.async_abort(reason="no_esphome_devices")
 
-        if len(esp_options) == 1 and not user_input:
+        if (
+            len(esp_options) == 1
+            and not user_input
+            and esp_options[0]["value"] not in self._offline_esp_values
+        ):
             sole = esp_options[0]["value"]
             self._esp_device_name = sole
             bridge_ids = self._detect_esp_bridge_ids(sole)
@@ -1840,18 +2031,69 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         # Reuse probes collected during the device-list step if present;
         # otherwise probe now (e.g. discovery / bluetooth_confirm path).
+        #
+        # Only a *recent* probe may be reused. A flow can render this picker
+        # long after it was created — a zeroconf discovery builds the whole
+        # step in the background, and its banner may sit unopened for hours.
+        # Reusing that probe would show the bridge state from whenever the
+        # flow started: a slot unbonded since then still reads as bonded.
+        # The reuse this cache exists for (dropdown -> picker, and picker ->
+        # health check on submit) happens within seconds and stays intact.
         cached = self._probed_bridges.get(self._esp_device_name)
-        if cached is None:
+        probed_at = self._probed_at.get(self._esp_device_name, 0.0)
+        age = time.monotonic() - probed_at
+        # A probe that does not cover exactly this bridge's slots is not
+        # usable either — the slot list changed under us.
+        covers_slots = cached is not None and (
+            {did for did, _ in cached} == set(self._esp_bridge_ids)
+        )
+        if cached is None or not covers_slots or age > _PROBE_CACHE_MAX_AGE:
             cached = await self._probe_sonicare_bridges(
                 self._esp_device_name, self._esp_bridge_ids
             )
             self._probed_bridges[self._esp_device_name] = cached
+            self._probed_at[self._esp_device_name] = time.monotonic()
+        else:
+            # Within the window, but a slot we un-bonded or paired since
+            # the probe is known-stale — refresh just those, not the whole
+            # bridge. Covers the case the age check cannot: the user acts
+            # on one slot and re-opens the picker seconds later.
+            stale = [
+                did for did, _ in cached
+                if slot_changed_at(self.hass, self._esp_device_name, did)
+                > probed_at
+            ]
+            if stale:
+                _LOGGER.debug(
+                    "esp_select: re-probing %s — bond state changed since "
+                    "the cached probe", ", ".join(stale)
+                )
+                fresh = dict(
+                    await self._probe_sonicare_bridges(
+                        self._esp_device_name, stale
+                    )
+                )
+                cached = [
+                    (did, fresh.get(did, info)) for did, info in cached
+                ]
+                self._probed_bridges[self._esp_device_name] = cached
 
         self._configured_bridge_ids = set()
         options: list[SelectOptionDict] = []
         has_available = False
 
         for did, info in cached:
+            if info is None:
+                # Did not answer on our event channel — offline, busy, or a
+                # different component. Show it so a slot that needs
+                # attention stays visible rather than vanishing from the
+                # list; selecting it just probes again.
+                options.append(
+                    SelectOptionDict(value=did, label=f"⚪ {did or 'default'}")
+                )
+                has_available = True
+                continue
+
             mac = info.get("mac", "")
             has_mac = bool(mac) and mac != "00:00:00:00:00:00"
             is_configured = has_mac and mac.upper() in configured_macs
@@ -1864,7 +2106,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 has_available = True
                 options.append(SelectOptionDict(value=did, label=label))
 
-        if not cached:
+        if not any(info is not None for _, info in cached):
+            # Nobody answered on our event channel — an offline bridge, or
+            # an ESP that only looked like ours by service name. A list of
+            # nothing but ⚪ entries would lead nowhere.
             return self.async_abort(reason="no_devices_found")
         if not has_available:
             return self.async_abort(reason="already_configured")
@@ -1969,6 +2214,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             return
         bridge_id = self._esp_bridge_id or ""
         for did, info in cached:
+            if info is None:
+                continue
             # Cached did is detection-form (lowercase); compare
             # case-insensitively, same as _resolve_friendly_name.
             if did.lower() != bridge_id.lower():
@@ -2063,35 +2310,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._slot_action_chosen = True
         return await self.async_step_reset_bridge()
 
-    async def async_step_esp_bridge_status_connected(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step rendered when the bridge is already BLE-connected.
-
-        HA routes step submissions to async_step_<step_id>; we keep the
-        translations split between two step IDs (different action hints)
-        but share the implementation here.
-        """
-        return await self.async_step_esp_bridge_status(user_input)
-
-    async def async_step_esp_bridge_status_paired(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step carrying the "pairing done" acknowledgement."""
-        return await self.async_step_esp_bridge_status(user_input)
-
-    async def async_step_esp_bridge_status_read_failed(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step carrying the "couldn't read the brush" notice."""
-        return await self.async_step_esp_bridge_status(user_input)
-
-    async def async_step_esp_bridge_status_read_error(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step carrying the unexpected-error notice."""
-        return await self.async_step_esp_bridge_status(user_input)
-
     async def async_step_esp_bridge_status(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -2143,39 +2361,44 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         }
         target_placeholders = self._pair_target_placeholders()
 
-        # One-shot outcomes (pairing done, read failed) each get their own
-        # step so their wording lives in the translations. errors[] does
-        # not render on this schema-less step — same quirk as
-        # reset_bridge — which rules out plain error keys here.
+        # One-shot outcomes (pairing done, read failed) ride in as text
+        # blocks rather than as step variants: errors[] does not render on
+        # this schema-less step — same quirk as reset_bridge — and the
+        # status table around them is identical either way.
         # Both flags are consumed unconditionally: leaving one set because
         # the other won the race would resurface a stale notice on the
         # next render of this step.
         just_paired, self._just_paired = self._just_paired, False
         read_error, self._esp_read_error = self._esp_read_error, ""
 
+        text = await _async_text_blocks(self.hass)
+        notice = ""
         alert_type = "success"
         if just_paired:
-            step_id = "esp_bridge_status_paired"
+            notice = text.get("esp_status_paired", "")
+            action = text.get("esp_action_switch_on", "")
         elif read_error:
             alert_type = "error"
-            step_id = (
-                "esp_bridge_status_read_failed"
+            notice = text.get(
+                "esp_status_read_failed"
                 if read_error == "cannot_connect"
-                else "esp_bridge_status_read_error"
+                else "esp_status_read_error",
+                "",
             )
+            action = text.get("esp_action_retry", "")
         elif ble_connected:
-            step_id = "esp_bridge_status_connected"
+            action = text.get("esp_action_connected", "")
         else:
-            step_id = "esp_bridge_status"
+            action = text.get("esp_action_switch_on", "")
 
         return self.async_show_form(
-            step_id=step_id,
+            step_id="esp_bridge_status",
             data_schema=vol.Schema({}),
             description_placeholders={
                 "device_name": self._esp_device_name or "",
                 "target": target_placeholders["target"],
-                "alert_open": f'<ha-alert alert-type="{alert_type}">',
-                "alert_close": "</ha-alert>",
+                "alert": _alert(alert_type, notice),
+                "action": action,
                 **status_values,
             },
         )
@@ -2260,12 +2483,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     # ------------------------------------------------------------------
     # Pair-mode flow (Mode B bridges with no bound identity)
     # ------------------------------------------------------------------
-    async def async_step_request_pair_after_reset(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step carrying the "bond removed" acknowledgement."""
-        return await self.async_step_request_pair(user_input)
-
     async def async_step_request_pair(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -2273,21 +2490,32 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             return await self.async_step_wait_pair()
 
-        placeholders = self._pair_target_placeholders()
         # Acknowledge a bond that reset_bridge just cleared (one-shot), so
-        # the jump from "Reset bridge bond" to pair-mode isn't silent. The
-        # acknowledgement is a step of its own — its wording has to come
-        # from the translations, and a placeholder built here could not.
-        step_id = "request_pair"
+        # the jump from "Reset bridge bond" to pair-mode isn't silent.
+        notice = ""
         if self._just_unpaired:
             self._just_unpaired = False
-            step_id = "request_pair_after_reset"
-            placeholders["alert_open"] = '<ha-alert alert-type="success">'
-            placeholders["alert_close"] = "</ha-alert>"
+            notice = (await _async_text_blocks(self.hass)).get(
+                "pair_status_unpaired", ""
+            )
+        return self._show_request_pair(notice)
+
+    def _show_request_pair(
+        self, notice: str = "", alert_type: str = "success"
+    ) -> FlowResult:
+        """Render the pair-mode prompt, optionally headed by a notice.
+
+        Every outcome of the pairing attempt lands back on this one form.
+        It carries no input fields, so ``errors[]`` would never reach the
+        user — the notice has to travel as description markup instead.
+        """
         return self.async_show_form(
-            step_id=step_id,
+            step_id="request_pair",
             data_schema=vol.Schema({}),
-            description_placeholders=placeholders,
+            description_placeholders={
+                **self._pair_target_placeholders(),
+                "alert": _alert(alert_type, notice),
+            },
         )
 
     def _esp_target_label(
@@ -2321,10 +2549,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             "device_name": self._esp_device_name or "",
             "bridge_id": self._esp_bridge_id or "",
             "target": self._esp_target_label(),
-            # <ha-alert> wrapper for the variants that carry a notice; the
-            # wording itself lives in each variant's translated text.
-            "alert_open": "",
-            "alert_close": "",
         }
 
     def _resolve_friendly_name(
@@ -2352,7 +2576,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         for did, info in cached:
             # Cached did is detection-form (lowercase); compare case-insensitively
             # so an uppercase bridge_id still resolves its friendly_name.
-            if did.lower() == bridge_id.lower():
+            if info is not None and did.lower() == bridge_id.lower():
                 return (info.get("friendly_name") or "").strip()
         return ""
 
@@ -2510,29 +2734,21 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._pair_future = None
         self._pair_svc_name = ""
 
-        if result.get("error"):
-            return self.async_show_form(
-                step_id="request_pair",
-                data_schema=vol.Schema({}),
-                errors={"base": result["error"]},
-                description_placeholders=self._pair_target_placeholders(),
-            )
-        if result.get("status") == "pair_timeout":
-            return self.async_show_form(
-                step_id="request_pair",
-                data_schema=vol.Schema({}),
-                errors={"base": "pair_timeout"},
-                description_placeholders=self._pair_target_placeholders(),
-            )
-
+        # A failed attempt drops back onto the pair-mode prompt. The reason
+        # rides in as an alert, not as errors[]: the prompt has no input
+        # fields, so the frontend would drop errors[] silently and the user
+        # would just see the same dialog again with nothing to act on.
+        error_key = result.get("error") or (
+            "pair_timeout" if result.get("status") == "pair_timeout" else ""
+        )
         identity = result.get("identity_address", "").upper()
-        if not identity:
+        if not error_key and not identity:
             _LOGGER.error("pair_complete received without identity_address")
-            return self.async_show_form(
-                step_id="request_pair",
-                data_schema=vol.Schema({}),
-                errors={"base": "unknown"},
-                description_placeholders=self._pair_target_placeholders(),
+            error_key = "unknown"
+        if error_key:
+            texts = await _async_text_blocks(self.hass, "config")
+            return self._show_request_pair(
+                texts.get(f"error.{error_key}", ""), alert_type="error"
             )
 
         # Pair succeeded — clear bridge_info so the next health check picks up
@@ -2544,18 +2760,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(identity, raise_on_progress=False)
         self._abort_if_already_configured()
         return await self._esp_bridge_health_check()
-
-    async def async_step_reset_bridge_offline(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step: the bridge could not be reached to clear the bond."""
-        return await self.async_step_reset_bridge(user_input)
-
-    async def async_step_reset_bridge_unconfirmed(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step: the bridge never confirmed the bond was cleared."""
-        return await self.async_step_reset_bridge(user_input)
 
     async def async_step_reset_bridge(
         self, user_input: dict[str, Any] | None = None
@@ -2626,35 +2830,33 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             "Unpair on %s did not succeed (%s)",
             self._esp_device_name, outcome,
         )
-        # Each failure wording is its own step so it comes from the
-        # translations; errors[] does not render on this schema-less step.
-        step_id = (
-            "reset_bridge_offline"
+        # The wording comes from the translations; errors[] does not render
+        # on this schema-less step.
+        text = await _async_text_blocks(self.hass)
+        notice = text.get(
+            "reset_alert_offline"
             if outcome in (UNPAIR_FAILED, UNPAIR_UNAVAILABLE)
-            else "reset_bridge_unconfirmed"
+            else "reset_alert_unconfirmed",
+            "",
         )
         return self.async_show_form(
-            step_id=step_id,
+            step_id="reset_bridge",
             data_schema=vol.Schema({}),
-            description_placeholders=self._reset_bridge_placeholders(alert=True),
+            description_placeholders=self._reset_bridge_placeholders(notice),
         )
 
-    def _reset_bridge_placeholders(self, *, alert: bool = False) -> dict[str, str]:
-        """Placeholders for the reset_bridge step and its failure variants.
+    def _reset_bridge_placeholders(self, notice: str = "") -> dict[str, str]:
+        """Placeholders for the reset_bridge step.
 
         ``errors["base"]`` does not render on this schema-less confirmation
         step (same as bluetooth_confirm), so a failure is surfaced as an
-        ``<ha-alert>``. Only the wrapper is built here — the wording lives
-        in the failure step's own translated description.
+        ``<ha-alert>`` carrying a translated notice.
         """
         placeholders = self._pair_target_placeholders()
         placeholders["identity_address"] = (
             (self._bridge_info or {}).get("identity_address", "")
         )
-        placeholders["alert_open"] = (
-            '<ha-alert alert-type="error">' if alert else ""
-        )
-        placeholders["alert_close"] = "</ha-alert>" if alert else ""
+        placeholders["alert"] = _alert("error", notice)
         return placeholders
 
     # ------------------------------------------------------------------
@@ -2685,12 +2887,6 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             suffix = ""
         base = f"Sonicare {model}" if model else "Sonicare"
         return f"{base} ({suffix})" if suffix else base
-
-    async def async_step_show_capabilities_condor(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Alias step: adds why the Classic services are absent on Condor."""
-        return await self.async_step_show_capabilities(user_input)
 
     async def async_step_show_capabilities(
         self, user_input: dict[str, Any] | None = None
@@ -2735,14 +2931,19 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         path = self._fetched_data.get("connection_path")
 
+        # Condor handles answer with a different service set, so the
+        # legend gets one extra sentence explaining the gaps.
+        text = await _async_text_blocks(self.hass)
+
         return self.async_show_form(
-            step_id=(
-                "show_capabilities_condor" if condor_note else "show_capabilities"
-            ),
+            step_id="show_capabilities",
             data_schema=vol.Schema({
                 vol.Required(CONF_DEVICE_NAME, default=default_name): str,
             }),
             description_placeholders={
+                "condor_note": (
+                    text.get("caps_condor_note", "") if condor_note else ""
+                ),
                 "name": str(self._name),
                 **self._connection_status_placeholders(
                     self._transport_type, path,
@@ -2776,7 +2977,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             "pair_error": pair_error,
         }
 
-    def _show_not_paired_form(self, errors: dict[str, str]) -> FlowResult:
+    async def _show_not_paired_form(self, errors: dict[str, str]) -> FlowResult:
         """Render the pairing dialog matching the probe transport.
 
         The host variant walks the user through pair.sh/bluetoothctl on
@@ -2785,26 +2986,45 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         routes each connect by RSSI, so the transport is re-evaluated on
         every retry and the dialog follows it.
 
-        The host variant splits again by install type: the two "where do
-        I get a terminal" wordings are separate steps rather than one
-        placeholder, because placeholder text is built here and would
-        stay English in a translated frontend.
+        Where to find a shell differs by install type; that sentence is
+        a translated block, so it follows the dialog's language like the
+        walkthrough around it.
+
+        Neither variant has input fields, so a retry failure cannot ride
+        in ``errors`` — the frontend only renders those inside ``ha-form``
+        and skips it on an empty schema. The reason is therefore shown as
+        an alert, reusing the very ``config.error`` strings that would
+        otherwise never reach anyone.
         """
+        notice = ""
+        if key := errors.get("base"):
+            texts = await _async_text_blocks(self.hass, "config")
+            notice = texts.get(f"error.{key}", "")
+        alert = _alert("error", notice)
+
         if self._probe_via_proxy:
             return self.async_show_form(
                 step_id="not_paired_proxy",
                 description_placeholders={
                     "address": self._address or "",
                     "proxy_name": self._probe_proxy_name or "—",
+                    "alert": alert,
                 },
-                errors=errors,
             )
+        text = await _async_text_blocks(self.hass)
         return self.async_show_form(
-            step_id=(
-                "not_paired_hassio" if _is_hassio(self.hass) else "not_paired"
-            ),
-            description_placeholders=self._not_paired_placeholders(),
-            errors=errors,
+            step_id="not_paired",
+            description_placeholders={
+                **self._not_paired_placeholders(),
+                # Where to find a shell differs by install type; the rest
+                # of the walkthrough is identical.
+                "terminal": text.get(
+                    "not_paired_terminal_hassio" if _is_hassio(self.hass)
+                    else "not_paired_terminal_host",
+                    "",
+                ),
+                "alert": alert,
+            },
         )
 
     async def async_step_not_paired(
@@ -2842,20 +3062,14 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 _LOGGER.exception("Error after manual pairing retry")
                 errors["base"] = "unknown"
 
-            return self._show_not_paired_form(errors)
+            return await self._show_not_paired_form(errors)
 
-        return self._show_not_paired_form({})
+        return await self._show_not_paired_form({})
 
     async def async_step_not_paired_proxy(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Proxy variant of not_paired — same handler, different text."""
-        return await self.async_step_not_paired(user_input)
-
-    async def async_step_not_paired_hassio(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Supervised variant of not_paired — same handler, different text."""
         return await self.async_step_not_paired(user_input)
 
     # ------------------------------------------------------------------

@@ -115,21 +115,22 @@ async def test_status_form_has_no_schema() -> None:
 
 # --- success alert (unchanged behaviour) ---------------------------------
 
-async def test_just_paired_renders_success_alert_once() -> None:
-    """The acknowledgement is a step of its own, so its wording is
-    translatable; it must still be one-shot."""
+async def test_just_paired_renders_success_alert_once(flow_text_blocks) -> None:
+    """The acknowledgement rides in as a translated text block; it must
+    still be one-shot."""
     flow = _flow(dict(BONDED_INFO))
     flow._just_paired = True
 
     first = await flow.async_step_esp_bridge_status()
-    assert first["step_id"] == "esp_bridge_status_paired"
-    assert first["description_placeholders"]["alert_open"] == (
+    assert first["step_id"] == "esp_bridge_status"
+    assert first["description_placeholders"]["alert"] == (
         '<ha-alert alert-type="success">'
+        f'{flow_text_blocks["esp_status_paired"]}</ha-alert>\n\n'
     )
     assert flow._just_paired is False
 
     second = await flow.async_step_esp_bridge_status()
-    assert second["step_id"] != "esp_bridge_status_paired"
+    assert second["description_placeholders"]["alert"] == ""
 
 
 async def test_no_alert_without_fresh_pairing() -> None:
@@ -138,7 +139,7 @@ async def test_no_alert_without_fresh_pairing() -> None:
 
     result = await flow.async_step_esp_bridge_status()
 
-    assert result["step_id"] != "esp_bridge_status_paired"
+    assert result["description_placeholders"]["alert"] == ""
 
 
 # --- ESP capabilities read as a progress task (review point #2) -----------
@@ -177,7 +178,7 @@ async def test_read_finish_success_shows_capabilities(monkeypatch) -> None:
     assert flow._fetched_data["pairing"] == "bonded"
 
 
-async def test_read_finish_error_rerenders_with_alert() -> None:
+async def test_read_finish_error_rerenders_with_alert(flow_text_blocks) -> None:
     flow = _flow(dict(BONDED_INFO))
     flow._esp_caps_result = {"ok": False, "error": "cannot_connect"}
     flow._slot_action_chosen = True  # avoid the bonded-slot menu on re-render
@@ -186,23 +187,29 @@ async def test_read_finish_error_rerenders_with_alert() -> None:
 
     assert result["type"] == FlowResultType.FORM
     # The failure wording lives in the translations, so the outcome picks
-    # a step rather than injecting an English sentence.
-    assert result["step_id"] == "esp_bridge_status_read_failed"
-    assert result["description_placeholders"]["alert_open"] == (
+    # a text block rather than injecting an English sentence.
+    assert result["step_id"] == "esp_bridge_status"
+    assert result["description_placeholders"]["alert"] == (
         '<ha-alert alert-type="error">'
+        f'{flow_text_blocks["esp_status_read_failed"]}</ha-alert>\n\n'
     )
     # one-shot: cleared after rendering
     assert flow._esp_read_error == ""
 
 
-async def test_read_finish_unknown_error_uses_its_own_step() -> None:
+async def test_read_finish_unknown_error_uses_its_own_wording(
+    flow_text_blocks,
+) -> None:
+    """An unexpected error points at the logs, not at the power button."""
     flow = _flow(dict(BONDED_INFO))
     flow._esp_caps_result = {"ok": False, "error": "unknown"}
     flow._slot_action_chosen = True
 
     result = await flow.async_step_esp_read_finish()
 
-    assert result["step_id"] == "esp_bridge_status_read_error"
+    assert flow_text_blocks["esp_status_read_error"] in (
+        result["description_placeholders"]["alert"]
+    )
 
 
 async def test_status_table_values_are_language_neutral() -> None:

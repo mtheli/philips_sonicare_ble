@@ -136,7 +136,7 @@ async def test_finish_success_runs_health_check() -> None:
     assert flow._pair_result is None
 
 
-async def test_finish_timeout_returns_error_and_disarms() -> None:
+async def test_finish_timeout_returns_error_and_disarms(error_texts) -> None:
     flow = _finishable_flow({"status": "pair_timeout"})
     unsub = flow._pair_unsub
 
@@ -144,30 +144,36 @@ async def test_finish_timeout_returns_error_and_disarms() -> None:
 
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "request_pair"
-    assert result["errors"] == {"base": "pair_timeout"}
+    # errors[] never reaches a schema-less form, so the reason is an alert.
+    assert result["errors"] is None
+    assert result["description_placeholders"]["alert"] == (
+        f'<ha-alert alert-type="error">{error_texts["pair_timeout"]}</ha-alert>\n\n'
+    )
     # Not a clean bond → bridge told to stand down.
     flow.hass.services.async_call.assert_awaited_once()
     unsub.assert_called_once()
 
 
-async def test_finish_arm_error_returns_cannot_connect() -> None:
+async def test_finish_arm_error_returns_cannot_connect(error_texts) -> None:
     flow = _finishable_flow({"error": "cannot_connect"})
 
     result = await flow.async_step_pair_finish()
 
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "request_pair"
-    assert result["errors"] == {"base": "cannot_connect"}
+    assert error_texts["cannot_connect"] in (
+        result["description_placeholders"]["alert"]
+    )
     flow.hass.services.async_call.assert_awaited_once()
 
 
-async def test_finish_complete_without_identity_is_unknown() -> None:
+async def test_finish_complete_without_identity_is_unknown(error_texts) -> None:
     flow = _finishable_flow({"status": "pair_complete"})
 
     result = await flow.async_step_pair_finish()
 
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"] == {"base": "unknown"}
+    assert error_texts["unknown"] in result["description_placeholders"]["alert"]
     # Bond reported complete → do NOT disarm.
     flow.hass.services.async_call.assert_not_awaited()
 

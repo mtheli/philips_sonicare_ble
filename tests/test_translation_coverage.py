@@ -15,6 +15,7 @@ config_flow.py and never inspected by hassfest.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from pathlib import Path
@@ -27,23 +28,19 @@ TRANSLATIONS = sorted((COMPONENT_DIR / "translations").glob("*.json"))
 # Built by interpolation at the call site, so the literal scan below
 # cannot see them.
 DYNAMIC_STEPS = {
-    "bluetooth_confirm_asleep",
-    "bluetooth_confirm_asleep_proxy",
-    "bluetooth_confirm_failed",
-    "bluetooth_confirm_failed_proxy",
-    "bluetooth_confirm_proxy",
-    "bluetooth_confirm_proxy_local",
     "esp_bridge_status",
-    "esp_bridge_status_connected",
-    "esp_bridge_status_read_failed",
-    "esp_bridge_status_read_error",
     "not_paired",
-    "not_paired_hassio",
     "reset_bridge",
-    "reset_bridge_offline",
     "show_capabilities",
-    "show_capabilities_condor",
-    "reset_bridge_unconfirmed",
+}
+
+# Text blocks the flow selects by interpolating an outcome into the name,
+# so the literal scan below cannot see them.
+DYNAMIC_BLOCKS = {
+    "confirm_alert_asleep",
+    "confirm_alert_failed",
+    "confirm_warn_proxy",
+    "confirm_warn_proxy_local",
 }
 DYNAMIC_ABORTS = {
     "already_configured_detail",
@@ -245,16 +242,269 @@ async def test_rendered_dialogs_have_every_placeholder_they_use() -> None:
     seen.add(result["step_id"])
 
     assert {
-        "esp_bridge_status_connected", "esp_bridge_status_paired",
-        "esp_bridge_status_read_failed", "esp_bridge_status_read_error",
-        "request_pair", "request_pair_after_reset",
-        "bluetooth_confirm", "bluetooth_confirm_asleep",
-        "bluetooth_confirm_failed", "bluetooth_confirm_proxy",
-        "bluetooth_confirm_proxy_local", "bluetooth_confirm_asleep_proxy",
-        "bluetooth_confirm_failed_proxy", "not_paired", "not_paired_hassio",
-        "reset_bridge", "reset_bridge_offline", "reset_bridge_unconfirmed",
-        "show_capabilities", "show_capabilities_condor",
+        "esp_bridge_status", "request_pair", "bluetooth_confirm",
+        "not_paired", "reset_bridge", "show_capabilities",
     } <= seen, seen
+
+
+def test_step_variants_keep_their_shared_block_identical() -> None:
+    """Variants of one dialog must repeat their common text verbatim.
+
+    A dialog without input fields cannot show ``errors["base"]``: the
+    frontend only renders that inside ``ha-form``, which it skips when
+    ``data_schema`` is empty. Notices therefore live in each variant's
+    own description, which means the shared part is duplicated — per
+    variant and per language. This pins that duplication so an edit to
+    one variant cannot silently leave the others behind.
+    """
+    families = {}
+    for path in [COMPONENT_DIR / "strings.json", *TRANSLATIONS]:
+        steps = json.loads(path.read_text(encoding="utf-8"))["config"]["step"]
+        for family, marker in families.items():
+            variants = {
+                key: text["description"] for key, text in steps.items()
+                if key.startswith(family)
+            }
+            # The shared block runs from the marker to the end of the text,
+            # minus the trailing call to action, which legitimately differs.
+            blocks = {
+                key: desc[desc.index(marker):]
+                for key, desc in variants.items() if marker in desc
+            }
+            assert len(blocks) > 1, f"{path.name}: {family} lost its variants"
+            shared = {b[:b.index("\n\n", 1)] if "\n\n" in b[1:] else b
+                      for b in blocks.values()}
+            assert len(shared) == 1, (
+                f"{path.name}: {family} variants drifted apart: {sorted(blocks)}"
+            )
+
+
+def _requested_text_blocks() -> set[str]:
+    """Block names the flow references as string literals."""
+    return {
+        name for name in STRINGS.get("flow_text", {}) if f'"{name}"' in FLOW_SRC
+    } | DYNAMIC_BLOCKS
+
+
+def test_requested_text_blocks_are_defined() -> None:
+    """Every fragment the flow injects must exist in every language.
+
+    These replace the per-outcome step variants this dialog used to
+    carry: a name the flow asks for but no translation defines would
+    silently render as an empty sentence rather than raise.
+    """
+    for path in [COMPONENT_DIR / "strings.json", *TRANSLATIONS]:
+        defined = set(json.loads(path.read_text(encoding="utf-8")).get("flow_text", {}))
+        missing = _requested_text_blocks() - defined
+        assert not missing, f"{path.name}: text blocks missing: {missing}"
+
+
+def test_no_dead_text_blocks() -> None:
+    """The reverse check — a fragment nothing asks for is dead weight."""
+    orphans = set(STRINGS.get("flow_text", {})) - _requested_text_blocks()
+    assert not orphans, f"text blocks defined but never used: {orphans}"
+
+
+async def test_user_language_prefers_the_profile_over_the_server(
+    monkeypatch,
+) -> None:
+    """The dialog is rendered in the user's language, not the server's.
+
+    Every render a user sees runs inside a request (the flow view re-runs
+    the step on each GET), so the authenticated user — and with them the
+    profile language the frontend stores — is reachable. Each failure
+    along that chain has to fall back on the server language rather than
+    raise, since a broken lookup must never break a dialog.
+    """
+    from types import SimpleNamespace
+
+    import custom_components.philips_sonicare_ble.config_flow as cf
+
+    hass = SimpleNamespace(config=SimpleNamespace(language="de"))
+
+    class _Request(dict):
+        """Stand-in for aiohttp's request: mapping plus headers."""
+
+        def __init__(self, user=None, accept=None):
+            super().__init__({"hass_user": user} if user is not None else {})
+            self.headers = {"Accept-Language": accept} if accept else {}
+
+    def _set_request(user=SimpleNamespace(id="u1"), accept=None):
+        """Put a request in context the way the http middleware does."""
+        tokens.append(cf.ha_http.current_request.set(_Request(user, accept)))
+
+    def _store(data):
+        async def _async_user_store(hass_arg, user_id):
+            assert user_id == "u1"
+            return SimpleNamespace(data=data)
+
+        monkeypatch.setattr(
+            "homeassistant.components.frontend.storage.async_user_store",
+            _async_user_store,
+        )
+
+    tokens: list = []
+    try:
+        # No request in context (background init) → server language.
+        assert await cf._async_user_language(hass) == "de"
+
+        # Request with a user whose profile language is set → that language.
+        _set_request()
+        _store({"language": {"language": "en"}})
+        assert await cf._async_user_language(hass) == "en"
+
+        # Profile exists but holds no language → server language.
+        _store({})
+        assert await cf._async_user_language(hass) == "de"
+        _store({"language": None})
+        assert await cf._async_user_language(hass) == "de"
+
+        # The store blowing up must not escape.
+        async def _boom(hass_arg, user_id):
+            raise RuntimeError("store unavailable")
+
+        monkeypatch.setattr(
+            "homeassistant.components.frontend.storage.async_user_store", _boom
+        )
+        assert await cf._async_user_language(hass) == "de"
+
+        # Unauthenticated request → server language.
+        _set_request(user=None)
+        assert await cf._async_user_language(hass) == "de"
+
+        # No stored preference, but the browser tells us what it renders in.
+        _store({})
+        _set_request(accept="en-GB,en;q=0.9,de;q=0.8")
+        assert await cf._async_user_language(hass) == "en"
+
+        # A language we do not ship falls through to the server's.
+        _set_request(accept="fr-FR,fr;q=0.9")
+        assert await cf._async_user_language(hass) == "de"
+    finally:
+        for token in reversed(tokens):
+            cf.ha_http.current_request.reset(token)
+
+
+def test_accept_language_ranking() -> None:
+    """Quality values decide, and regional tags resolve like HA does."""
+    import custom_components.philips_sonicare_ble.config_flow as cf
+
+    parse = cf._language_from_accept_header
+
+    assert parse(None) is None
+    assert parse("") is None
+    assert parse("*") is None
+    # Plain regional tag collapses onto the base language we ship.
+    assert parse("de-AT") == "de"
+    # Lower-quality entry loses even though it comes first.
+    assert parse("de;q=0.5,en;q=0.9") == "en"
+    # Equal quality keeps the order the browser sent.
+    assert parse("de,en") == "de"
+    assert parse("en,de") == "en"
+    # Unshipped languages are skipped rather than matched loosely.
+    assert parse("fr-FR,fr;q=0.9,de;q=0.1") == "de"
+    assert parse("fr,es") is None
+    # Malformed quality must not raise.
+    assert parse("de;q=notanumber,en") == "en"
+
+
+def test_shipped_languages_constant_matches_translation_files() -> None:
+    """The flow trusts a constant instead of scanning the filesystem."""
+    import custom_components.philips_sonicare_ble.config_flow as cf
+
+    on_disk = {path.stem for path in TRANSLATIONS}
+    assert set(cf._TRANSLATED_LANGUAGES) == on_disk, (
+        "add the new language to _TRANSLATED_LANGUAGES in config_flow.py"
+    )
+
+
+async def test_text_blocks_resolve_through_the_translation_cache(
+    monkeypatch, unpatched_text_blocks,
+) -> None:
+    """The real lookup: strip HA's ``component.<domain>.<category>.`` prefix.
+
+    The shared fixture hands the blocks to the flow directly so the step
+    tests stay independent of HA's translation machinery — which leaves
+    this one covering the resolver itself, including the fallback when
+    translations cannot be loaded at all.
+    """
+    from types import SimpleNamespace
+
+    import custom_components.philips_sonicare_ble.config_flow as cf
+
+    hass = SimpleNamespace(config=SimpleNamespace(language="de"))
+    seen: dict[str, object] = {}
+
+    async def _translations(hass_arg, language, category, integrations=None,
+                            config_flow=None):
+        seen.update(language=language, category=category, integrations=integrations)
+        return {
+            "component.philips_sonicare_ble.flow_text.esp_status_paired": "Fertig.",
+            "component.other_integration.flow_text.ignored": "nope",
+        }
+
+    monkeypatch.setattr(cf, "async_get_translations", _translations)
+    assert await unpatched_text_blocks(hass) == {"esp_status_paired": "Fertig."}
+    assert seen == {
+        "language": "de", "category": "flow_text",
+        "integrations": ["philips_sonicare_ble"],
+    }
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("translations unavailable")
+
+    monkeypatch.setattr(cf, "async_get_translations", _boom)
+    assert await unpatched_text_blocks(hass) == {}
+
+
+def test_no_errors_on_a_form_without_fields() -> None:
+    """``errors`` never reaches the user on a form that has no fields.
+
+    The frontend renders backend errors only inside ``ha-form``, and
+    skips that element when ``data_schema`` is empty or absent (a change
+    in HA 2026.6 — before that the form was always rendered). Setting
+    ``errors`` there fails silently: the flow returns the same dialog
+    with no hint why, which is exactly what it looks like when nothing
+    happened at all.
+
+    Such a step has to carry its reason in the description instead. This
+    walks the flow source rather than matching text, so a new occurrence
+    cannot slip in unnoticed.
+    """
+    tree = ast.parse(FLOW_SRC)
+    offenders = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name != "async_show_form":
+            continue
+        kwargs = {k.arg: k.value for k in node.keywords}
+        if "errors" not in kwargs:
+            continue
+        schema = kwargs.get("data_schema")
+        if schema is None:
+            offenders.append((node.lineno, "no data_schema"))
+        elif _is_empty_schema(schema):
+            offenders.append((node.lineno, "empty data_schema"))
+    assert not offenders, (
+        "errors set on a field-less form (invisible to the user): "
+        + ", ".join(f"config_flow.py:{line} ({why})" for line, why in offenders)
+    )
+
+
+def _is_empty_schema(node) -> bool:
+    """True for ``vol.Schema({})`` and a bare ``{}``; None-safe."""
+    if isinstance(node, ast.Call):
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name == "Schema" and node.args:
+            inner = node.args[0]
+            return isinstance(inner, ast.Dict) and not inner.keys
+    if isinstance(node, ast.Constant) and node.value is None:
+        return True
+    return isinstance(node, ast.Dict) and not node.keys
 
 
 def test_progress_actions_are_defined() -> None:

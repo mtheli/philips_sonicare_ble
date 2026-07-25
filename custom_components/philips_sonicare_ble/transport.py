@@ -217,6 +217,34 @@ UNPAIR_UNAVAILABLE = "unavailable"
 UNPAIR_FAILED = "failed"
 
 
+# Slots whose bond state we changed ourselves, keyed by (esp, bridge_id)
+# with the time of the change. A config flow can outlive the state its
+# probe was taken from — a discovery banner sits unopened while the user
+# pairs or removes a brush elsewhere — and the flow objects holding those
+# probes are not reachable from here. This is the hand-off point instead:
+# whoever changes a slot records it, and the picker re-probes exactly the
+# slots that went stale rather than everything.
+DATA_CHANGED_SLOTS = "philips_sonicare_ble_changed_slots"
+
+
+@callback
+def note_slot_changed(
+    hass: HomeAssistant, esp_device_name: str, bridge_id: str
+) -> None:
+    """Record that this slot's bond state just changed."""
+    changed = hass.data.setdefault(DATA_CHANGED_SLOTS, {})
+    changed[(esp_device_name.lower(), bridge_id.lower())] = time.monotonic()
+
+
+@callback
+def slot_changed_at(
+    hass: HomeAssistant, esp_device_name: str, bridge_id: str
+) -> float:
+    """When this slot last changed, or 0.0 if we never touched it."""
+    changed = hass.data.get(DATA_CHANGED_SLOTS) or {}
+    return changed.get((esp_device_name.lower(), bridge_id.lower()), 0.0)
+
+
 async def async_unpair_bridge_slot(
     hass: HomeAssistant,
     esp_device_name: str,
@@ -266,6 +294,7 @@ async def async_unpair_bridge_slot(
 
         try:
             await asyncio.wait_for(unpair_done.wait(), timeout=timeout)
+            note_slot_changed(hass, esp_device_name, bridge_id)
             return UNPAIR_OK
         except asyncio.TimeoutError:
             _LOGGER.warning(
