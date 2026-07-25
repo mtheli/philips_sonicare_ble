@@ -201,7 +201,7 @@ async def _async_user_language(hass) -> str:
     return hass.config.language
 
 
-async def _async_text_blocks(hass, category: str = "flow_text") -> dict[str, str]:
+async def _async_text_blocks(hass, category: str = "config") -> dict[str, str]:
     """Resolve the reusable sentence fragments in the user's language.
 
     A step description can only reference a *whole* other translation
@@ -219,10 +219,12 @@ async def _async_text_blocks(hass, category: str = "flow_text") -> dict[str, str
     missing from a translation falls back on its English text rather
     than disappearing.
 
-    ``category`` selects which section to read. ``config`` returns the
-    step/error/abort texts keyed by their path below the domain — which
-    is how the ``config.error.*`` strings become usable as notices on
-    forms that cannot render ``errors[]`` at all.
+    The blocks live under ``config.error`` next to the real error
+    strings: hassfest validates strings.json against a fixed schema and
+    rejects a section of our own. Keys are returned with their path below
+    the domain (``error.<name>``), so the same lookup also reaches the
+    error strings themselves — which is what makes them usable as notices
+    on forms that cannot render ``errors[]`` at all.
     """
     prefix = f"component.{DOMAIN}.{category}."
     try:
@@ -1624,15 +1626,15 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         # Two independent slots: the probe failure and the proxy caveat
         # can appear together.
-        alert = _alert("error", text.get(f"confirm_alert_{outcome}", ""))
+        alert = _alert("error", text.get(f"error.confirm_alert_{outcome}", ""))
         warn = ""
         if warning_variant:
             # After a failure the caveat is phrased for a retry, and the
             # "a local adapter also sees it" detail is dropped — that
             # advice belongs to the first attempt, not to a retry.
             caveat = text.get(
-                "confirm_warn_proxy_retry" if outcome
-                else f"confirm_warn_{warning_variant}",
+                "error.confirm_warn_proxy_retry" if outcome
+                else f"error.confirm_warn_{warning_variant}",
                 "",
             )
             # The caveat names the scanners, so it carries placeholders of
@@ -2375,21 +2377,21 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         notice = ""
         alert_type = "success"
         if just_paired:
-            notice = text.get("esp_status_paired", "")
-            action = text.get("esp_action_switch_on", "")
+            notice = text.get("error.esp_status_paired", "")
+            action = text.get("error.esp_action_switch_on", "")
         elif read_error:
             alert_type = "error"
             notice = text.get(
-                "esp_status_read_failed"
+                "error.esp_status_read_failed"
                 if read_error == "cannot_connect"
-                else "esp_status_read_error",
+                else "error.esp_status_read_error",
                 "",
             )
-            action = text.get("esp_action_retry", "")
+            action = text.get("error.esp_action_retry", "")
         elif ble_connected:
-            action = text.get("esp_action_connected", "")
+            action = text.get("error.esp_action_connected", "")
         else:
-            action = text.get("esp_action_switch_on", "")
+            action = text.get("error.esp_action_switch_on", "")
 
         return self.async_show_form(
             step_id="esp_bridge_status",
@@ -2496,7 +2498,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if self._just_unpaired:
             self._just_unpaired = False
             notice = (await _async_text_blocks(self.hass)).get(
-                "pair_status_unpaired", ""
+                "error.pair_status_unpaired", ""
             )
         return self._show_request_pair(notice)
 
@@ -2746,7 +2748,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             _LOGGER.error("pair_complete received without identity_address")
             error_key = "unknown"
         if error_key:
-            texts = await _async_text_blocks(self.hass, "config")
+            texts = await _async_text_blocks(self.hass)
             return self._show_request_pair(
                 texts.get(f"error.{error_key}", ""), alert_type="error"
             )
@@ -2834,9 +2836,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # on this schema-less step.
         text = await _async_text_blocks(self.hass)
         notice = text.get(
-            "reset_alert_offline"
+            "error.reset_alert_offline"
             if outcome in (UNPAIR_FAILED, UNPAIR_UNAVAILABLE)
-            else "reset_alert_unconfirmed",
+            else "error.reset_alert_unconfirmed",
             "",
         )
         return self.async_show_form(
@@ -2941,8 +2943,13 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_DEVICE_NAME, default=default_name): str,
             }),
             description_placeholders={
+                # The note continues the legend sentence, so it needs a
+                # separating space — which cannot live in the translation
+                # itself (hassfest rejects leading/trailing whitespace).
                 "condor_note": (
-                    text.get("caps_condor_note", "") if condor_note else ""
+                    f" {note}"
+                    if condor_note and (note := text.get("error.caps_condor_note", ""))
+                    else ""
                 ),
                 "name": str(self._name),
                 **self._connection_status_placeholders(
@@ -2998,7 +3005,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         notice = ""
         if key := errors.get("base"):
-            texts = await _async_text_blocks(self.hass, "config")
+            texts = await _async_text_blocks(self.hass)
             notice = texts.get(f"error.{key}", "")
         alert = _alert("error", notice)
 
@@ -3019,8 +3026,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 # Where to find a shell differs by install type; the rest
                 # of the walkthrough is identical.
                 "terminal": text.get(
-                    "not_paired_terminal_hassio" if _is_hassio(self.hass)
-                    else "not_paired_terminal_host",
+                    "error.not_paired_terminal_hassio" if _is_hassio(self.hass)
+                    else "error.not_paired_terminal_host",
                     "",
                 ),
                 "alert": alert,

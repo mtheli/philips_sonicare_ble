@@ -95,9 +95,26 @@
     },
     "error": {
       "cannot_connect": "Verbindung zur Zahnbürste nicht möglich. Stelle sicher, dass sie wach (Knopf drücken oder auf die Ladestation stellen) und in Reichweite ist.",
+      "caps_condor_note": "Bei diesem Handstück werden die Classic-Funktionsdienste durch das Condor-Protokoll ersetzt.",
+      "confirm_alert_asleep": "Die Zahnbürste schläft — wecke sie (Power-Knopf drücken oder von der Ladestation nehmen) und klicke dann erneut auf Senden.",
+      "confirm_alert_failed": "Die Zahnbürste konnte nicht gelesen werden. Stelle sicher, dass sie wach und in Reichweite ist, und klicke dann erneut auf Senden.",
+      "confirm_warn_proxy": "Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein.{nl}Für zuverlässiges Pairing und Live-Updates nutze einen lokalen Bluetooth-Adapter oder die ESP32-Bridge.",
+      "confirm_warn_proxy_local": "Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein.{nl}Dein lokaler Adapter {local_name} sieht die Zahnbürste ebenfalls{local_rssi} — Home Assistant verbindet über das stärkste Signal, lege die Zahnbürste also näher an ihn heran, damit dieser Weg bevorzugt wird.",
+      "confirm_warn_proxy_retry": "Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein. Wenn wiederholte Versuche scheitern, nutze stattdessen einen lokalen Bluetooth-Adapter oder die ESP32-Bridge.",
+      "esp_action_connected": "Die Bridge ist bereits mit deiner Zahnbürste verbunden. **Lass deine Sonicare eingeschaltet** — klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
+      "esp_action_retry": "**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um es erneut zu versuchen.",
+      "esp_action_switch_on": "**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
+      "esp_status_paired": "Pairing erfolgreich — die Bridge ist jetzt mit deiner Zahnbürste gebondet.",
+      "esp_status_read_error": "Beim Lesen der Zahnbürste ist etwas schiefgelaufen. Sieh im Protokoll nach (Einstellungen → System → Protokolle) und versuche es erneut.",
+      "esp_status_read_failed": "Die Zahnbürste konnte über die Bridge nicht gelesen werden. Stelle sicher, dass sie eingeschaltet und die Bridge online ist, und versuche es erneut.",
       "not_a_sonicare": "Mit dem Gerät verbunden, es wurden aber keine Philips-Sonicare-Charakteristiken gefunden. Prüfe, ob die Adresse wirklich zu einer Sonicare-Zahnbürste gehört.",
-      "pairing_failed": "Das Gerät ist weiterhin nicht gekoppelt. Stelle sicher, dass die Zahnbürste wach ist, und versuche das Pairing erneut.",
+      "not_paired_terminal_hassio": "das Add-on **Terminal & SSH** ([zuerst installieren](/hassio/addon/core_ssh/info), falls nötig)",
+      "not_paired_terminal_host": "eine Konsole auf dem Rechner, auf dem Home Assistant läuft,",
+      "pair_status_unpaired": "Bond entfernt — der Slot ist frei. Schalte die Sonicare ein, die du koppeln möchtest, und starte dann das Pairing.",
       "pair_timeout": "Innerhalb des Zeitfensters wurde keine Sonicare gekoppelt. Drücke den Power-Knopf der Zahnbürste, um sie zu wecken, und versuche es erneut.",
+      "pairing_failed": "Das Gerät ist weiterhin nicht gekoppelt. Stelle sicher, dass die Zahnbürste wach ist, und versuche das Pairing erneut.",
+      "reset_alert_offline": "Die ESP-Bridge war nicht erreichbar, um den Bond zu löschen. Stelle sicher, dass sie online und mit Strom versorgt ist, und versuche es erneut.",
+      "reset_alert_unconfirmed": "Die Bridge hat das Löschen des Bonds nicht bestätigt — eventuell braucht sie einen Neustart. Stelle sicher, dass sie online ist, und versuche es erneut.",
       "unknown": "Unerwarteter Fehler. Details stehen im Protokoll (Einstellungen → System → Protokolle)."
     },
     "progress": {
@@ -405,24 +422,5 @@
         "name": "Bridge-Firmware"
       }
     }
-  },
-  "flow_text": {
-    "caps_condor_note": " Bei diesem Handstück werden die Classic-Funktionsdienste durch das Condor-Protokoll ersetzt.",
-    "confirm_alert_asleep": "Die Zahnbürste schläft — wecke sie (Power-Knopf drücken oder von der Ladestation nehmen) und klicke dann erneut auf Senden.",
-    "confirm_alert_failed": "Die Zahnbürste konnte nicht gelesen werden. Stelle sicher, dass sie wach und in Reichweite ist, und klicke dann erneut auf Senden.",
-    "confirm_warn_proxy": "Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein.{nl}Für zuverlässiges Pairing und Live-Updates nutze einen lokalen Bluetooth-Adapter oder die ESP32-Bridge.",
-    "confirm_warn_proxy_local": "Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein.{nl}Dein lokaler Adapter {local_name} sieht die Zahnbürste ebenfalls{local_rssi} — Home Assistant verbindet über das stärkste Signal, lege die Zahnbürste also näher an ihn heran, damit dieser Weg bevorzugt wird.",
-    "confirm_warn_proxy_retry": "Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein. Wenn wiederholte Versuche scheitern, nutze stattdessen einen lokalen Bluetooth-Adapter oder die ESP32-Bridge.",
-    "esp_action_connected": "Die Bridge ist bereits mit deiner Zahnbürste verbunden. **Lass deine Sonicare eingeschaltet** — klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
-    "esp_action_retry": "**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um es erneut zu versuchen.",
-    "esp_action_switch_on": "**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
-    "esp_status_paired": "Pairing erfolgreich — die Bridge ist jetzt mit deiner Zahnbürste gebondet.",
-    "esp_status_read_error": "Beim Lesen der Zahnbürste ist etwas schiefgelaufen. Sieh im Protokoll nach (Einstellungen → System → Protokolle) und versuche es erneut.",
-    "esp_status_read_failed": "Die Zahnbürste konnte über die Bridge nicht gelesen werden. Stelle sicher, dass sie eingeschaltet und die Bridge online ist, und versuche es erneut.",
-    "not_paired_terminal_hassio": "das Add-on **Terminal & SSH** ([zuerst installieren](/hassio/addon/core_ssh/info), falls nötig)",
-    "not_paired_terminal_host": "eine Konsole auf dem Rechner, auf dem Home Assistant läuft,",
-    "pair_status_unpaired": "Bond entfernt — der Slot ist frei. Schalte die Sonicare ein, die du koppeln möchtest, und starte dann das Pairing.",
-    "reset_alert_offline": "Die ESP-Bridge war nicht erreichbar, um den Bond zu löschen. Stelle sicher, dass sie online und mit Strom versorgt ist, und versuche es erneut.",
-    "reset_alert_unconfirmed": "Die Bridge hat das Löschen des Bonds nicht bestätigt — eventuell braucht sie einen Neustart. Stelle sicher, dass sie online ist, und versuche es erneut."
   }
 }

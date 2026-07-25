@@ -42,6 +42,15 @@ DYNAMIC_BLOCKS = {
     "confirm_warn_proxy",
     "confirm_warn_proxy_local",
 }
+# Selected at runtime through errors[] / an error_key, never by literal
+# name — so the dead-block check below cannot see them.
+ERROR_KEYS = {
+    "cannot_connect",
+    "not_a_sonicare",
+    "pairing_failed",
+    "pair_timeout",
+    "unknown",
+}
 DYNAMIC_ABORTS = {
     "already_configured_detail",
     "already_configured_disabled",
@@ -282,7 +291,8 @@ def test_step_variants_keep_their_shared_block_identical() -> None:
 def _requested_text_blocks() -> set[str]:
     """Block names the flow references as string literals."""
     return {
-        name for name in STRINGS.get("flow_text", {}) if f'"{name}"' in FLOW_SRC
+        name for name in STRINGS["config"]["error"]
+        if f'"error.{name}"' in FLOW_SRC
     } | DYNAMIC_BLOCKS
 
 
@@ -294,14 +304,21 @@ def test_requested_text_blocks_are_defined() -> None:
     silently render as an empty sentence rather than raise.
     """
     for path in [COMPONENT_DIR / "strings.json", *TRANSLATIONS]:
-        defined = set(json.loads(path.read_text(encoding="utf-8")).get("flow_text", {}))
+        defined = set(
+            json.loads(path.read_text(encoding="utf-8"))["config"]["error"]
+        )
         missing = _requested_text_blocks() - defined
         assert not missing, f"{path.name}: text blocks missing: {missing}"
 
 
 def test_no_dead_text_blocks() -> None:
     """The reverse check — a fragment nothing asks for is dead weight."""
-    orphans = set(STRINGS.get("flow_text", {})) - _requested_text_blocks()
+    # config.error holds two kinds of string: the classic error keys, which
+    # the flow selects by value at runtime, and the blocks it injects by
+    # name. Only the latter can be checked for being unused.
+    orphans = (
+        set(STRINGS["config"]["error"]) - ERROR_KEYS - _requested_text_blocks()
+    )
     assert not orphans, f"text blocks defined but never used: {orphans}"
 
 
@@ -439,14 +456,16 @@ async def test_text_blocks_resolve_through_the_translation_cache(
                             config_flow=None):
         seen.update(language=language, category=category, integrations=integrations)
         return {
-            "component.philips_sonicare_ble.flow_text.esp_status_paired": "Fertig.",
-            "component.other_integration.flow_text.ignored": "nope",
+            "component.philips_sonicare_ble.config.error.esp_status_paired": "Fertig.",
+            "component.other_integration.config.error.ignored": "nope",
         }
 
     monkeypatch.setattr(cf, "async_get_translations", _translations)
-    assert await unpatched_text_blocks(hass) == {"esp_status_paired": "Fertig."}
+    assert await unpatched_text_blocks(hass) == {
+        "error.esp_status_paired": "Fertig."
+    }
     assert seen == {
-        "language": "de", "category": "flow_text",
+        "language": "de", "category": "config",
         "integrations": ["philips_sonicare_ble"],
     }
 

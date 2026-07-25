@@ -55,7 +55,7 @@ def chars_as_bytes(snapshot: dict[str, Any]) -> dict[str, bytes]:
 
 @pytest.fixture(autouse=True)
 def flow_text_blocks(monkeypatch) -> dict[str, str]:
-    """Serve the real ``flow_text`` blocks to the config-flow tests.
+    """Serve the real text blocks to the config-flow tests.
 
     In production the flow resolves these through Home Assistant's
     translation cache. The lightweight ``hass`` doubles used here have no
@@ -72,7 +72,9 @@ def flow_text_blocks(monkeypatch) -> dict[str, str]:
             / "strings.json"
         ).read_text(encoding="utf-8")
     )
-    blocks = strings.get("flow_text", {})
+    # The reusable blocks live under config.error — hassfest validates
+    # strings.json against a fixed schema and rejects a section of our own.
+    blocks = strings["config"]["error"]
 
     def _flatten(obj, prefix=""):
         """Mirror how HA keys a category: dotted path below the domain."""
@@ -85,9 +87,7 @@ def flow_text_blocks(monkeypatch) -> dict[str, str]:
                 out[path] = value
         return out
 
-    async def _fake_text_blocks(hass, category="flow_text"):
-        if category == "flow_text":
-            return dict(blocks)
+    async def _fake_text_blocks(hass, category="config"):
         return _flatten(strings.get(category, {}))
 
     # Kept reachable so the resolver itself stays testable — see
