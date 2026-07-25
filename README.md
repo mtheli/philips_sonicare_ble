@@ -79,9 +79,9 @@ Any BLE-enabled Philips Sonicare toothbrush using either the standard protocol o
 
 For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.com/mtheli/toothbrush-card) -- a custom Lovelace card with live sector tracking, pressure display, and brush head wear indicator. Works with Philips Sonicare, Oral-B and Laifen toothbrushes.
 
-The card is a **separate project and not bundled with this integration** -- install it in addition, via the default HACS store (search for "Toothbrush Card"):
+The card is a **separate project and not bundled with this integration** -- install it in addition, via the default HACS store (search for "Toothbrush Card"). The button below opens the **Toothbrush Card** repository in HACS -- it does not install this integration:
 
-[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=mtheli&repository=toothbrush-card&category=plugin)
+[![Install Toothbrush Card via HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=mtheli&repository=toothbrush-card&category=plugin)
 
 ![Toothbrush Card with Sonicare](screenshots/Card.png)
 
