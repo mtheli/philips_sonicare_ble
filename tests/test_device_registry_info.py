@@ -93,6 +93,22 @@ def test_all_zero_serial_is_not_written(hass) -> None:
     assert device.serial_number is None
 
 
+def test_zero_hardware_revision_is_not_written(hass) -> None:
+    """Condor answers 2a27 with "00", Classic with "" — neither is a value."""
+    coordinator, entry = make_coordinator(hass)
+    device = register_device(hass, entry)
+
+    coordinator._apply_parsed(
+        {"model_number": "HX742X", "hardware_revision": "00"}
+    )
+    coordinator._apply_parsed(
+        {"model_number": "HX999X", "hardware_revision": ""}
+    )
+
+    device = dr.async_get(hass).async_get(device.id)
+    assert device.hw_version is None
+
+
 def test_partial_read_keeps_previously_known_fields(hass) -> None:
     """A later read without firmware/serial must not clear them."""
     coordinator, entry = make_coordinator(hass)

@@ -115,6 +115,16 @@ UNPERSISTED_KEYS = {
 }
 
 
+def _has_reported_value(value: str | None) -> bool:
+    """True when a Device Information string carries actual content.
+
+    Handles answer characteristics they don't populate with an empty
+    string or with zeros — "", "00" and "0000000000" all mean "not
+    reported" rather than a value worth putting on the device page.
+    """
+    return bool(value) and any(c not in "0:" for c in value)
+
+
 def _storage_key(entry_id: str) -> str:
     return f"{DOMAIN}.{entry_id}"
 
@@ -636,11 +646,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # must not wipe what an earlier one established.
                 if firmware and device.sw_version != firmware:
                     updates["sw_version"] = firmware
-                # Handles that expose no serial answer with all zeros; that
-                # is "unknown", not a serial number worth showing.
-                if self._is_valid_serial(serial) and device.serial_number != serial:
+                if _has_reported_value(serial) and device.serial_number != serial:
                     updates["serial_number"] = serial
-                if hardware and device.hw_version != hardware:
+                if _has_reported_value(hardware) and device.hw_version != hardware:
                     updates["hw_version"] = hardware
                 if updates:
                     dev_reg.async_update_device(device.id, **updates)
