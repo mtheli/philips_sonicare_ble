@@ -26,6 +26,7 @@ See [Configuration](#configuration) for setup instructions.
 
 - [Tested Models](#tested-models)
 - [Dashboard Card](#dashboard-card)
+- [Supported Languages](#supported-languages)
 - [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
@@ -87,6 +88,17 @@ The card is a **separate project and not bundled with this integration** -- inst
 For small displays and wall panels there is also a compact view (`tooth_style: none`) with a large standalone timer -- shown here with the header and chips still enabled. With the header hidden as well (`show_header: false`), two of these fit side by side on a 480x480 wall panel:
 
 ![Toothbrush Card compact view](screenshots/CardCompact.png)
+
+---
+
+## Supported Languages
+
+| Language | Code | Comment |
+|----------|------|---------|
+| English  | en | |
+| Deutsch  | de | |
+
+Setup dialogs, entity names and entity states all follow the language configured in your Home Assistant instance (per-user profile setting). This includes binary sensor states, which otherwise fall back to English. If your language is not yet supported, it falls back to English. Contributions for additional languages are welcome — copy `custom_components/philips_sonicare_ble/translations/en.json`, translate the values and open a pull request.
 
 ---
 
