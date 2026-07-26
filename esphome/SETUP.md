@@ -374,66 +374,91 @@ full SDP on every wake.
 
 ### ESP32 crashes/reboots when connecting
 
-On builds from ESPHome < 2026.7.1 with `bluetooth_proxy:` enabled, the
-ESP32 crashes in the Bluedroid GATT cache during service discovery with
-`Fault - LoadProhibited / bta_gattc_cache_save`. **Fixed from ESPHome
-2026.7.1** (bundles ESP-IDF 5.5.5) — update and rebuild. On an older
-builder, apply the
+On builds from ESPHome < 2026.7.1 with `bluetooth_proxy:` enabled, the ESP32
+crashes in the Bluedroid GATT cache during service discovery with
+`Fault - LoadProhibited / bta_gattc_cache_save`. Since bridge firmware v1.10.0
+the component refuses to build that crash-prone combination and prints the
+options below instead.
+
+**Fix:** update to ESPHome 2026.7.1 or newer (it bundles ESP-IDF 5.5.5, which
+carries the upstream fix) and rebuild. If you have to stay on an older builder,
+apply the
 [Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy)
-or disable `bluetooth_proxy`; since bridge firmware v1.10.0 the
-component refuses to build the crash-prone combination and prints
-these options.
+or disable `bluetooth_proxy`.
+
+---
 
 ### Pair-mode times out without finding the brush
 
-- The brush only advertises for ~20 seconds after waking up. Press the power
-  button or pick it up from the charger immediately before clicking
-  **Start pairing**, then keep it on
-- The brush is **not reachable** via BLE while on the charging stand
+The brush only advertises for ~20 seconds after waking up, so timing is the
+usual cause here — not range, and not pairing itself.
+
+**Fix:** work through these, in order:
+
+- Press the power button or pick the brush up from the charger immediately
+  before clicking **Start pairing**, then keep it on
+- Remember the brush is **not reachable** via BLE while on the charging stand
 - Make sure no phone has an active connection to the brush — close or uninstall
   the Sonicare app
-- Distance: keep the brush within ~1 m of the ESP during pair-mode
+- Keep the brush within ~1 m of the ESP during pair-mode
+
+---
 
 ### "No philips_sonicare services found"
 
-Make sure your ESPHome config includes `custom_services: true` and
-`homeassistant_services: true` under the `api:` section. These flags are required
-since ESPHome 2025.7.0.
+**Fix:** add `custom_services: true` and `homeassistant_services: true` under
+the `api:` section of your ESPHome config. Both flags are required since
+ESPHome 2025.7.0.
+
+---
 
 ### "No ESPHome devices found" in HA config flow
 
-- The ESP32 must be fully set up and connected to Home Assistant via the ESPHome
-  integration first
-- Check **Settings > Devices & Services > ESPHome** — your device should be listed there
-- If using a fresh ESPHome install, wait for the device to come online after flashing
+The ESP32 must be fully set up and connected to Home Assistant via the ESPHome
+integration before the config flow can offer it.
+
+**Fix:**
+
+- Check **Settings > Devices & Services > ESPHome** — your device should be
+  listed there
+- On a fresh ESPHome install, wait for the device to come online after flashing
+
+---
 
 ### OTA install aborts with "WebSocket connection closed"
 
-The build log stops mid-compile (e.g. `[1473/1521] Building CXX object ...`)
-and the dashboard afterwards reports the device as out of sync, still on its
-previously deployed version. Nothing was flashed — the ESP keeps running its
-old binary, so this is safe to retry.
+The build log stops mid-compile (e.g. `[1473/1521] Building CXX object ...`) and
+the dashboard afterwards reports the device as out of sync, still on its
+previously deployed version. Nothing was flashed — the ESP keeps running its old
+binary, so this is safe to retry.
 
-This is most common on the first install after the ESPHome builder itself was
+It is most common on the first install after the ESPHome builder itself was
 updated: crossing a builder version forces a near-complete recompile (~1500
 compile units) instead of the usual handful, and the dashboard's log stream is
 an Ingress WebSocket that can be dropped during those minutes of sustained CPU
-and RAM use. A sleeping browser tab or a reverse-proxy timeout produces the
-same symptom.
+and RAM use. A sleeping browser tab or a reverse-proxy timeout produces the same
+symptom.
 
-Just click **Install** again. The object cache survives, so the retry only
+**Fix:** click **Install** again. The object cache survives, so the retry only
 compiles what was left and completes quickly.
+
+---
 
 ### No data after OTA update
 
-After an OTA flash, the ESP32 reboots and reconnects to the toothbrush via BLE before
-Home Assistant re-establishes the API stream (~5-10 seconds). The bridge automatically
-re-fires the "ready" event every 15 seconds until HA subscribes to notifications.
-If data still doesn't flow:
+After an OTA flash, the ESP32 reboots and reconnects to the toothbrush via BLE
+before Home Assistant re-establishes the API stream (~5-10 seconds). The bridge
+automatically re-fires the "ready" event every 15 seconds until HA subscribes to
+notifications.
 
-- **Reload the integration** in HA (Settings > Devices & Services > Philips Sonicare > ... > Reload)
+**Fix:** if data still doesn't flow after that:
+
+- **Reload the integration** in HA (Settings > Devices & Services >
+  Philips Sonicare > ... > Reload)
 - Check ESPHome logs for `BLE connected, no subscriptions — re-firing ready`
 - Check HA logs for `ESP bridge rebooted — forcing re-setup`
+
+---
 
 ## Service & event reference
 
