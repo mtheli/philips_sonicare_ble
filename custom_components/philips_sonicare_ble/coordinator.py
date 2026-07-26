@@ -118,11 +118,19 @@ UNPERSISTED_KEYS = {
 def _has_reported_value(value: str | None) -> bool:
     """True when a Device Information string carries actual content.
 
-    Handles answer characteristics they don't populate with an empty
-    string or with zeros — "", "00" and "0000000000" all mean "not
-    reported" rather than a value worth putting on the device page.
+    Handles answer characteristics they don't populate in several ways:
+    an empty string, a run of ASCII zeros, or a block of NUL bytes that
+    arrives as "\\x00\\x00…" once decoded. All of them mean "not
+    reported" rather than a value worth putting on the device page —
+    written through, they leave a row with a blank value that reads as
+    broken data.
     """
-    return bool(value) and any(c not in "0:" for c in value)
+    if not value:
+        return False
+    # Drop anything unprintable (NUL padding, stray control bytes) before
+    # deciding; a field made only of those carries nothing.
+    cleaned = "".join(c for c in value if c.isprintable()).strip()
+    return bool(cleaned) and any(c not in "0:" for c in cleaned)
 
 
 def _storage_key(entry_id: str) -> str:
@@ -646,8 +654,15 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # must not wipe what an earlier one established.
                 if firmware and device.sw_version != firmware:
                     updates["sw_version"] = firmware
-                if _has_reported_value(serial) and device.serial_number != serial:
-                    updates["serial_number"] = serial
+                if _has_reported_value(serial):
+                    if device.serial_number != serial:
+                        updates["serial_number"] = serial
+                elif device.serial_number and not _has_reported_value(
+                    device.serial_number
+                ):
+                    # An earlier version wrote a padding-only answer through;
+                    # clear it so the page stops showing a blank value.
+                    updates["serial_number"] = None
                 if _has_reported_value(hardware) and device.hw_version != hardware:
                     updates["hw_version"] = hardware
                 if updates:
