@@ -423,5 +423,13 @@
         "name": "Bridge-Firmware"
       }
     }
+  },
+  "device": {
+    "brush_head": {
+      "name": "{device_name} Bürstenkopf"
+    },
+    "connection": {
+      "name": "{device_name} Verbindung"
+    }
   }
 }

@@ -111,11 +111,16 @@ class PhilipsBrushHeadEntity(PhilipsSonicareEntity):
         entry: ConfigEntry,
     ) -> None:
         super().__init__(coordinator, entry)
+        # Name the sub-device "<Name> Brush Head" through a translation key, so
+        # the trailing words follow the interface language (e.g. "… Bürstenkopf"
+        # on a German setup) instead of staying English. The parent name rides
+        # along as a placeholder — the base class always populates it.
         parent_name = self._attr_device_info.get("name") or "Philips Sonicare"
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, f"{self._device_id}_brushhead")},
             manufacturer="Philips",
-            name=f"{parent_name} Brush Head",
+            translation_key="brush_head",
+            translation_placeholders={"device_name": parent_name},
             via_device=(DOMAIN, self._device_id),
         )
 
@@ -136,13 +141,14 @@ class PhilipsConnectionEntity(PhilipsSonicareEntity):
         entry: ConfigEntry,
     ) -> None:
         super().__init__(coordinator, entry)
+        # Same translated-name treatment as the Brush Head sub-device above.
         parent_name = self._attr_device_info.get("name") or "Philips Sonicare"
-        device_name = f"{parent_name} Connection"
         manufacturer = "Espressif" if self._is_esp_bridge else "Home Assistant"
         self._attr_device_info = dr.DeviceInfo(
             identifiers={(DOMAIN, f"{self._device_id}_bridge")},
             manufacturer=manufacturer,
-            name=device_name,
+            translation_key="connection",
+            translation_placeholders={"device_name": parent_name},
             via_device=(DOMAIN, self._device_id),
         )
 
