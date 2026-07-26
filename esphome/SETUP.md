@@ -15,6 +15,32 @@ for direct Bluetooth access from the HA host.
 > ESPHome 2026.7.1 or newer; on older builders, apply the
 > [Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy).
 
+## Contents
+
+- [Tested Hardware](#tested-hardware)
+- [Prerequisites](#prerequisites)
+- [Setup overview](#setup-overview) — Auto-Discovery vs. Fixed MAC
+- [Step 1: Create the ESPHome Configuration](#step-1-create-the-esphome-configuration)
+  - [Required changes](#required-changes)
+  - [What you should NOT change](#what-you-should-not-change)
+  - [Minimal config snippets](#minimal-config-snippets)
+- [Step 2: Flash the ESP32](#step-2-flash-the-esp32)
+- [Step 3: Verify the Bridge Boots](#step-3-verify-the-bridge-boots)
+- [Step 4: Add the Integration in Home Assistant](#step-4-add-the-integration-in-home-assistant)
+  - [Expected pair-mode logs](#expected-pair-mode-logs)
+- [Bridge vs. bluetooth_proxy](#bridge-vs-bluetooth_proxy)
+  - [Persisted GATT cache (optional)](#persisted-gatt-cache-optional)
+- [Troubleshooting](#troubleshooting)
+  - [ESP32 crashes/reboots when connecting](#esp32-crashesreboots-when-connecting)
+  - [Pair-mode times out without finding the brush](#pair-mode-times-out-without-finding-the-brush)
+  - ["No philips_sonicare services found"](#no-philips_sonicare-services-found)
+  - ["No ESPHome devices found" in HA config flow](#no-esphome-devices-found-in-ha-config-flow)
+  - [OTA install aborts with "WebSocket connection closed"](#ota-install-aborts-with-websocket-connection-closed)
+  - [No data after OTA update](#no-data-after-ota-update)
+- [Service & event reference](#service--event-reference)
+- [Multi-Device Setup](#multi-device-setup)
+- [Legacy: external `ble_client:`](#legacy-external-ble_client) — deprecated, for existing YAMLs only
+
 ## Tested Hardware
 
 | Board | Tested | Status |
@@ -540,8 +566,10 @@ Full examples:
 
 ---
 
+## Legacy: external `ble_client:`
+
 <details>
-<summary><strong>Legacy: external <code>ble_client:</code></strong> (kept for backwards compatibility)</summary>
+<summary><strong>Show the legacy configuration</strong> (kept for backwards compatibility)</summary>
 
 Earlier versions of this component required an external `ble_client:` block
 that the `philips_sonicare:` entry then referenced via `ble_client_id:`. This
