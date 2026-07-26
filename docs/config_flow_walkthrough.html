@@ -454,8 +454,8 @@ exit</pre>
   esp_select_device: {
     render: () => dlg("Select BLE Device",
       `<p>This ESP bridge hosts multiple Sonicare toothbrushes. Select the one you want to add.</p>
-       <p>✅ already configured · 🔒 bonded · 🔓 unpaired · 🟢 online · ⚪ offline</p>
-       <div class="radio sel"><span class="dot"></span><span>🔒 🟢 Master Bath — HX9992 / Philips Sonicare — ${MAC}</span></div>
+       <p>✅ already configured · 🔐 bonded · 🔓 unpaired · 🟢 online · ⚪ offline</p>
+       <div class="radio sel"><span class="dot"></span><span>🔐 🟢 Master Bath — HX9992 / Philips Sonicare — ${MAC}</span></div>
        <div class="radio"><span class="dot"></span><span>✅ ⚪ Kids — HX6340 — ${MAC2}</span></div>
        <div class="radio"><span class="dot"></span><span>sonicare_2</span></div>
        <div class="field" style="margin-top:6px"><div class="fhelp">Entries without status icons are empty bridges in pair-mode. Switch on the toothbrush you want to bond before submitting.</div></div>`,

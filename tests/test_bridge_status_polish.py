@@ -219,7 +219,7 @@ async def test_status_table_values_are_language_neutral() -> None:
 
     ph = (await flow.async_step_esp_bridge_status())["description_placeholders"]
 
-    assert ph["security"] in ("🔒", "🔓", "—")
+    assert ph["security"] in ("🔐", "🔓", "—")
     assert ph["ble_state"] in ("✅", "❌")
     assert ph["version"].startswith("v")
     for value in (ph["ble_state"], ph["security"], ph["mac"], ph["version"]):

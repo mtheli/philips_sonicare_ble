@@ -40,7 +40,7 @@
       },
       "esp_select_device": {
         "title": "BLE-Gerät auswählen",
-        "description": "Diese ESP-Bridge betreibt mehrere Sonicare-Zahnbürsten. Wähle die aus, die du hinzufügen möchtest.\n\n✅ bereits konfiguriert · 🔒 gebondet · 🔓 ungekoppelt · 🟢 online · ⚪ offline",
+        "description": "Diese ESP-Bridge betreibt mehrere Sonicare-Zahnbürsten. Wähle die aus, die du hinzufügen möchtest.\n\n✅ bereits konfiguriert · 🔐 gebondet · 🔓 ungekoppelt · 🟢 online · ⚪ offline",
         "data": {
           "esp_bridge_id": "BLE-Gerät"
         },
@@ -58,7 +58,7 @@
       },
       "esp_bridge_status": {
         "title": "Verbindung über ESP32 Bridge",
-        "description": "{alert}Einrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| **BLE** | {ble_state} |\n|---|---|\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n✅ verbunden · ❌ getrennt · 🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n{action}",
+        "description": "{alert}Einrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| **BLE** | {ble_state} |\n|---|---|\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n✅ verbunden · ❌ getrennt · 🔐 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n{action}",
         "submit": "Fähigkeiten auslesen"
       },
       "request_pair": {
@@ -73,7 +73,7 @@
       },
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",
-        "description": "{alert_open}Verbunden über {transport}{detail}.{alert_close}\n\n**Geräteinformationen**\n\n| **Modell** | {model} |\n|---|---|\n| **Seriennummer** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Akku** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE-Sicherheit** | {ble_security} |\n\n🔒 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Erkannte Dienste**\n\n{services}\n\n❌ bedeutet: auf diesem Modell nicht verfügbar.{condor_note}",
+        "description": "{alert_open}Verbunden über {transport}{detail}.{alert_close}\n\n**Geräteinformationen**\n\n| **Modell** | {model} |\n|---|---|\n| **Seriennummer** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Akku** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE-Sicherheit** | {ble_security} |\n\n🔐 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Erkannte Dienste**\n\n{services}\n\n❌ bedeutet: auf diesem Modell nicht verfügbar.{condor_note}",
         "submit": "Einrichten",
         "data": {
           "device_name": "Name"

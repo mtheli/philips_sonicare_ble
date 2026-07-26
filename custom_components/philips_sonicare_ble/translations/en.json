@@ -40,7 +40,7 @@
       },
       "esp_select_device": {
         "title": "Select BLE Device",
-        "description": "This ESP bridge hosts multiple Sonicare toothbrushes. Select the one you want to add.\n\n✅ already configured · 🔒 bonded · 🔓 unpaired · 🟢 online · ⚪ offline",
+        "description": "This ESP bridge hosts multiple Sonicare toothbrushes. Select the one you want to add.\n\n✅ already configured · 🔐 bonded · 🔓 unpaired · 🟢 online · ⚪ offline",
         "data": {
           "esp_bridge_id": "BLE Device"
         },
@@ -58,7 +58,7 @@
       },
       "esp_bridge_status": {
         "title": "Connection via ESP32 Bridge",
-        "description": "{alert}Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n| **BLE** | {ble_state} |\n|---|---|\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n{action}",
+        "description": "{alert}Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n| **BLE** | {ble_state} |\n|---|---|\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔐 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n{action}",
         "submit": "Read capabilities"
       },
       "request_pair": {
@@ -73,7 +73,7 @@
       },
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",
-        "description": "{alert_open}Connected via {transport}{detail}.{alert_close}\n\n**Device Information**\n\n| **Model** | {model} |\n|---|---|\n| **Serial** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Battery** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE security** | {ble_security} |\n\n🔒 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Detected Services**\n\n{services}\n\n❌ entries are not available on this model.{condor_note}",
+        "description": "{alert_open}Connected via {transport}{detail}.{alert_close}\n\n**Device Information**\n\n| **Model** | {model} |\n|---|---|\n| **Serial** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Battery** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE security** | {ble_security} |\n\n🔐 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Detected Services**\n\n{services}\n\n❌ entries are not available on this model.{condor_note}",
         "submit": "Set up",
         "data": {
           "device_name": "Name"

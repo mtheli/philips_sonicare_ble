@@ -1148,10 +1148,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             "firmware": data.get("firmware") or "—",
             "battery": f"{battery}%" if battery is not None else "—",
             "mac": address.upper() if address else "—",
-            # Same 🔒/🔓 vocabulary as the bridge status table; the
+            # Same 🔐/🔓 vocabulary as the bridge status table; the
             # legend under the table explains both.
             "ble_security": {
-                "bonded": "\U0001f512", "open_gatt": "\U0001f513",
+                "bonded": "\U0001f510", "open_gatt": "\U0001f513",
             }.get(data.get("pairing", ""), "—"),
         }
 
@@ -2163,7 +2163,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         icons: list[str] = []
         if paired == "true":
-            icons.append("🔒")
+            icons.append("🔐")
         elif paired == "false":
             icons.append("🔓")
         icons.append("🟢" if connected else "⚪")
@@ -2353,7 +2353,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         _mac = info.get("mac", "")
         status_values = {
             "ble_state": "\u2705" if ble_connected else "\u274c",
-            "security": {"true": "\U0001f512", "false": "\U0001f513"}.get(
+            "security": {"true": "\U0001f510", "false": "\U0001f513"}.get(
                 info.get("paired", ""), "\u2014"
             ),
             "mac": (
