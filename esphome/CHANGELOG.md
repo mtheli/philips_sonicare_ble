@@ -1,5 +1,20 @@
 # ESP Bridge Changelog
 
+## v1.11.0 — 2026-07-26
+
+- **Reports a discovery window that ran on a passive scanner.** Pair- and
+  scan-mode identify a Sonicare through its service UUID, which handles send
+  only in the scan response — a passive scan never requests it, so the window
+  cannot match and used to expire in silence. The bridge now watches the scan
+  mode while a window is open and, if it was never active, says so when the
+  window closes, naming the Home Assistant setting behind it. Live since
+  Home Assistant 2026.6, which made "Auto" the default scanning mode
+  ([core#171985](https://github.com/home-assistant/core/pull/171985)) and
+  migrates actively configured proxies into it.
+- **`pair_timeout` carries `scanner_passive`,** so the integration can tell
+  "no toothbrush answered" from "the bridge could never have seen one".
+  Additive — `MIN_BRIDGE_VERSION` stays 1.4.0.
+
 ## v1.10.0 — 2026-07-21
 
 - **Bridge reports its build environment.** `ble_get_info` now includes
