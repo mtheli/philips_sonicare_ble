@@ -235,6 +235,15 @@ void SonicareCoordinator::on_loop(uint32_t now_ms) {
     if (this->set_enabled_cb_)
       this->set_enabled_cb_(true);
   }
+  // Sample the scan mode for as long as a discovery window is open. Cheap
+  // (a member read), and it is the only way to tell a window that opened
+  // late from one that never opened at all — see scanner_ever_active_.
+  if (!this->scanner_ever_active_ &&
+      (this->pair_mode_active_ || this->scan_mode_active_)) {
+    auto *tracker = esp32_ble_tracker::global_esp32_ble_tracker;
+    if (tracker != nullptr && tracker->get_scan_active())
+      this->scanner_ever_active_ = true;
+  }
   // Pair-mode timeout
   if (this->pair_mode_active_ && now_ms >= this->pair_mode_until_ms_) {
     bool had_auth = this->auth_completed_;
@@ -264,7 +273,13 @@ void SonicareCoordinator::on_loop(uint32_t now_ms) {
       });
     } else {
       ESP_LOGW(this->log_tag_.c_str(), "Pair-mode timed out without successful pairing");
-      this->emit_status_("pair_timeout");
+      if (!this->scanner_ever_active_)
+        this->warn_scanner_stayed_passive_("Pair-mode");
+      // Carry the scanner state so Home Assistant can tell "no brush answered"
+      // apart from "we were scanning passively and could never have seen one".
+      this->emit_status_("pair_timeout", {
+          {"scanner_passive", this->scanner_ever_active_ ? "false" : "true"},
+      });
     }
   }
   // Scan-mode timeout: report aggregate count and disable.
@@ -274,13 +289,33 @@ void SonicareCoordinator::on_loop(uint32_t now_ms) {
     char count_str[8];
     snprintf(count_str, sizeof(count_str), "%u",
              (unsigned) this->scan_seen_macs_.size());
+    bool found_nothing = this->scan_seen_macs_.empty();
     this->scan_mode_active_ = false;
     this->scan_mode_until_ms_ = 0;
     this->scan_seen_macs_.clear();
     if (this->set_enabled_cb_)
       this->set_enabled_cb_(false);
+    // An empty result on a passive scanner says nothing about what is in
+    // range — explain that rather than let it read as "no brush nearby".
+    if (found_nothing && !this->scanner_ever_active_)
+      this->warn_scanner_stayed_passive_("Scan-mode");
     this->emit_status_("scan_complete", {{"count", count_str}});
   }
+}
+
+void SonicareCoordinator::warn_scanner_stayed_passive_(const char *window) {
+  // Home Assistant owns this setting whenever bluetooth_proxy is compiled in:
+  // it pins the scanner per device and overrides the YAML scan_parameters at
+  // runtime, so pointing the user at the YAML alone would be misleading.
+  ESP_LOGW(this->log_tag_.c_str(),
+           "%s ran its whole window with the BLE scanner PASSIVE — the "
+           "toothbrush could not be discovered. Sonicare handles send their "
+           "service UUID only in the scan response, which a passive scan "
+           "never requests. Set this device's Bluetooth scanning mode to "
+           "Active in Home Assistant (Settings > Devices & Services > ESPHome "
+           "> Configure); it overrides the esp32_ble_tracker scan_parameters "
+           "at runtime.",
+           window);
 }
 
 void SonicareCoordinator::set_pair_mode(bool enable, uint32_t timeout_s) {
@@ -297,6 +332,7 @@ void SonicareCoordinator::set_pair_mode(bool enable, uint32_t timeout_s) {
     this->pair_mode_active_ = true;
     this->pair_mode_until_ms_ = millis() + timeout_s * 1000;
     ESP_LOGI(this->log_tag_.c_str(), "Pair-mode enabled for %us", (unsigned) timeout_s);
+    this->scanner_ever_active_ = false;
     if (this->set_enabled_cb_)
       this->set_enabled_cb_(true);
     char timeout_str[8];
@@ -333,6 +369,7 @@ void SonicareCoordinator::set_scan_mode(uint32_t timeout_s) {
   this->scan_seen_macs_.clear();
   ESP_LOGI(this->log_tag_.c_str(), "Scan-mode enabled for %us (discovery-only, no connect)",
            (unsigned) timeout_s);
+  this->scanner_ever_active_ = false;
   if (this->set_enabled_cb_)
     this->set_enabled_cb_(true);
   char timeout_str[8];

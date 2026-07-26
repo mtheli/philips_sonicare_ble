@@ -158,6 +158,12 @@ class SonicareCoordinator {
   uint32_t get_notify_throttle() const { return notify_throttle_ms_; }
 
  protected:
+  // Report a discovery window that ran to its end on a passive scanner.
+  // Sonicare handles carry their service UUID only in the scan response,
+  // which a passive scan never asks for, so parse_device could not have
+  // matched at any point. Callers check scanner_ever_active_ first.
+  void warn_scanner_stayed_passive_(const char *window);
+
   esp32_ble_client::BLEClientBase *parent_{nullptr};
   SonicareBridge *bridge_{nullptr};
   std::string log_tag_;  // see set_log_tag() — fallback to file-scope TAG until set
@@ -177,6 +183,14 @@ class SonicareCoordinator {
   // Pair-mode (Mode B only): UUID-scan only happens while this is true.
   bool pair_mode_active_{false};
   uint32_t pair_mode_until_ms_{0};
+  // Did the scanner run actively at any point during the current discovery
+  // window? Home Assistant may open its window seconds after pair-mode is
+  // armed — measured: 8 s, after its first attempts found every scanner busy
+  // — so a single check right after arming proves nothing. Only "never active
+  // for the whole window" is a real finding; it is what gets logged and what
+  // rides along in pair_timeout so HA can tell "no brush answered" from "we
+  // could never have seen one".
+  bool scanner_ever_active_{false};
   // Unpair drain window: after unpair() force-disables the BLE client and wipes
   // the bond, on_loop() waits this long before re-enabling and emitting the
   // `unpaired` status — so the GAP_DISCONNECT and any in-flight notifications
