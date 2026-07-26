@@ -407,6 +407,23 @@ since ESPHome 2025.7.0.
 - Check **Settings > Devices & Services > ESPHome** — your device should be listed there
 - If using a fresh ESPHome install, wait for the device to come online after flashing
 
+### OTA install aborts with "WebSocket connection closed"
+
+The build log stops mid-compile (e.g. `[1473/1521] Building CXX object ...`)
+and the dashboard afterwards reports the device as out of sync, still on its
+previously deployed version. Nothing was flashed — the ESP keeps running its
+old binary, so this is safe to retry.
+
+This is most common on the first install after the ESPHome builder itself was
+updated: crossing a builder version forces a near-complete recompile (~1500
+compile units) instead of the usual handful, and the dashboard's log stream is
+an Ingress WebSocket that can be dropped during those minutes of sustained CPU
+and RAM use. A sleeping browser tab or a reverse-proxy timeout produces the
+same symptom.
+
+Just click **Install** again. The object cache survives, so the retry only
+compiles what was left and completes quickly.
+
 ### No data after OTA update
 
 After an OTA flash, the ESP32 reboots and reconnects to the toothbrush via BLE before
