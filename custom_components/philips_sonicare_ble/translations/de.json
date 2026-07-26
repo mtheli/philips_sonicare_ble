@@ -112,6 +112,7 @@
       "not_paired_terminal_host": "eine Konsole auf dem Rechner, auf dem Home Assistant läuft,",
       "pair_status_unpaired": "Bond entfernt — der Slot ist frei. Schalte die Sonicare ein, die du koppeln möchtest, und starte dann das Pairing.",
       "pair_timeout": "Innerhalb des Zeitfensters wurde keine Sonicare gekoppelt. Drücke den Power-Knopf der Zahnbürste, um sie zu wecken, und versuche es erneut.",
+      "pair_timeout_passive_scanner": "**Innerhalb des Zeitfensters wurde keine Sonicare gekoppelt.** Die Bridge hat die ganze Zeit **passiv gescannt** und konnte die Zahnbürste deshalb gar nicht sehen — ein passiver Scan fordert die Scan-Antwort mit der Sonicare-Service-UUID nie an.\n\n**Zu tun:** Stelle den Bluetooth-Scan-Modus dieses ESPHome-Geräts auf **Aktiv** unter `Einstellungen > Geräte & Dienste > ESPHome > Konfigurieren` und versuche es erneut.",
       "pairing_failed": "Das Gerät ist weiterhin nicht gekoppelt. Stelle sicher, dass die Zahnbürste wach ist, und versuche das Pairing erneut.",
       "reset_alert_offline": "Die ESP-Bridge war nicht erreichbar, um den Bond zu löschen. Stelle sicher, dass sie online und mit Strom versorgt ist, und versuche es erneut.",
       "reset_alert_unconfirmed": "Die Bridge hat das Löschen des Bonds nicht bestätigt — eventuell braucht sie einen Neustart. Stelle sicher, dass sie online ist, und versuche es erneut.",

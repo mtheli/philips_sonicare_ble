@@ -49,6 +49,7 @@ ERROR_KEYS = {
     "not_a_sonicare",
     "pairing_failed",
     "pair_timeout",
+    "pair_timeout_passive_scanner",
     "unknown",
 }
 DYNAMIC_ABORTS = {

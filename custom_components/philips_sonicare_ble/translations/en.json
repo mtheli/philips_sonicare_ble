@@ -112,6 +112,7 @@
       "not_paired_terminal_host": "a terminal on the machine running Home Assistant",
       "pair_status_unpaired": "Bond removed — the slot is free. Switch on the Sonicare you want to bond, then start pairing.",
       "pair_timeout": "No Sonicare paired within the time window. Press the toothbrush's power button to wake it and try again.",
+      "pair_timeout_passive_scanner": "**No Sonicare paired within the time window.** The bridge **scanned passively** the whole time, so it could not see the toothbrush at all — a passive scan never asks for the scan response that carries the Sonicare service UUID.\n\n**What to do:** set this ESPHome device's Bluetooth scanning mode to **Active** under `Settings > Devices & Services > ESPHome > Configure`, then try again.",
       "pairing_failed": "Device is still not paired. Make sure the toothbrush is awake and try pairing again.",
       "reset_alert_offline": "Couldn't reach the ESP bridge to clear the bond. Make sure it's online and powered, then try again.",
       "reset_alert_unconfirmed": "Couldn't confirm the bridge cleared the bond — it may need a reboot. Make sure it's online, then try again.",

@@ -9,6 +9,7 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.components import bluetooth as ha_bluetooth
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
     async_ble_device_from_address,
@@ -112,7 +113,13 @@ def _alert(alert_type: str, text: str) -> str:
     """
     if not text:
         return ""
-    return f'<ha-alert alert-type="{alert_type}">{text}</ha-alert>\n\n'
+    # A blank line in the notice would end the markdown paragraph the opening
+    # tag sits in, pushing everything after it — including the closing tag —
+    # out of the alert box. Translate paragraph breaks into <br><br> here,
+    # where markup is allowed, so the text stays inside and still renders its
+    # markdown (bold, code) as inline content.
+    body = text.replace("\n\n", "<br><br>")
+    return f'<ha-alert alert-type="{alert_type}">{body}</ha-alert>\n\n'
 
 
 # The languages we ship translations for. Kept as a constant so the flow
@@ -248,6 +255,17 @@ async def _async_text_blocks(hass, category: str = "config") -> dict[str, str]:
 # bridge state from when the flow was created.
 _PROBE_CACHE_MAX_AGE = 30.0
 
+# Length of the active-scan window requested while pair-mode is armed. Matches
+# the bridge's own 60 s window; habluetooth clamps a single request to its
+# AUTO_WINDOW_MAX_DURATION (35 s), so the caller re-arms until the pair window
+# closes rather than relying on one call to cover it.
+_ACTIVE_SCAN_WINDOW = 60.0
+
+# Pause before asking again after a request that opened no window. Long enough
+# not to spin on a setup that has no Auto-mode scanner at all, short enough to
+# catch the next gap between a busy proxy's connection attempts.
+_ACTIVE_SCAN_RETRY_DELAY = 2.0
+
 
 # Sentinel option in the Direct-BLE picker that switches to free-text entry.
 # Picked when the user wants to type a MAC manually (e.g. an RPA-rotating
@@ -361,6 +379,72 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
     MINOR_VERSION = 2  # 2: drop Classic-only sensors on Condor (see #23)
 
+    # ------------------------------------------------------------------
+    # Flow tracing
+    #
+    # Setup spans many steps and several minutes, and when it goes wrong the
+    # only artefact left is the log a user attaches to an issue — the dialog
+    # they saw is gone. Every step ends in one of four results, so logging
+    # those covers the whole path without scattering a line through each of
+    # the ~30 handlers. Steps stay at debug (a trace is only interesting once
+    # something went wrong); the two outcomes that end the flow are info and
+    # warning, so they show up without anyone enabling debug first.
+    # ------------------------------------------------------------------
+
+    @callback
+    def async_show_form(self, **kwargs: Any) -> FlowResult:
+        """Log which dialog the user is being shown."""
+        errors = kwargs.get("errors") or {}
+        _LOGGER.debug(
+            "Flow step: showing %s%s",
+            kwargs.get("step_id") or "?",
+            f" with errors {sorted(errors)}" if errors else "",
+        )
+        return super().async_show_form(**kwargs)
+
+    @callback
+    def async_show_progress(self, **kwargs: Any) -> FlowResult:
+        """Log a long-running step while it spins."""
+        _LOGGER.debug(
+            "Flow step: %s in progress (%s)",
+            kwargs.get("step_id") or "?",
+            kwargs.get("progress_action") or "no action",
+        )
+        return super().async_show_progress(**kwargs)
+
+    @callback
+    def async_show_menu(self, **kwargs: Any) -> FlowResult:
+        """Log a step that offers the user a choice."""
+        _LOGGER.debug(
+            "Flow step: menu %s with options %s",
+            kwargs.get("step_id") or "?",
+            list(kwargs.get("menu_options") or []),
+        )
+        return super().async_show_menu(**kwargs)
+
+    @callback
+    def async_abort(self, **kwargs: Any) -> FlowResult:
+        """Log why the flow ended without creating an entry.
+
+        Debug, not info: zeroconf starts a flow for every ESPHome device on
+        the network and most of them abort as not-ours. The aborts that carry
+        a real diagnosis are logged with their cause where they are raised.
+        """
+        _LOGGER.debug("Flow aborted: %s", kwargs.get("reason") or "unknown")
+        return super().async_abort(**kwargs)
+
+    @callback
+    def async_create_entry(self, **kwargs: Any) -> FlowResult:
+        """Log the device that setup just produced."""
+        data = kwargs.get("data") or {}
+        _LOGGER.info(
+            "Flow complete: created '%s' (transport %s, address %s)",
+            kwargs.get("title") or "?",
+            data.get(CONF_TRANSPORT_TYPE, "unknown"),
+            data.get(CONF_ADDRESS, "unknown"),
+        )
+        return super().async_create_entry(**kwargs)
+
     def __init__(self) -> None:
         self._discovery_info: BluetoothServiceInfoBleak | None = None
         self._address: str | None = None
@@ -417,6 +501,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._pair_scan_task: asyncio.Task | None = None
         self._pair_future: asyncio.Future[dict[str, str]] | None = None
         self._pair_unsub: Callable[[], None] | None = None
+        self._pair_active_scan_task: asyncio.Task | None = None
         self._pair_svc_name: str = ""
         self._pair_result: dict[str, str] | None = None
         # Direct-BLE probe progress state, shared by bluetooth_confirm and
@@ -1433,6 +1518,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         # Extract device name from zeroconf hostname (e.g. "atom-lite" from "atom-lite.local.")
         host = discovery_info.hostname or ""
+        _LOGGER.debug("Flow started: zeroconf discovery of %s", host or "?")
         device_name = esphome_service_id(host.rstrip(".").removesuffix(".local"))
         if not device_name:
             return self.async_abort(reason="not_supported")
@@ -1526,6 +1612,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> FlowResult:
         """Handle Bluetooth discovery."""
+        _LOGGER.debug(
+            "Flow started: Bluetooth discovery of %s (%s, %s dBm)",
+            discovery_info.address, discovery_info.name or "unnamed",
+            discovery_info.rssi,
+        )
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_already_configured()
 
@@ -1799,6 +1890,13 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             elif has_device_info and self._has_sonicare_services(data):
                 self._fetched_data = data
                 self._transport_type = TRANSPORT_BLEAK
+                _LOGGER.info(
+                    "Read capabilities over direct BLE from %s: model %s, "
+                    "firmware %s, %s Sonicare service(s)",
+                    self._address, data.get("model") or "unknown",
+                    data.get("firmware") or "unknown",
+                    len(data.get("services", [])),
+                )
                 return await self.async_step_show_capabilities()
             elif manual:
                 # Connect succeeded but the device didn't expose any
@@ -2479,6 +2577,14 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         model = capabilities.get("model")
         self._name = model if model else self._esp_device_name
         self._transport_type = TRANSPORT_ESP_BRIDGE
+        _LOGGER.info(
+            "Read capabilities over %s (slot %s) from %s: model %s, "
+            "firmware %s, %s Sonicare service(s)",
+            self._esp_device_name, self._esp_bridge_id or "default",
+            self._address or "unknown address",
+            model or "unknown", capabilities.get("firmware") or "unknown",
+            len(capabilities.get("services", [])),
+        )
 
         return await self.async_step_show_capabilities()
 
@@ -2662,6 +2768,16 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             "esphome.philips_sonicare_ble_status", _on_status
         )
 
+        # Ask Home Assistant for an active scan window before the bridge
+        # starts looking. Sonicare handles advertise their service UUID only
+        # in the scan response, so a scanner left passive (the "Auto" default
+        # since 2026.6) can never match and pair-mode expires unused. Started
+        # before the arm call and not awaited — the request sleeps for the
+        # whole window, which would delay arming the bridge.
+        self._pair_active_scan_task = self.hass.async_create_task(
+            self._async_hold_active_scan(self.hass.loop.time() + timeout_s)
+        )
+
         svc_name = f"{self._esp_device_name}_ble_pair_mode"
         if bridge_id:
             svc_name += f"_{bridge_id}"
@@ -2677,7 +2793,69 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             _LOGGER.error("Failed to arm pair-mode on %s: %s",
                           self._esp_device_name, err)
             return False
+        # Info, not debug: a pairing attempt is a user-initiated action that
+        # can fail minutes later, and the log is what a report comes with.
+        _LOGGER.info(
+            "Pair-mode armed on %s (slot %s) for %ss — waiting for a toothbrush",
+            self._esp_device_name, bridge_id or "default", timeout_s,
+        )
         return True
+
+    async def _async_hold_active_scan(self, deadline: float) -> None:
+        """Keep AUTO scanners actively scanning until ``deadline``.
+
+        ``async_request_active_scan`` flips every AUTO-mode scanner —
+        including ESPHome proxies — to active for one window, then restores
+        the previous mode itself; the request sleeps for that window. The
+        scheduler clamps a window to 35 s, so one call cannot cover the 60 s
+        pair window and we re-arm until the deadline passes.
+
+        Best-effort throughout: HA < 2026.6 has no such API, a proxy that is
+        mid-connect is skipped by the scheduler, and a scanner pinned to
+        Passive never gets a window at all. None of that should keep
+        pair-mode from running, so every failure path just returns.
+        """
+        request = getattr(ha_bluetooth, "async_request_active_scan", None)
+        if request is None:
+            _LOGGER.debug(
+                "Active-scan windows need HA 2026.6+ — pairing relies on the "
+                "scanner already being active"
+            )
+            return
+        loop = self.hass.loop
+        misses = 0
+        while loop.time() < deadline:
+            started = loop.time()
+            try:
+                await request(self.hass, _ACTIVE_SCAN_WINDOW)
+            except Exception as err:  # noqa: BLE001 — never break pairing
+                _LOGGER.debug("Active-scan request failed: %s", err)
+                return
+            if loop.time() - started >= 1.0:
+                # The window really opened and we slept through it.
+                misses = 0
+                continue
+            # Returned straight away: either no AUTO scanner exists at all,
+            # or every one was mid-connect and got skipped. On a shared ESP
+            # the proxy reconnects constantly, so a single miss says nothing
+            # — keep trying until the pair window closes, just not in a tight
+            # loop. Log once so a genuinely scanner-less setup is visible
+            # without flooding the log with retries.
+            misses += 1
+            if misses == 1:
+                _LOGGER.debug(
+                    "No scanner opened an active window (every one busy or "
+                    "none in Auto mode) — retrying while pair-mode runs"
+                )
+            await asyncio.sleep(_ACTIVE_SCAN_RETRY_DELAY)
+        # Close the trace the first miss opened: "it kept trying and never got
+        # one" and "it got one and the brush still didn't show" look identical
+        # in the log otherwise.
+        if misses:
+            _LOGGER.debug(
+                "Active-scan: no window opened in %s attempt(s) before "
+                "pair-mode ended", misses,
+            )
 
     async def _async_scan_and_bond(self) -> dict[str, str]:
         """Wait for pair_complete / pair_timeout from the bridge.
@@ -2723,6 +2901,11 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if self._pair_unsub is not None:
             self._pair_unsub()
             self._pair_unsub = None
+        # The active-scan window outlives a pair that finished early; cancel
+        # it so the scanner returns to its configured mode right away.
+        if self._pair_active_scan_task is not None:
+            self._pair_active_scan_task.cancel()
+            self._pair_active_scan_task = None
         clean_complete = result.get("status") == "pair_complete"
         if not clean_complete and self._pair_svc_name:
             try:
@@ -2743,15 +2926,35 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         error_key = result.get("error") or (
             "pair_timeout" if result.get("status") == "pair_timeout" else ""
         )
+        # The bridge reports whether it was scanning passively when the window
+        # opened. If it was, waking the brush again cannot help — a passive
+        # scan never sees the scan response carrying the Sonicare service UUID.
+        # Bridges older than v1.11.0 omit the field, which reads as False and
+        # keeps the generic wording.
+        if error_key == "pair_timeout" and result.get("scanner_passive") == "true":
+            error_key = "pair_timeout_passive_scanner"
         identity = result.get("identity_address", "").upper()
         if not error_key and not identity:
             _LOGGER.error("pair_complete received without identity_address")
             error_key = "unknown"
         if error_key:
+            # Close the trace the arm-time entry opened: without this the log
+            # shows an attempt starting and nothing else, and the reason only
+            # ever reaches the dialog the user already clicked away.
+            _LOGGER.warning(
+                "Pairing on %s (slot %s) did not succeed: %s",
+                self._esp_device_name, self._esp_bridge_id or "default",
+                error_key,
+            )
             texts = await _async_text_blocks(self.hass)
             return self._show_request_pair(
                 texts.get(f"error.{error_key}", ""), alert_type="error"
             )
+
+        _LOGGER.info(
+            "Pairing succeeded on %s (slot %s): toothbrush %s is now bonded",
+            self._esp_device_name, self._esp_bridge_id or "default", identity,
+        )
 
         # Pair succeeded — clear bridge_info so the next health check picks up
         # the freshly-bound state, then run capabilities probe via the
@@ -3112,6 +3315,14 @@ class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
                     data[CONF_NOTIFY_THROTTLE] = int(user_input[CONF_NOTIFY_THROTTLE])
                 if CONF_PIPELINED_READS in user_input:
                     data[CONF_PIPELINED_READS] = bool(user_input[CONF_PIPELINED_READS])
+            # Info: which options a device runs with explains a lot of later
+            # behaviour (disabled sensors, throttling), and nothing here is
+            # sensitive enough to keep out of the log.
+            _LOGGER.info(
+                "Options saved for %s: %s",
+                self.config_entry.title,
+                ", ".join(f"{k}={v}" for k, v in sorted(data.items())),
+            )
             return self.async_create_entry(title="", data=data)
 
         options = self.config_entry.options
@@ -3146,6 +3357,10 @@ class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
                 default=options.get(CONF_PIPELINED_READS, DEFAULT_PIPELINED_READS),
             )] = bool
 
+        _LOGGER.debug(
+            "Options flow: showing init for %s (esp bridge: %s)",
+            self.config_entry.title, is_esp,
+        )
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(schema_fields),
