@@ -416,8 +416,33 @@ or disable `bluetooth_proxy`.
 
 ### Pair-mode times out without finding the brush
 
-The brush only advertises for ~20 seconds after waking up, so timing is the
-usual cause here — not range, and not pairing itself.
+Two distinct causes, and the ESP log tells them apart.
+
+**Cause 1 — the scanner ran passively (only with `bluetooth_proxy:` on the
+same ESP).** Sonicare handles send the service UUID that pair-mode matches on
+only in the scan response, which a passive scan never requests — the bridge
+cannot see the brush at all, however close and awake it is. When
+`bluetooth_proxy:` is compiled in, Home Assistant owns the shared scanner and
+its per-device scanning mode (default **Auto** since HA 2026.6, which scans
+passively) overrides the `esp32_ble_tracker` `scan_parameters` at runtime.
+Firmware v1.11.0 names this case when the window closes:
+
+```
+[W][philips_sonicare:311]: Pair-mode ran its whole window with the BLE scanner PASSIVE — the toothbrush could not be discovered. …
+```
+
+**Fix:** pairing from the integration's setup dialog handles this on its own
+from v0.24.0 — it requests active scan windows for the whole pair window, and
+if none could be had, the timeout dialog says so. If you see the warning
+anyway (older integration, scanning mode pinned to *Passive*, or pair-mode
+armed manually via **Developer tools > Actions**), set the ESP's Bluetooth
+scanning mode to **Active** under **Settings > Devices & Services > ESPHome >
+Configure** and try again. Without `bluetooth_proxy:` in the YAML this cause
+is off the table — `scan_parameters.active: true` applies unconditionally.
+
+**Cause 2 — timing.** No warning in the log, the scanner was active, the
+brush just never advertised into the window: it only advertises for
+~20 seconds after waking up.
 
 **Fix:** work through these, in order:
 
