@@ -60,7 +60,25 @@ void PhilipsSonicare::dump_config() {
 
 // ── PhilipsSonicareStandalone (Mode B, extends BLEClientBase) ────────────────
 
+std::vector<PhilipsSonicareStandalone *> PhilipsSonicareStandalone::instances_;
+
+bool PhilipsSonicareStandalone::address_in_use_by_other_(uint64_t addr) const {
+  if (addr == 0)
+    return false;
+  for (auto *slot : PhilipsSonicareStandalone::instances_) {
+    if (slot == this)
+      continue;
+    // Same-class access to another instance's protected address_ is allowed.
+    // Non-zero means the slot holds a bound identity (MAC mode, even while
+    // the brush sleeps) or is mid-connect — either way it owns this address.
+    if (slot->address_ != 0 && slot->address_ == addr)
+      return true;
+  }
+  return false;
+}
+
 void PhilipsSonicareStandalone::setup() {
+  PhilipsSonicareStandalone::instances_.push_back(this);
   // Restore identity address (if any) before tracker logic kicks in
   this->pref_ = global_preferences->make_preference<uint64_t>(this->pref_ns_);
   // Capture YAML provenance BEFORE any branch — at this point a non-zero
@@ -272,6 +290,17 @@ bool PhilipsSonicareStandalone::parse_device(const espbt::ESPBTDevice &device) {
              device.address_str().c_str(), matched_service.c_str());
   }
 
+  // Never let two slots bond the same brush — they'd share one controller
+  // bond, so unpairing one would silently drop the other's. If another slot
+  // already owns this address, keep scanning for a different device.
+  if (this->address_in_use_by_other_(device.address_uint64())) {
+    ESP_LOGW(this->log_tag_.c_str(),
+             "Ignoring %s in pair-mode — another slot on this bridge is "
+             "already bonded to it",
+             device.address_str().c_str());
+    return false;
+  }
+
   this->set_address(device.address_uint64());
   this->remote_addr_type_ = device.get_address_type();
   this->set_state(espbt::ClientState::DISCOVERED);
@@ -309,15 +338,26 @@ void PhilipsSonicareStandalone::gap_event_handler(esp_gap_ble_cb_event_t event,
     uint64_t identity = esp32_ble::ble_addr_to_uint64(
         param->ble_security.auth_cmpl.bd_addr);
     const auto *bda = param->ble_security.auth_cmpl.bd_addr;
-    ESP_LOGI(this->log_tag_.c_str(),
-             "Bonded — saving identity %02X:%02X:%02X:%02X:%02X:%02X, "
-             "switching to MAC mode",
+    char mac[18];
+    snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
              bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
-    this->pref_.save(&identity);
-    this->set_address(identity);
-    this->set_auto_connect(true);  // identity persisted → enable background reconnect
-    this->remote_addr_type_ = param->ble_security.auth_cmpl.addr_type;
-    this->uuid_scan_mode_ = false;
+    if (this->address_in_use_by_other_(identity)) {
+      // Two grabs raced past the parse_device gate before either set its
+      // address_. Refuse the adoption instead of writing a second slot's
+      // NVS with this identity and sharing its bond.
+      ESP_LOGW(this->log_tag_.c_str(),
+               "Refusing to adopt %s — already owned by another slot; "
+               "disconnecting instead of sharing its bond", mac);
+      this->disconnect();
+    } else {
+      ESP_LOGI(this->log_tag_.c_str(),
+               "Bonded — saving identity %s, switching to MAC mode", mac);
+      this->pref_.save(&identity);
+      this->set_address(identity);
+      this->set_auto_connect(true);  // identity persisted → enable background reconnect
+      this->remote_addr_type_ = param->ble_security.auth_cmpl.addr_type;
+      this->uuid_scan_mode_ = false;
+    }
   }
 
   if (this->coord_)

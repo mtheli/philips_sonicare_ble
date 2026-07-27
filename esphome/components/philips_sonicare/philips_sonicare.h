@@ -13,6 +13,8 @@
 
 #include "coordinator.h"
 
+#include <vector>
+
 namespace esphome {
 namespace philips_sonicare {
 
@@ -88,6 +90,16 @@ class PhilipsSonicareStandalone : public esp32_ble_client::BLEClientBase {
   ESPPreferenceObject pref_;
   // Throttle for pre-connect heap-backpressure warning (parse_device path).
   uint32_t last_heap_refuse_log_ms_{0};
+
+  // Node-wide registry of all standalone slots — the only way one slot can
+  // see whether an advertised address is already owned by another. The
+  // controller stores one bond per peer MAC, so two slots bonding the same
+  // brush share a single bond: unpairing one silently drops the other's.
+  static std::vector<PhilipsSonicareStandalone *> instances_;
+  // True if any OTHER slot already targets `addr`: bonded (address_ stays
+  // set even while the brush sleeps) or mid-connect (DISCOVERED sets it).
+  // An idle, unbonded slot has address_ == 0 and never blocks.
+  bool address_in_use_by_other_(uint64_t addr) const;
 };
 
 // Triggers usable in both modes — fire on the SonicareCoordinator's

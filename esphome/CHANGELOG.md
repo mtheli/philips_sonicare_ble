@@ -1,5 +1,20 @@
 # ESP Bridge Changelog
 
+## v1.12.0 — 2026-07-27
+
+- **A slot no longer bonds a toothbrush that another slot already owns.** In
+  pair-mode a slot grabbed the first Sonicare it matched by service UUID —
+  with no regard for the other slots on the node. If a second, already
+  bonded brush happened to advertise inside that 60-second window (brushes
+  advertise every time they wake), the armed slot could hijack it and save
+  its identity, leaving two slots pointing at one brush. Since the
+  controller keeps one bond per peer MAC, that bond is shared: unpairing one
+  slot then drops the other's, cascading into repeated auth failures.
+  Pair-mode now skips any address a sibling slot already targets — bonded
+  (even while the brush sleeps) or mid-connect — at both the discovery and
+  the post-auth stage. Only affects nodes running more than one slot;
+  `MIN_BRIDGE_VERSION` stays 1.4.0.
+
 ## v1.11.0 — 2026-07-26
 
 - **Reports a discovery window that ran on a passive scanner.** Pair- and
