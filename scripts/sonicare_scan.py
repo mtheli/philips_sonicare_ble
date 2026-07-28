@@ -760,7 +760,7 @@ class NewerProtocolProbe:
 
     async def run(self):
         """Run the full newer-protocol probe."""
-        print("\n--- Newer Protocol Probe ---\n")
+        print("\n--- Condor Protocol Probe ---\n")
 
         # PROTO_CFG detection selects V3 vs V4:
         #   - Present + byte[0] == 3 → V3 path (OneBlade QP4530 confirmed; no
@@ -1315,7 +1315,7 @@ async def scan_device(
         paired = bonded
         pair_attempted = False
         if has_newer and not paired:
-            print("Pairing (required for newer-protocol probe) ...")
+            print("Pairing (required for Condor-protocol probe) ...")
             paired = await _client_pair(client, agent_active)
             pair_attempted = True
             print()
@@ -1367,11 +1367,11 @@ async def scan_device(
 
         print("=" * 60)
         if has_legacy and has_newer:
-            protocol = "Both Legacy + Newer"
+            protocol = "Both Classic + Condor (supported by philips_sonicare_ble)"
         elif has_legacy:
-            protocol = "Legacy (supported by philips_sonicare_ble)"
+            protocol = "Classic (supported by philips_sonicare_ble)"
         elif has_newer:
-            protocol = "Newer (not yet supported)"
+            protocol = "Condor (supported by philips_sonicare_ble)"
         else:
             protocol = "Unknown"
         print(f"Protocol: {protocol}")
