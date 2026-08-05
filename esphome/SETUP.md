@@ -136,8 +136,13 @@ instead of using the template.
   to 5 (`BTA_GATTC_NOTIF_REG_MAX=5`). The Sonicare needs 11+ concurrent
   subscriptions. With ESP-IDF, this limit is configurable via `sdkconfig_options`
 - **sdkconfig options**: `CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"` and
-  `CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"` — the Sonicare has ~45 GATT attributes
-  and we subscribe to 11+ characteristics
+  `CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"`, because we subscribe to 11+
+  characteristics. The notification limit alone would survive without them —
+  ESPHome defaults it to 12 through `esp32_ble`'s `max_notifications` — but
+  that one spare slot is gone the moment a `bluetooth_proxy`, a second
+  `ble_client` or a second brush shares the node, and the failure is silent.
+  `MAX_CACHE_CHAR` is the other case: ESPHome never sets it, so leaving it out
+  really does run against the ESP-IDF default of 40
 - **API flags**: `custom_services: true` and `homeassistant_services: true` — required
   for the bridge component to register its services
 - **external_components**: the component is loaded directly from this GitHub repository.

@@ -24,8 +24,14 @@ esp32:
   framework:
     type: esp-idf
     sdkconfig_options:
-      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "160"    # default 40; Sonicare has ~45 attributes
-      CONFIG_BT_GATTC_NOTIF_REG_MAX: "30"      # default 5; we subscribe to 11 chars per device
+      # ESPHome never touches MAX_CACHE_CHAR — leave this out and the ESP-IDF
+      # default of 40 stands, for both brushes together.
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "160"
+      # NOTIF_REG_MAX is written by esp32_ble from its max_notifications option
+      # (default 12) — not enough here: the limit is per GATT client interface,
+      # so two brushes at 11 subscriptions each share it. Matched to
+      # max_notifications below.
+      CONFIG_BT_GATTC_NOTIF_REG_MAX: "30"
       # Optional: persist discovered GATT DB to NVS keyed by bonded peer
       # identity. First connect still does a full ~4s SDP; subsequent
       # reconnects to the same brush hit the cache in tens of ms. On

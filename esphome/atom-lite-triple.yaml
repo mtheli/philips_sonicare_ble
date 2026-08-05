@@ -30,8 +30,15 @@ esp32:
   framework:
     type: esp-idf
     sdkconfig_options:
-      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "120"    # default 40; Sonicare tree ~80 entries (services + chars + CCCDs) + headroom
-      CONFIG_BT_GATTC_NOTIF_REG_MAX: "50"      # default 5; 3 brushes × 11 subs = 33, +sensor stream during brushing, +headroom
+      # ESPHome never touches MAX_CACHE_CHAR — leave this out and the ESP-IDF
+      # default of 40 stands. Sonicare tree ~80 entries (services + chars +
+      # CCCDs) + headroom.
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "120"
+      # NOTIF_REG_MAX is written by esp32_ble from its max_notifications option
+      # (default 12) — nowhere near enough here: the limit is per GATT client
+      # interface, so 3 brushes × 11 subs = 33 share it, plus the sensor stream
+      # during brushing, plus headroom. Matched to max_notifications below.
+      CONFIG_BT_GATTC_NOTIF_REG_MAX: "50"
       CONFIG_BT_ACL_CONNECTIONS: "5"           # default 4; 3 brushes + 1 transient (re-pair) + 1 reserve
       CONFIG_BTDM_CTRL_BLE_MAX_CONN: "5"       # default 3; matches CONFIG_BT_ACL_CONNECTIONS
       # Optional: persist discovered GATT DB to NVS keyed by bonded peer

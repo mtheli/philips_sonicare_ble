@@ -25,10 +25,24 @@ subscriptions. The Sonicare requires 11+ subscriptions for full live data.
 
 ### Root cause
 
-| Config option | Default | Required |
-|---------------|---------|----------|
-| `CONFIG_BT_GATTC_NOTIF_REG_MAX` | 5 | 20 |
-| `CONFIG_BT_GATTC_MAX_CACHE_CHAR` | 40 | 80 |
+| Config option | ESP-IDF default | What you actually get | Recommended |
+|---------------|---------|---------|----------|
+| `CONFIG_BT_GATTC_NOTIF_REG_MAX` | 5 | **12** | 20 |
+| `CONFIG_BT_GATTC_MAX_CACHE_CHAR` | 40 | **40** | 80 |
+
+The two columns differ because ESPHome sets one of them and not the other.
+`esp32_ble` writes `CONFIG_BT_GATTC_NOTIF_REG_MAX` from its `max_notifications`
+option, which defaults to 12 — and `esp32_ble_tracker` auto-loads that
+component, so the default applies even to a config with no `esp32_ble:` block
+in it. `MAX_CACHE_CHAR` has no such option and stays at the ESP-IDF default.
+
+A config that sets neither is therefore not automatically broken: 12 slots
+cover the 11 subscriptions. What it has is a single slot of headroom. The
+moment anything else on the node subscribes — a `bluetooth_proxy`, a second
+`ble_client`, a second brush — the limit is reached, and it is reached
+silently: no build error, just sensors that never update. The limit is per
+GATT client interface, not per connection, so every consumer on the node
+draws from the same pool.
 
 The Arduino framework uses a precompiled `libbt.a` where these values are
 hardcoded and cannot be changed. The ESP-IDF framework allows configuration
