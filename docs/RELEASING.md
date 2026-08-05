@@ -93,13 +93,42 @@ differently, and what that means for the integration. State the
 `MIN_BRIDGE_VERSION` consequence in the bullet that introduces the change —
 whether the constant moves is decided separately, see above.
 
+### Build-time changes: the `## Unreleased` section
+
+A change that leaves the compiled binary untouched — validation in
+`_final_validate`, build warnings, the YAML templates — bumps nothing. Giving
+it a version would offer every user an update to a binary identical to the one
+they run. Its entry goes under `## Unreleased` at the top of the changelog and
+waits there for the next firmware release, which renames the heading to
+`## vX.Y.Z — YYYY-MM-DD` and folds the entry in. Close the bullet with
+"Build-time change only — no firmware behavior change, no version bump", the
+same way the Bluedroid GATT-cache guard was handled in v1.10.0.
+
+Two constraints, both enforced by `_extract_changelog_sections` in
+`update.py`:
+
+- **Nothing under `## Unreleased` reaches a user.** The update entity matches
+  `^##\s+v?(\d+\.\d+\.\d+)` — a heading without a version is invisible to it.
+  That is what makes the section safe to keep on `master`, which is where the
+  entity fetches the changelog from.
+- **The section stays at the very top.** Sections run until the next *version*
+  heading, so an Unreleased block sitting between two releases is served as
+  part of the release above it — to users whose firmware never contained it.
+
+For the same reason, never add an entry to a section that is already released:
+the changelog is read live from `master`, so it would surface immediately in
+everyone's release-notes dialog.
+
 ## Cutting the release
 
 1. Content commits first, pushed and green.
 2. `esphome/components/philips_sonicare/VERSION` — bump on **any** firmware
    change. The update entity reads this file from GitHub, so two different
    binaries must never share a version.
-3. `esphome/CHANGELOG.md` — entry for the new firmware version.
+3. `esphome/CHANGELOG.md` — entry for the new firmware version. If an
+   `## Unreleased` section has collected build-time entries, rename its heading
+   to the new version and add the release's own bullets to it, rather than
+   opening a second section.
 4. `custom_components/philips_sonicare_ble/manifest.json` — new integration
    version, as its own commit: `release: vX.Y.Z`.
 5. Tag `vX.Y.Z`, push, then `gh release create` with the notes above.

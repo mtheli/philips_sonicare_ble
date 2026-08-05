@@ -1,5 +1,26 @@
 # ESP Bridge Changelog
 
+<!-- Entries that carry no version of their own — build-time changes that leave
+     the binary untouched — collect here until the next firmware release folds
+     them into its section. The update entity only matches `## vX.Y.Z` headings,
+     so nothing below this one reaches a user until it is renamed. Keep the
+     section at the very top: sections run until the next *version* heading, so
+     an Unreleased block placed between two releases would be served as part of
+     the release above it. -->
+
+## Unreleased
+
+- **Missing `api:` flags now fail with their own name.** The bridge registers
+  its services through `CustomAPIDevice` and fires events via
+  `fire_homeassistant_event`, both gated behind `custom_services` and
+  `homeassistant_services` since ESPHome 2025.7.0. A config without them used
+  to fail deep inside the api headers, with nothing in the error pointing back
+  at this component — the flags are documented in `SETUP.md`, but only someone
+  who already suspects them goes looking ([#32](https://github.com/mtheli/philips_sonicare_ble/issues/32)).
+  Validation now names the flag that is actually missing and quotes the block
+  to paste. Build-time change only — no firmware behavior change, no version
+  bump.
+
 ## v1.12.0 — 2026-07-27
 
 - **A slot no longer bonds a toothbrush that another slot already owns.** In
