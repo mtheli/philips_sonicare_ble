@@ -153,6 +153,31 @@ def _extra_scripts_patch_bluedroid(full_config):
 
 def _final_validate(config):
     global _warned_patched_build
+
+    full = fv.full_config.get()
+
+    # SonicareBridge registers its HA services via CustomAPIDevice
+    # (register_service) and pushes events via fire_homeassistant_event. Since
+    # ESPHome 2025.7.0 both code paths are compiled in only when the matching
+    # api flags are set — otherwise the build fails inside the api headers with
+    # no reference to this component, leaving the user to guess. The bridge is
+    # instantiated in every mode, so the flags are unconditionally required.
+    api = full.get("api") or {}
+    missing = [
+        flag
+        for flag in ("custom_services", "homeassistant_services")
+        if not api.get(flag, False)
+    ]
+    if missing:
+        raise cv.Invalid(
+            f"philips_sonicare requires "
+            f"{' and '.join(f'`{f}: true`' for f in missing)} under `api:` "
+            f"(required since ESPHome 2025.7.0). Without "
+            f"{'them' if len(missing) > 1 else 'it'} the bridge cannot register "
+            f"its services and the build fails in the api headers. Add:\n\n"
+            f"api:\n  custom_services: true\n  homeassistant_services: true"
+        )
+
     # target_framework (not the removed CORE.using_esp_idf) — works on both
     # pre- and post-2026.7 ESPHome. On Arduino, KEY_FRAMEWORK_VERSION holds
     # the Arduino core version, so the ESP-IDF comparison below would be
@@ -160,7 +185,6 @@ def _final_validate(config):
     if not CORE.is_esp32 or CORE.target_framework != "esp-idf":
         return config
 
-    full = fv.full_config.get()
     # The crashing code path is only compiled in when Bluedroid's NVS service
     # cache (CONFIG_BT_GATTC_CACHE_NVS_FLASH) is enabled. Two ways to get there:
     # bluetooth_proxy with cache_services (its default), or setting the
