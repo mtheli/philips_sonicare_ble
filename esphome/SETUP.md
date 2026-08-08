@@ -562,6 +562,28 @@ UI after that.
 Each slot has its own bond storage in NVS, so the two brushes are completely
 independent — pair, unpair, or re-pair one without affecting the other.
 
+### Adding brushes one at a time
+
+For the most reliable multi-device setup, use an empty Auto-Discovery slot for
+each brush and pair the slots one at a time:
+
+1. Add a `philips_sonicare:` entry with a unique `id` and `bridge_id`, but no
+   `mac_address:`. Leave existing, paired entries unchanged.
+2. Flash the updated YAML, then add the new slot through the **ESP32 Bridge**
+   setup flow in Home Assistant. Select its `friendly_name` or `bridge_id` in
+   the bridge picker.
+3. Wake only the toothbrush intended for that slot and start pairing. Do not
+   unpair the brushes already on the bridge: each slot stores its own identity,
+   and slots reject brushes already claimed by another slot.
+4. Repeat from step 1 for every additional toothbrush.
+
+This is especially important for Series 7100 / HX742X models. They advertise
+with a rotating address before bonding, so an address copied from a scan can
+be stale by the time the bridge connects. Pairing an empty slot saves the
+brush's stable bonded identity in NVS; afterward the bridge resolves address
+rotation automatically. Do not add `mac_address:` for these models unless you
+know it is their stable identity address.
+
 Full examples:
 - [`esphome/atom-lite-dual.yaml`](atom-lite-dual.yaml) — 2 brushes
 - [`esphome/atom-lite-triple.yaml`](atom-lite-triple.yaml) — 3 brushes (Atom Lite limit)
