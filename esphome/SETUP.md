@@ -344,13 +344,13 @@ A successful pair-mode run on the ESP looks like this:
 [I][philips_sonicare:301]: Connected to Sonicare (AA:BB:CC:DD:EE:FF)
 [I][esp32_ble_client:570]: [1] [AA:BB:CC:DD:EE:FF] auth complete addr: AA:BB:CC:DD:EE:FF
 [D][esp32_ble_client:575]: [1] [AA:BB:CC:DD:EE:FF] auth success type = 0 mode = 9
-[I][philips_sonicare:253]: Bonded — saving identity address, switching to MAC mode
+[I][philips_sonicare:253]: Bonded — saving identity AA:BB:CC:DD:EE:FF, switching to MAC mode
 [I][philips_sonicare:670]: Pairing successful — device bonded (auth_mode=9)
 ```
 
 The `(pair-mode, classic)` token identifies the brush family — `classic` for
 the per-feature service-based protocol (HX9XXX etc.), `condor` for the
-HX742X / Series 7100 framed transport. After `Bonded — saving identity address`
+HX742X / Series 7100 framed transport. After `Bonded — saving identity`
 the bridge writes the bond to NVS and the brush will reconnect on its own
 across reboots (no further pair-mode needed).
 
@@ -562,27 +562,42 @@ UI after that.
 Each slot has its own bond storage in NVS, so the two brushes are completely
 independent — pair, unpair, or re-pair one without affecting the other.
 
-### Adding brushes one at a time
+### Pairing brushes one at a time
 
-For the most reliable multi-device setup, use an empty Auto-Discovery slot for
-each brush and pair the slots one at a time:
+Slots exist from the moment they are compiled in, but an Auto-Discovery slot
+stays passive until Home Assistant arms it — it only connects while its own
+pair-mode is running, and pair-mode is armed per slot
+(`ble_pair_mode_<bridge_id>`). So declare every slot you need up front, flash
+**once**, and pair the brushes one after another. The slots still waiting their
+turn ignore every advertisement in the meantime.
 
-1. Add a `philips_sonicare:` entry with a unique `id` and `bridge_id`, but no
-   `mac_address:`. Leave existing, paired entries unchanged.
-2. Flash the updated YAML, then add the new slot through the **ESP32 Bridge**
-   setup flow in Home Assistant. Select its `friendly_name` or `bridge_id` in
-   the bridge picker.
-3. Wake only the toothbrush intended for that slot and start pairing. Do not
-   unpair the brushes already on the bridge: each slot stores its own identity,
-   and slots reject brushes already claimed by another slot.
-4. Repeat from step 1 for every additional toothbrush.
+1. Add one `philips_sonicare:` entry per brush, each with a unique `id` and
+   `bridge_id` and no `mac_address:`. Size `sdkconfig_options` for the final
+   brush count right away — see [`atom-lite-triple.yaml`](atom-lite-triple.yaml).
+   Running out of notification slots produces no build error, only sensors that
+   never update.
+2. Flash, then run the [ESP32 Bridge setup
+   flow](#step-4-add-the-integration-in-home-assistant) once per slot, picking
+   the slot by its `friendly_name` — or by its `bridge_id` if none is set.
+3. Wake only the toothbrush meant for that slot and start pairing. Leave the
+   brushes already on the bridge paired: every slot keeps its own identity in
+   NVS, and since bridge **v1.12.0** a slot refuses a brush that another slot
+   already owns.
 
-This is especially important for Series 7100 / HX742X models. They advertise
-with a rotating address before bonding, so an address copied from a scan can
-be stale by the time the bridge connects. Pairing an empty slot saves the
-brush's stable bonded identity in NVS; afterward the bridge resolves address
-rotation automatically. Do not add `mac_address:` for these models unless you
-know it is their stable identity address.
+A brush that turns up later does need another flash, since its slot has to
+exist in the YAML first. Leave the paired entries untouched, add the new one,
+and repeat from step 2.
+
+Auto-Discovery matters most on the Series 7100 / HX742X. Those advertise with a
+rotating address before bonding, so an address copied from a scan can already
+be stale by the time the bridge connects. Pairing an empty slot stores the
+brush's stable identity in NVS and the bridge follows the rotation from then
+on. Don't set `mac_address:` for these models unless you know the address is
+that stable identity — the pairing log names it:
+
+```
+[I][philips_sonicare.kids:354]: Bonded — saving identity 6C:62:0E:0B:33:D1, switching to MAC mode
+```
 
 Full examples:
 - [`esphome/atom-lite-dual.yaml`](atom-lite-dual.yaml) — 2 brushes
