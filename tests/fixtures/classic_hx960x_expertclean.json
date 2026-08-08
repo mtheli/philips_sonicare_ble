@@ -2,7 +2,7 @@
   "captured_at": "2026-07-09T19:21:49",
   "address": "24:E5:AA:00:00:05",
   "adv_name": "Philips Sonicare",
-  "protocol": "Legacy (supported by philips_sonicare_ble)",
+  "protocol": "Classic (supported)",
   "device_info": {
     "Battery Level": "*",
     "System ID": "0000000000000000",

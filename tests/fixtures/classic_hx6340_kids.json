@@ -2,7 +2,7 @@
   "captured_at": "2026-07-09T18:46:45",
   "address": "24:E5:AA:00:00:02",
   "adv_name": "Sonicare4Kids",
-  "protocol": "Legacy (supported by philips_sonicare_ble)",
+  "protocol": "Classic (supported)",
   "device_info": {
     "Model Number": "HX6340   ",
     "PnP ID": "01000001000000",

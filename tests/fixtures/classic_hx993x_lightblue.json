@@ -2,7 +2,7 @@
   "captured_at": "2023-03-27T01:23:14",
   "address": "24:E5:AA:00:00:06",
   "adv_name": "Philips Sonicare",
-  "protocol": "Legacy (supported by philips_sonicare_ble)",
+  "protocol": "Classic (supported)",
   "device_info": {
     "Manufacturer Name": "Philips OHC",
     "Model Number": "HX993X"

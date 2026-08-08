@@ -132,12 +132,19 @@ def parse_lightblue_log(text: str) -> dict:
     service_uuids = {s["uuid"] for s in services}
     has_classic = any(u.startswith(CLASSIC_SERVICE_PREFIX) for u in service_uuids)
     has_condor = CONDOR_SERVICE in service_uuids
+    # Both families are supported — the label records which one the capture
+    # shows, not whether the brush works. The old wording ("Legacy (supported
+    # by philips_sonicare_ble)" / "Newer (not yet supported)") predated Condor
+    # support and read as a compatibility verdict, which sent an HX742D owner
+    # looking for the fault in the wrong place (#30). Names match the family
+    # tokens used everywhere else: docs/BLE_PROTOCOL.md, the pair-mode log line
+    # "(pair-mode, classic|condor)", and the config flow's service labels.
     if has_classic and has_condor:
-        protocol = "Both Legacy + Newer"
+        protocol = "Classic + Condor (both supported)"
     elif has_classic:
-        protocol = "Legacy (supported by philips_sonicare_ble)"
+        protocol = "Classic (supported)"
     elif has_condor:
-        protocol = "Newer (not yet supported)"
+        protocol = "Condor — HX742X / Series 7100 (supported)"
     else:
         protocol = "Unknown"
 

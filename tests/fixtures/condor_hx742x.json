@@ -2,7 +2,7 @@
   "captured_at": "2026-07-09T19:23:10",
   "address": "24:E5:AA:00:00:01",
   "adv_name": "Philips Sonicare",
-  "protocol": "Newer (not yet supported)",
+  "protocol": "Condor — HX742X / Series 7100 (supported)",
   "device_info": {
     "IEEE Regulatory Cert": "00",
     "Manufacturer Name": "Philips OHC",
