@@ -62,6 +62,32 @@ def _get_coordinator(hass: HomeAssistant, entry_id: str | None):
     return first["coordinator"] if first else None
 
 
+def _async_get_esphome_device(
+    dev_reg: dr.DeviceRegistry, esp_mac: str, esp_entry: ConfigEntry
+) -> dr.DeviceEntry | None:
+    """Return the ESPHome node's own device entry, never a composite.
+
+    HA 2026.8 split every device that belonged to more than one config entry.
+    An ESP running bluetooth_proxy is exactly that case — its device entry was
+    shared by the esphome and bluetooth entries — so a lookup by MAC connection
+    alone now matches both splits and is answered with a synthesized read-only
+    composite whose id no longer refers to a registered device. Passing that id
+    as via_device_id is deprecated: it resolves to an arbitrary split today and
+    stops resolving in HA 2027.8. Scoping the lookup to the ESPHome entry makes
+    it unambiguous — connections are unique within a config entry.
+
+    async_get_device_by_connection is itself new in 2026.8, hence the fallback:
+    on older cores the split doesn't exist and the plain lookup is correct.
+    """
+    if hasattr(dev_reg, "async_get_device_by_connection"):
+        return dev_reg.async_get_device_by_connection(
+            (dr.CONNECTION_NETWORK_MAC, esp_mac), esp_entry.entry_id
+        )
+    return dev_reg.async_get_device(
+        connections={(dr.CONNECTION_NETWORK_MAC, esp_mac)}
+    )
+
+
 def _async_link_via_esp_device(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Link the Sonicare device to its ESP32 bridge in the device registry."""
     esp_device_name = entry.data[CONF_ESP_DEVICE_NAME]
@@ -71,20 +97,20 @@ def _async_link_via_esp_device(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # ESPHome stores device_name in mDNS form (atom-lite); we store it
     # in service-id form (atom_lite). Normalize the entry side and compare.
     esp_mac: str | None = None
+    esp_entry: ConfigEntry | None = None
     target = esphome_service_id(esp_device_name)
     for esphome_entry in hass.config_entries.async_entries("esphome"):
         entry_name = esphome_service_id(esphome_entry.data.get("device_name", ""))
         if entry_name == target:
             esp_mac = esphome_entry.unique_id
+            esp_entry = esphome_entry
             break
 
-    if not esp_mac:
+    if not esp_mac or esp_entry is None:
         _LOGGER.debug("ESPHome config entry for '%s' not found", esp_device_name)
         return
 
-    esp_device = dev_reg.async_get_device(
-        connections={(dr.CONNECTION_NETWORK_MAC, esp_mac)}
-    )
+    esp_device = _async_get_esphome_device(dev_reg, esp_mac, esp_entry)
     if not esp_device:
         _LOGGER.debug("ESPHome device for '%s' not in registry", esp_device_name)
         return
