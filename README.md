@@ -26,6 +26,7 @@ See [Configuration](#configuration) for setup instructions.
 
 - [Tested Models](#tested-models)
 - [Dashboard Card](#dashboard-card)
+- [Community Blueprints](#community-blueprints)
 - [Supported Languages](#supported-languages)
 - [Features](#features)
 - [Prerequisites](#prerequisites)
@@ -88,6 +89,14 @@ The card is a **separate project and not bundled with this integration** -- inst
 For small displays and wall panels there is also a compact view (`tooth_style: none`) with a large standalone timer -- shown here with the header and chips still enabled. With the header hidden as well (`show_header: false`), two of these fit side by side on a 480x480 wall panel:
 
 ![Toothbrush Card compact view](screenshots/CardCompact.png)
+
+---
+
+## Community Blueprints
+
+[**Toothbrushing Notification System (Morning/Evening)**](https://community.home-assistant.io/t/adhd-friendly-toothbrushing-notification-system-morning-evening/1017326) — a blueprint by [@CoatsyJnr](https://github.com/CoatsyJnr) that reminds you to brush morning and evening, at deliberately unpredictable times so the reminder does not fade into background noise. It triggers on this integration's live brushing state — pick the **Handle State** or **Activity** sensor, or the **Brushing** binary sensor.
+
+Like the card above, this is a **separate project and not bundled with this integration**.
 
 ---
 
