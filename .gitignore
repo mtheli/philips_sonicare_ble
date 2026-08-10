@@ -21,4 +21,10 @@ docs/config_flow.html
 # serials/MACs). Anonymised copies live under tests/fixtures/ and are tracked.
 scripts/*_capture.json
 scripts/*_live.json
+
+# Session recordings from scripts/sonicare_session_record.py. That script
+# writes no MAC, serial or device name, so a recording is shareable as it
+# stands - but it is still a raw take until it has been reviewed and promoted
+# to tests/fixtures/.
+sonicare_session_*.jsonl
 .pytest_cache/
