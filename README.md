@@ -94,7 +94,7 @@ For small displays and wall panels there is also a compact view (`tooth_style: n
 
 ## Community Blueprints
 
-[**Toothbrushing Notification System (Morning/Evening)**](https://community.home-assistant.io/t/adhd-friendly-toothbrushing-notification-system-morning-evening/1017326) — a blueprint by [@CoatsyJnr](https://github.com/CoatsyJnr) that reminds you to brush morning and evening, at deliberately unpredictable times so the reminder does not fade into background noise. It triggers on this integration's live brushing state — pick the **Handle State** or **Activity** sensor, or the **Brushing** binary sensor.
+[**Toothbrushing Notification System (Morning/Evening)**](https://community.home-assistant.io/t/adhd-friendly-toothbrushing-notification-system-morning-evening/1017326) — a blueprint by [@CoatsyJnr](https://github.com/CoatsyJnr) that reminds you to brush morning and evening, at deliberately unpredictable times so the reminder does not fade into background noise. It triggers on this integration's live brushing state — pick the **Brushing** binary sensor (the **Brushing State** sensor works as well). The blueprint's own description also offers the **Handle State** and **Activity** sensors, but its trigger compares against the translated display names rather than the raw states (`run` and `brushing`), so those two never fire; I reported it as [CoatsyJnr/home-assistant-blueprints#1](https://github.com/CoatsyJnr/home-assistant-blueprints/issues/1).
 
 Like the card above, this is a **separate project and not bundled with this integration**.
 
