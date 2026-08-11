@@ -98,6 +98,13 @@ POLL_CHARS = [
     const.CHAR_ROUTINE_LENGTH,
     const.CHAR_BRUSHING_MODE,
     const.CHAR_INTENSITY,
+    # Where the *selected* mode lives on HX9996 / HX999X. Those handles report
+    # it as a mode-id byte here, while 0x4080 (BRUSHING_MODE) carries something
+    # else entirely - see uses_routine_id_mode() and the note above
+    # BRUSHING_MODES in const.py. It notifies on neither model, so polling is
+    # the only way to see it change, and without it a recording from a Prestige
+    # says "clean" no matter which routine was actually running.
+    const.CHAR_AVAILABLE_ROUTINE_IDS,
 ]
 
 AUTH_HINTS = ("insufficient", "authentication", "encryption", "not paired",
