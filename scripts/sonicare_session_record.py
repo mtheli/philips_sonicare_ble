@@ -45,6 +45,13 @@ and wipes its timer in the same instant, and the display face lands later
 still. ``--settle`` keeps the recording open past the end for that reason;
 shortening it loses the end of the session, which is the part worth having.
 
+Waiting is not the same as requiring, though. A handle switches itself off
+once it is done, so the link usually drops a few seconds into that settle
+window - which means the recording is written whenever the handle goes away,
+not only when the window runs out. Each file says which of the two happened
+in its ``ended`` field, so a short recording can be told apart from a
+complete one without guessing.
+
 Bonding
 -------
 Encrypted reads (Battery Level, Device Information) need a bond. On Linux
@@ -355,7 +362,17 @@ def _session_is_running(recorder: SessionRecorder) -> bool:
 
 def _session_path(out_dir: Path, model: str | None) -> Path:
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    return out_dir / f"sonicare_session_{(model or 'unknown').lower()}_{stamp}.jsonl"
+    base = f"sonicare_session_{(model or 'unknown').lower()}_{stamp}"
+    path = out_dir / f"{base}.jsonl"
+    # The stamp is only accurate to the second, and the address is deliberately
+    # not part of the name (see "Privacy"). Two handles of the same model
+    # finishing together would therefore land on one name - and watch mode
+    # exists to record several at once, so that is a real collision.
+    n = 2
+    while path.exists():
+        path = out_dir / f"{base}_{n}.jsonl"
+        n += 1
+    return path
 
 
 async def _watch_handle(address: str, args, slots: asyncio.Semaphore,
@@ -384,51 +401,81 @@ async def _watch_handle(address: str, args, slots: asyncio.Semaphore,
                 ended_at: float | None = None
                 last_activity = time.monotonic()
                 sessions = 0
+                saw_session = False
+                idle = False
 
-                while client.is_connected:
-                    for uuid in chars:
-                        try:
-                            if recorder.record(uuid, await client.read_gatt_char(uuid), "read"):
-                                last_activity = time.monotonic()
-                        except Exception:  # noqa: BLE001 - one failed read is not fatal
-                            pass
+                def write_session(ended: str) -> None:
+                    nonlocal sessions
+                    sessions += 1
+                    path = recorder.write({
+                        **meta,
+                        "protocol": "classic",
+                        "duration_s": round(time.monotonic() - recorder.started, 1),
+                        "events": len(recorder.events),
+                        "polled": True,
+                        # How the recording came to an end. "settled" is the
+                        # complete case; the others say what is missing, which
+                        # a fixture built from this file needs to know.
+                        "ended": ended,
+                    }, _session_path(args.out_dir, model))
+                    log(f"[{label}] wrote {len(recorder.events)} events to "
+                        f"{path.name} ({ended})")
 
-                    running = _session_is_running(recorder)
-                    if running and not was_running:
-                        log(f"[{label}] session started")
-                        ended_at = None
-                    elif was_running and not running:
-                        # Do not write yet. The values that describe the
-                        # finished session arrive after the handle stops - a
-                        # Prestige reports session_complete and wipes its timer
-                        # in the same instant, and the display face lands later
-                        # still. Keep recording through the settle window.
-                        log(f"[{label}] session ended, settling")
-                        ended_at = time.monotonic()
-                    was_running = running
+                try:
+                    while client.is_connected:
+                        for uuid in chars:
+                            try:
+                                if recorder.record(uuid, await client.read_gatt_char(uuid), "read"):
+                                    last_activity = time.monotonic()
+                            except Exception:  # noqa: BLE001 - one failed read is not fatal
+                                pass
 
-                    if ended_at and time.monotonic() - ended_at >= args.settle:
-                        sessions += 1
-                        path = recorder.write({
-                            **meta,
-                            "protocol": "classic",
-                            "duration_s": round(time.monotonic() - recorder.started, 1),
-                            "events": len(recorder.events),
-                            "polled": True,
-                        }, _session_path(args.out_dir, model))
-                        log(f"[{label}] wrote {len(recorder.events)} events to {path.name}")
-                        recorder.restart()
-                        await _read_baseline(client, recorder)
-                        ended_at = None
-                        last_activity = time.monotonic()
+                        running = _session_is_running(recorder)
+                        if running and not was_running:
+                            log(f"[{label}] session started")
+                            saw_session = True
+                            ended_at = None
+                        elif was_running and not running:
+                            # Do not write yet. The values that describe the
+                            # finished session arrive after the handle stops - a
+                            # Prestige reports session_complete and wipes its timer
+                            # in the same instant, and the display face lands later
+                            # still. Keep recording through the settle window.
+                            log(f"[{label}] session ended, settling")
+                            ended_at = time.monotonic()
+                        was_running = running
 
-                    if not running and time.monotonic() - last_activity >= args.idle_timeout:
-                        log(f"[{label}] idle for {args.idle_timeout:.0f} s - disconnecting"
-                            f" ({sessions} session(s) recorded)")
-                        return
+                        if ended_at and time.monotonic() - ended_at >= args.settle:
+                            write_session("settled")
+                            recorder.restart()
+                            await _read_baseline(client, recorder)
+                            saw_session = False
+                            ended_at = None
+                            last_activity = time.monotonic()
 
-                    await asyncio.sleep(args.poll_interval)
-                log(f"[{label}] link dropped")
+                        if not running and time.monotonic() - last_activity >= args.idle_timeout:
+                            log(f"[{label}] idle for {args.idle_timeout:.0f} s - disconnecting"
+                                f" ({sessions} session(s) recorded)")
+                            idle = True
+                            break
+
+                        await asyncio.sleep(args.poll_interval)
+
+                finally:
+                    # Whatever is still buffered has to be written on the way
+                    # out, whichever way that is. A Sonicare switches itself off
+                    # at the end of a session, so the link normally drops within
+                    # seconds of the motor stopping - long before the settle
+                    # window is over. Writing only on a completed settle threw
+                    # exactly those recordings away; the handle that stayed
+                    # connected long enough was the exception, not the rule.
+                    # Ctrl+C and a read error land here for the same reason.
+                    how = "stopped" if client.is_connected else "link dropped"
+                    if saw_session:
+                        write_session(
+                            f"{how} {'while settling' if ended_at else 'mid-session'}")
+                    if not idle:
+                        log(f"[{label}] {how}")
     except Exception as err:  # noqa: BLE001 - a handle failing must not stop the watch
         if _is_auth_error(err):
             log(f"[{label}] refused without a bond - pair it in the OS settings")
@@ -493,7 +540,9 @@ async def main() -> None:
                         help="Where --watch puts its recordings. Default: here")
     parser.add_argument("--settle", type=float, default=45.0,
                         help="Seconds to keep recording after a session ends, so "
-                             "the values that describe it are caught. Default: 45")
+                             "the values that describe it are caught. Cut short "
+                             "when the handle switches itself off; the recording "
+                             "is written either way. Default: 45")
     parser.add_argument("--idle-timeout", type=float, default=300.0,
                         help="Disconnect after this long with nothing happening, "
                              "giving the handle's single BLE slot back. Default: 300")
