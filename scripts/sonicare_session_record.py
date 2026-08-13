@@ -16,8 +16,34 @@ Usage:
   python sonicare_session_record.py AA:BB:.. --seconds 240
   python sonicare_session_record.py --pressure          # + SensorData stream
 
+  python sonicare_session_record.py --watch --pressure  # leave it running
+
 Requirements:
   pip install bleak
+
+Watch mode
+----------
+``--watch`` turns the one-shot capture into something that can be left running:
+it scans continuously, connects to any Sonicare that turns up, and writes one
+file per session for as long as it is there. Several handles at once are fine
+(``--max-connections``), which is the point - collecting captures from more
+models is easier when nobody has to remember to start a recording first.
+
+A handle only advertises while it is awake, so a sighting is a good moment to
+connect: somebody has just picked the brush up. The connection is dropped
+again after ``--idle-timeout`` with nothing happening, which keeps the handle's
+battery out of it and gives its single BLE slot back.
+
+That slot is the thing to know about. **A Sonicare accepts one connection at a
+time**, so while this holds a handle, the Home Assistant integration cannot
+have it - and the other way round. Watch mode is for a machine that is not the
+one running Home Assistant, or for a handle Home Assistant does not know.
+
+Recording does not stop when the motor does. The values that describe a
+finished session arrive afterwards: a Prestige reports ``session_complete``
+and wipes its timer in the same instant, and the display face lands later
+still. ``--settle`` keeps the recording open past the end for that reason;
+shortening it loses the end of the session, which is the part worth having.
 
 Bonding
 -------
@@ -152,11 +178,28 @@ class SessionRecorder:
             print(f"  [{event['t']:8.3f}] {event['char']:<22} {hex_str}")
         return True
 
-    def write(self, meta: dict) -> None:
-        with open(self.out_path, "w", encoding="utf-8") as fh:
+    def write(self, meta: dict, out_path: Path | None = None) -> Path:
+        path = out_path or self.out_path
+        with open(path, "w", encoding="utf-8") as fh:
             fh.write(json.dumps({"kind": "meta", **meta}, ensure_ascii=False) + "\n")
             for event in self.events:
                 fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+        return path
+
+    def value(self, uuid: str) -> str | None:
+        """The last raw value seen for a characteristic, or None."""
+        return self._last.get(uuid.lower())
+
+    def restart(self) -> None:
+        """Drop what has been collected so far and start timing again.
+
+        Watch mode calls this after writing a session: the next one gets its
+        own file, with timestamps starting at zero rather than counting on
+        from whenever the handle happened to connect.
+        """
+        self.events.clear()
+        self._last.clear()
+        self.started = time.monotonic()
 
 
 async def _find_handle(mac: str | None) -> str:
@@ -274,9 +317,163 @@ async def _poll_loop(client: BleakClient, recorder: SessionRecorder,
         await asyncio.sleep(interval)
 
 
+# ── Watch mode ──────────────────────────────────────────────────────────────
+# One long-running scanner, one task per handle it finds. A handle only
+# advertises while it is awake, so a sighting is a good moment to connect: the
+# brush has just been picked up. The connection is dropped again once nothing
+# has happened for a while, which keeps its battery out of it and - more
+# importantly - gives the single BLE slot back.
+
+HANDLE_STATE_RUN = 2
+
+
+def log(message: str) -> None:
+    """Timestamped line for the watch log.
+
+    Watch mode is meant to be left running with its output redirected, where
+    an untimed line hours after the fact says very little, and where Python's
+    block buffering would hold the log back until something else forced a
+    flush. Both are dealt with here rather than asking for `python -u`.
+    """
+    print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
+
+
+def _is_sonicare(device, adv) -> bool:
+    name = (device.name or adv.local_name or "").lower()
+    return "sonicare" in name or const.SONICARE_MANUFACTURER_ID in adv.manufacturer_data
+
+
+def _session_is_running(recorder: SessionRecorder) -> bool:
+    """Whether the handle currently reports itself as brushing.
+
+    Read from handle_state alone. A Kids handle has no brushing_state sensor
+    at all, so anything that relied on it would quietly never record one.
+    """
+    raw = recorder.value(const.CHAR_HANDLE_STATE)
+    return bool(raw) and int(raw[:2], 16) == HANDLE_STATE_RUN
+
+
+def _session_path(out_dir: Path, model: str | None) -> Path:
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    return out_dir / f"sonicare_session_{(model or 'unknown').lower()}_{stamp}.jsonl"
+
+
+async def _watch_handle(address: str, args, slots: asyncio.Semaphore,
+                        active: set[str]) -> None:
+    """Hold one handle: record every session it runs, until it goes away."""
+    label = address[-5:]
+    try:
+        async with slots:
+            log(f"[{label}] connecting")
+            async with BleakClient(address) as client:
+                meta = await _read_identity(client)
+                model = meta.get("model")
+                log(f"[{label}] connected - model {model or 'unreadable'}")
+
+                recorder = SessionRecorder(Path("unused"), quiet=True)
+                if args.pressure:
+                    await _enable_pressure(client)
+                await _subscribe_all(client, recorder, args.pressure)
+                await _read_baseline(client, recorder)
+
+                available = {c.uuid.lower() for s in client.services
+                             for c in s.characteristics}
+                chars = [u for u in POLL_CHARS if u.lower() in available]
+
+                was_running = False
+                ended_at: float | None = None
+                last_activity = time.monotonic()
+                sessions = 0
+
+                while client.is_connected:
+                    for uuid in chars:
+                        try:
+                            if recorder.record(uuid, await client.read_gatt_char(uuid), "read"):
+                                last_activity = time.monotonic()
+                        except Exception:  # noqa: BLE001 - one failed read is not fatal
+                            pass
+
+                    running = _session_is_running(recorder)
+                    if running and not was_running:
+                        log(f"[{label}] session started")
+                        ended_at = None
+                    elif was_running and not running:
+                        # Do not write yet. The values that describe the
+                        # finished session arrive after the handle stops - a
+                        # Prestige reports session_complete and wipes its timer
+                        # in the same instant, and the display face lands later
+                        # still. Keep recording through the settle window.
+                        log(f"[{label}] session ended, settling")
+                        ended_at = time.monotonic()
+                    was_running = running
+
+                    if ended_at and time.monotonic() - ended_at >= args.settle:
+                        sessions += 1
+                        path = recorder.write({
+                            **meta,
+                            "protocol": "classic",
+                            "duration_s": round(time.monotonic() - recorder.started, 1),
+                            "events": len(recorder.events),
+                            "polled": True,
+                        }, _session_path(args.out_dir, model))
+                        log(f"[{label}] wrote {len(recorder.events)} events to {path.name}")
+                        recorder.restart()
+                        await _read_baseline(client, recorder)
+                        ended_at = None
+                        last_activity = time.monotonic()
+
+                    if not running and time.monotonic() - last_activity >= args.idle_timeout:
+                        log(f"[{label}] idle for {args.idle_timeout:.0f} s - disconnecting"
+                            f" ({sessions} session(s) recorded)")
+                        return
+
+                    await asyncio.sleep(args.poll_interval)
+                log(f"[{label}] link dropped")
+    except Exception as err:  # noqa: BLE001 - a handle failing must not stop the watch
+        if _is_auth_error(err):
+            log(f"[{label}] refused without a bond - pair it in the OS settings")
+        else:
+            log(f"[{label}] {type(err).__name__}: {err}")
+    finally:
+        active.discard(address)
+
+
+async def _watch(args) -> None:
+    """Scan forever, recording every Sonicare that turns up."""
+    # Redirected output is block-buffered by default, which for something meant
+    # to run for days means the log stays empty until a buffer happens to fill.
+    # Line buffering costs nothing at this rate and makes `> watch.log` behave.
+    sys.stdout.reconfigure(line_buffering=True)
+
+    active: set[str] = set()
+    slots = asyncio.Semaphore(args.max_connections)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Watching for Sonicare handles. Recordings go to {args.out_dir}")
+    print(f"Up to {args.max_connections} at a time; Ctrl+C to stop.\n")
+    print("While this holds a handle, Home Assistant cannot connect to it -")
+    print("a Sonicare accepts one connection at a time.\n")
+
+    wanted = args.mac.upper() if args.mac else None
+    if wanted:
+        print(f"Restricted to {wanted}.\n")
+
+    def seen(device, adv) -> None:
+        if wanted and device.address.upper() != wanted:
+            return
+        if not _is_sonicare(device, adv) or device.address in active:
+            return
+        active.add(device.address)
+        asyncio.create_task(_watch_handle(device.address, args, slots, active))
+
+    async with BleakScanner(detection_callback=seen):
+        while True:
+            await asyncio.sleep(3600)
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Record a Classic Sonicare brushing session to JSONL")
+        description="Record Classic Sonicare brushing sessions to JSONL")
     parser.add_argument("mac", nargs="?", help="BLE MAC address (optional - scans if omitted)")
     parser.add_argument("--seconds", type=int, default=180,
                         help="Recording length. Default: 180 (a 2-minute routine plus slack)")
@@ -288,7 +485,26 @@ async def main() -> None:
     parser.add_argument("--out", default=None,
                         help="Output path. Default: sonicare_session_<timestamp>.jsonl")
     parser.add_argument("--quiet", action="store_true", help="Do not print every value")
+    parser.add_argument("--watch", action="store_true",
+                        help="Run indefinitely: record every session of every "
+                             "handle that turns up, one file each. Meant to be "
+                             "left running.")
+    parser.add_argument("--out-dir", type=Path, default=Path("."),
+                        help="Where --watch puts its recordings. Default: here")
+    parser.add_argument("--settle", type=float, default=45.0,
+                        help="Seconds to keep recording after a session ends, so "
+                             "the values that describe it are caught. Default: 45")
+    parser.add_argument("--idle-timeout", type=float, default=300.0,
+                        help="Disconnect after this long with nothing happening, "
+                             "giving the handle's single BLE slot back. Default: 300")
+    parser.add_argument("--max-connections", type=int, default=3,
+                        help="How many handles to hold at once. Adapters run out "
+                             "of slots well before this matters. Default: 3")
     args = parser.parse_args()
+
+    if args.watch:
+        await _watch(args)
+        return
 
     address = await _find_handle(args.mac)
     out_path = Path(args.out or f"sonicare_session_{time.strftime('%Y%m%d_%H%M%S')}.jsonl")
