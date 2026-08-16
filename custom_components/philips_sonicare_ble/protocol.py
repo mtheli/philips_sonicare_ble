@@ -46,6 +46,10 @@ class SonicareProtocol(abc.ABC):
         # coordinator after construction; used to pick the correct brushing-
         # mode decode table, which differs per model family. Empty until known.
         self.model = ""
+        # Whether the handle answers a stored-record request by notifying it
+        # or by making it readable. Set alongside the model, for the same
+        # reason: it is a property of the handle family, not of the request.
+        self.direct_session_read = False
 
     # --- Session lifecycle -------------------------------------------------
 

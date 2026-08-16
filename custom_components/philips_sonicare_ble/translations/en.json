@@ -239,6 +239,12 @@
       "latest_session_id": {
         "name": "Latest Session ID"
       },
+      "last_session": {
+        "name": "Last Session"
+      },
+      "last_session_duration": {
+        "name": "Last Session Duration"
+      },
       "session_count": {
         "name": "Session Count"
       },

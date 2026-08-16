@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.const import UnitOfTime, PERCENTAGE
+from homeassistant.util import dt as dt_util
 
 from .coordinator import PhilipsSonicareCoordinator
 from homeassistant.components.bluetooth import async_last_service_info
@@ -36,6 +37,7 @@ from .const import (
     SVC_STORAGE,
     SVC_SENSOR,
     SECTORS_PREMIUM,
+    supports_stored_sessions,
     number_of_sectors_for_model,
     current_sector,
 )
@@ -116,6 +118,19 @@ async def async_setup_entry(
         entities.extend([
             SonicareLatestSessionIdSensor(coordinator, entry),
             SonicareSessionCountSensor(coordinator, entry),
+        ])
+    elif supports_stored_sessions(model, services):
+        # A Kids handle keeps the same session records without a storage
+        # service to put them in, so the service is the wrong thing to ask
+        # about. It has no session counter, though.
+        entities.append(SonicareLatestSessionIdSensor(coordinator, entry))
+
+    # The record of a past session. Read through an exchange the Condor
+    # protocol does not share.
+    if supports_stored_sessions(model, services) and not is_condor:
+        entities.extend([
+            SonicareLastSessionSensor(coordinator, entry),
+            SonicareLastSessionDurationSensor(coordinator, entry),
         ])
 
     # Sensor/IMU service sensors (pressure, temperature)
@@ -524,6 +539,100 @@ class SonicareLatestSessionIdSensor(PhilipsSonicareEntity, SensorEntity):
         if not self.coordinator.data:
             return None
         return self.coordinator.data.get("latest_session_id")
+
+
+# ---------------------------------------------------------------------------
+# Last Session
+# ---------------------------------------------------------------------------
+class SonicareLastSessionSensor(PhilipsSonicareEntity, SensorEntity):
+    """When the handle's most recent stored session was collected.
+
+    The state is a time rather than a duration because the handle's own
+    record has no wall clock in it - what it counts is its own uptime, and a
+    handle whose clock was never set counts from zero. What is known is when
+    the record was collected, which is within seconds of the session ending.
+
+    The session itself is in the attributes: how long it ran, what it was
+    aiming for, and how it was set up. That keeps one reading for the session
+    instead of one per field, and the reading carries a time, which is what
+    "when did I last brush" actually asks.
+    """
+
+    _attr_translation_key = "last_session"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:timer-check-outline"
+    _data_key = "last_session"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_last_session"
+
+    def _record(self) -> dict | None:
+        if not self.coordinator.data:
+            return None
+        return self.coordinator.data.get("last_session")
+
+    @property
+    def native_value(self) -> datetime | None:
+        record = self._record()
+        if not record:
+            return None
+        # Stored as text so it survives the round trip through the config
+        # entry store, which has no notion of a datetime.
+        return dt_util.parse_datetime(record.get("ended_at") or "")
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        record = self._record()
+        if not record:
+            return None
+        return {
+            "session_id": record.get("session_id"),
+            "duration_seconds": record.get("duration"),
+            "routine_length_seconds": record.get("routine_length"),
+            "brushing_mode": record.get("brushing_mode"),
+            "intensity": record.get("intensity"),
+            # True while the handle has finished a session it has not filed
+            # yet. Some only write the record as they switch off, a minute
+            # or so later, so between the two this record is no longer the
+            # last session - and anything presenting it as one would show
+            # the session before the one that was just brushed.
+            "superseded": bool(record.get("superseded")),
+            # How the state was arrived at, because the three ways differ in
+            # what they are worth: ``session_end`` was watched happening and
+            # is accurate to seconds, ``handle_clock`` was worked out from
+            # the handle's own counter and lands within about a minute, and
+            # ``collection`` means only that the session was already over by
+            # then - it could be far older.
+            "time_source": record.get("time_source"),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Last Session Duration
+# ---------------------------------------------------------------------------
+class SonicareLastSessionDurationSensor(PhilipsSonicareEntity, SensorEntity):
+    """How long the most recent stored session ran.
+
+    Its own reading rather than only an attribute: this is the number worth
+    plotting, and the one an automation asks about.
+    """
+
+    _attr_translation_key = "last_session_duration"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.SECONDS
+    _attr_icon = "mdi:timer-outline"
+    _data_key = "last_session"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_last_session_duration"
+
+    @property
+    def native_value(self) -> int | None:
+        if not self.coordinator.data:
+            return None
+        return (self.coordinator.data.get("last_session") or {}).get("duration")
 
 
 # ---------------------------------------------------------------------------

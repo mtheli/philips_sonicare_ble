@@ -48,6 +48,11 @@ SVC_DEVICE_INFO = "0000180a-0000-1000-8000-00805f9b34fb"
 SVC_GATT = "00001801-0000-1000-8000-00805f9b34fb"
 SVC_SONICARE = "477ea600-a260-11e4-ae37-0002a5d50001"
 SVC_ROUTINE = "477ea600-a260-11e4-ae37-0002a5d50002"
+# The Kids handle's own home for the session characteristics: it has no
+# storage service, and keeps them here instead. No other model has this
+# service at all, and on every other model the same characteristics live in
+# the storage service - so which one to address is a property of the handle.
+SVC_KIDS_SESSION = "477ea600-a260-11e4-ae37-0002a5d50003"
 SVC_STORAGE = "477ea600-a260-11e4-ae37-0002a5d50004"
 SVC_SENSOR = "477ea600-a260-11e4-ae37-0002a5d50005"
 SVC_BRUSHHEAD = "477ea600-a260-11e4-ae37-0002a5d50006"
@@ -85,7 +90,9 @@ CHAR_MANUFACTURER_NAME = "00002a29-0000-1000-8000-00805f9b34fb"
 CHAR_HANDLE_STATE = "477ea600-a260-11e4-ae37-0002a5d54010"
 CHAR_AVAILABLE_ROUTINES = "477ea600-a260-11e4-ae37-0002a5d54020"
 CHAR_AVAILABLE_ROUTINE_IDS = "477ea600-a260-11e4-ae37-0002a5d54022"
-CHAR_UNKNOWN_4030 = "477ea600-a260-11e4-ae37-0002a5d54030"
+# Named by the handle's own vendor tooling: which feature the handle
+# currently has active. Not read by this integration yet.
+CHAR_ACTIVE_FEATURE = "477ea600-a260-11e4-ae37-0002a5d54030"
 CHAR_MOTOR_RUNTIME = "477ea600-a260-11e4-ae37-0002a5d54040"
 CHAR_HANDLE_TIME = "477ea600-a260-11e4-ae37-0002a5d54050"
 
@@ -100,10 +107,16 @@ CHAR_BRUSHING_STATE = "477ea600-a260-11e4-ae37-0002a5d54082"
 CHAR_BRUSHING_TIME = "477ea600-a260-11e4-ae37-0002a5d54090"
 # Routine length in seconds (uint16 LE)
 CHAR_ROUTINE_LENGTH = "477ea600-a260-11e4-ae37-0002a5d54091"
-CHAR_UNKNOWN_40A0 = "477ea600-a260-11e4-ae37-0002a5d540a0"
+# The segment of the handle's own quadrant pacer - the thing that
+# buzzes every 30 seconds to move you along. Present on every Classic
+# handle. Not read yet: the card derives sectors from elapsed time,
+# and whether this is better has to be measured first.
+CHAR_QUADPACER_SEGMENT = "477ea600-a260-11e4-ae37-0002a5d540a0"
 # Intensity: 0=low, 1=medium, 2=high
 CHAR_INTENSITY = "477ea600-a260-11e4-ae37-0002a5d540b0"
-CHAR_UNKNOWN_40C0 = "477ea600-a260-11e4-ae37-0002a5d540c0"
+# Easy-start stage: the gentle run-in that raises power over the first
+# weeks of use.
+CHAR_EASY_START_STAGE = "477ea600-a260-11e4-ae37-0002a5d540c0"
 
 # ── Storage Service (0x0004) ─────────────────────────────────────────────────
 CHAR_LATEST_SESSION_ID = "477ea600-a260-11e4-ae37-0002a5d540d0"
@@ -112,6 +125,50 @@ CHAR_SESSION_TYPE = "477ea600-a260-11e4-ae37-0002a5d540d5"
 CHAR_ACTIVE_SESSION_ID = "477ea600-a260-11e4-ae37-0002a5d540e0"
 CHAR_SESSION_DATA = "477ea600-a260-11e4-ae37-0002a5d54100"
 CHAR_SESSION_ACTION = "477ea600-a260-11e4-ae37-0002a5d54110"
+# Which session the handle has loaded for reading. It answers a selection
+# rather than announcing anything: the handle reports the session it just
+# loaded, which is how a caller knows the selection took before reading the
+# record. Kept for reference - the record names its own session, so this
+# integration checks that instead of subscribing here.
+CHAR_LOADED_SESSION = "477ea600-a260-11e4-ae37-0002a5d540f0"
+
+# A finished session is kept on the handle and is not read directly: the
+# record wanted is selected first (kind, then which session), the transfer is
+# then started, and the record arrives as a notification on CHAR_SESSION_DATA.
+# The notification on CHAR_ACTIVE_SESSION_ID that precedes it announces the
+# transfer: session id, payload length, and two trailing bytes.
+#
+# Only the routine record is requested. It is the one that describes the
+# session itself, and asking for it alone keeps the exchange to a single
+# round-trip in the seconds between the motor stopping and the handle
+# switching itself off.
+SESSION_RECORD_ROUTINE = 0
+SESSION_ACTION_START = 0
+
+# Not every handle keeps its sessions behind a storage service. A Sonicare
+# for Kids has none: the same characteristics sit in the brushing service,
+# and the two that drive the selection - the kind and the control point -
+# are absent. Its data characteristic is readable instead of notifying, so
+# the record is selected and then simply read.
+#
+# Both shapes answer with the same record. The one difference is that a
+# notified record is chunked and carries a leading byte for it, which a read
+# one has no need of - so the fields sit one byte earlier.
+# Offsets below reach up to 13, and a shorter answer is not a record.
+SESSION_RECORD_MIN_LEN = 14
+# The record format carries a version, which the handle reports in a
+# descriptor - and descriptors are not readable over every transport this
+# integration supports. So the guard against a different format is the
+# record itself: a layout that shifted by even one byte still decodes, into
+# numbers that look like an answer. These bounds are what a session cannot
+# plausibly be, so an unrecognised format is refused rather than believed.
+#
+# Observed on real handles: routines of 60, 120 and 160 seconds, and a timer
+# that stops at the routine length rather than running past it. The margin
+# is generous on purpose - the point is to catch a shifted layout, not to
+# police an unusual routine.
+MAX_ROUTINE_SECONDS = 3600
+MAX_DURATION_FACTOR = 2
 
 # ── Sensor Service (0x0005) ──────────────────────────────────────────────────
 # Sensor enable bitmask: bit0=pressure, bit1=temperature, bit2=gyroscope
@@ -149,6 +206,11 @@ CHAR_EXTENDED_UNKNOWN_4410 = "477ea600-a260-11e4-ae37-0002a5d54410"
 CHAR_SETTINGS = "477ea600-a260-11e4-ae37-0002a5d54420"
 
 # ── Enums ────────────────────────────────────────────────────────────────────
+# The state a handle reports while its motor runs. Named because the value
+# is the only "is a session happening" signal on handles that report no
+# brushing state of their own.
+HANDLE_STATE_RUNNING = 2
+
 HANDLE_STATES = {
     0: "off",
     1: "standby",
@@ -235,6 +297,35 @@ def supports_settings_write(model: str) -> bool:
 # other handle exposes it as a sequential index in 0x4080 (BRUSHING_MODE). This
 # gate decides which characteristic and which table the parser uses.
 ROUTINE_ID_MODE_MODELS = ("HX9996", "HX999")
+
+
+# Which service to address a characteristic through, where a Kids handle
+# differs. Reads and writes over the ESP bridge name the service explicitly,
+# so addressing the storage service on a handle that has none simply fails.
+KIDS_CHAR_SERVICE_OVERRIDE: dict[str, str] = {
+    CHAR_LATEST_SESSION_ID: SVC_KIDS_SESSION,
+    CHAR_ACTIVE_SESSION_ID: SVC_KIDS_SESSION,
+    CHAR_SESSION_DATA: SVC_KIDS_SESSION,
+}
+
+
+def is_kids_model(model: str) -> bool:
+    """True for the Sonicare for Kids family (HX63xx)."""
+    return (model or "").upper().startswith("HX63")
+
+
+def uses_direct_session_read(model: str) -> bool:
+    """True when a stored record is read back rather than notified."""
+    return is_kids_model(model)
+
+
+def supports_stored_sessions(model: str, services: set[str]) -> bool:
+    """True when the handle can be asked for its record of a past session.
+
+    Either it has the storage service, or it is a Kids handle, which keeps
+    the same records without one.
+    """
+    return SVC_STORAGE.lower() in services or is_kids_model(model)
 
 
 def uses_routine_id_mode(model: str) -> bool:
@@ -471,7 +562,7 @@ CHAR_SERVICE_MAP: dict[str, str] = {
     CHAR_HANDLE_STATE: SVC_SONICARE,
     CHAR_AVAILABLE_ROUTINES: SVC_SONICARE,
     CHAR_AVAILABLE_ROUTINE_IDS: SVC_SONICARE,
-    CHAR_UNKNOWN_4030: SVC_SONICARE,
+    CHAR_ACTIVE_FEATURE: SVC_SONICARE,
     CHAR_MOTOR_RUNTIME: SVC_SONICARE,
     CHAR_HANDLE_TIME: SVC_SONICARE,
     # Routine Service (0x0002)
@@ -480,9 +571,9 @@ CHAR_SERVICE_MAP: dict[str, str] = {
     CHAR_BRUSHING_STATE: SVC_ROUTINE,
     CHAR_BRUSHING_TIME: SVC_ROUTINE,
     CHAR_ROUTINE_LENGTH: SVC_ROUTINE,
-    CHAR_UNKNOWN_40A0: SVC_ROUTINE,
+    CHAR_QUADPACER_SEGMENT: SVC_ROUTINE,
     CHAR_INTENSITY: SVC_ROUTINE,
-    CHAR_UNKNOWN_40C0: SVC_ROUTINE,
+    CHAR_EASY_START_STAGE: SVC_ROUTINE,
     # Storage Service (0x0004)
     CHAR_LATEST_SESSION_ID: SVC_STORAGE,
     CHAR_SESSION_COUNT: SVC_STORAGE,

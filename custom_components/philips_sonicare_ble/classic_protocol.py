@@ -15,6 +15,7 @@ this class holds the pure transform between raw GATT bytes and
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import struct
 from collections.abc import Callable
@@ -49,11 +50,15 @@ from .const import (
     CHAR_MODEL_NUMBER,
     CHAR_MOTOR_RUNTIME,
     CHAR_ROUTINE_LENGTH,
+    CHAR_ACTIVE_SESSION_ID,
     CHAR_SENSOR_DATA,
     CHAR_SENSOR_ENABLE,
     CHAR_SERIAL_NUMBER,
+    CHAR_SESSION_ACTION,
     CHAR_SESSION_COUNT,
+    CHAR_SESSION_DATA,
     CHAR_SESSION_ID,
+    CHAR_SESSION_TYPE,
     CHAR_SETTINGS,
     CHAR_SOFTWARE_REVISION,
     HANDLE_STATES,
@@ -61,6 +66,11 @@ from .const import (
     PRESSURE_ALARM_STATES,
     SENSOR_FRAME_PRESSURE,
     SENSOR_FRAME_TEMPERATURE,
+    SESSION_ACTION_START,
+    MAX_DURATION_FACTOR,
+    MAX_ROUTINE_SECONDS,
+    SESSION_RECORD_MIN_LEN,
+    SESSION_RECORD_ROUTINE,
     brushing_mode_for_model,
     uses_routine_id_mode,
 )
@@ -369,6 +379,131 @@ class ClassicProtocol(SonicareProtocol):
 
     # --- Writes ------------------------------------------------------------
 
+    async def fetch_stored_session(
+        self, session_id: int | None = None, timeout: float = 5.0
+    ) -> dict[str, Any] | None:
+        """Fetch the handle's own record of a finished session.
+
+        The handle keeps its sessions rather than only reporting them as they
+        happen, which makes this the authoritative version of a session: what
+        the handle concluded, still available when nobody was listening at
+        the moment it ended.
+
+        Selecting a record and receiving it are separate steps - the kind and
+        the session are written first, the transfer is then started, and the
+        record arrives as a notification. The subscription is set up per
+        fetch and taken down again afterwards, so the characteristic stays
+        quiet the rest of the time.
+
+        Returns the decoded record, or ``None`` when the handle did not
+        answer or answered with something too short to be one.
+        """
+        if session_id is None:
+            raw = await self._transport.read_char(CHAR_LATEST_SESSION_ID)
+            if not raw:
+                _LOGGER.debug("Stored session: handle did not report a latest id")
+                return None
+            session_id = int.from_bytes(bytes(raw)[:2], "little")
+
+        if self.direct_session_read:
+            record = await self._read_session_record(session_id)
+            return await self._decode_fetched(record, session_id, verify=True)
+
+        loop = asyncio.get_running_loop()
+        received: asyncio.Future[bytes] = loop.create_future()
+
+        def _on_record(_uuid: str, data: bytes) -> None:
+            if not received.done():
+                received.set_result(bytes(data))
+
+        await self._transport.subscribe(CHAR_SESSION_DATA, _on_record)
+        try:
+            await self._transport.write_char(
+                CHAR_SESSION_TYPE, bytes([SESSION_RECORD_ROUTINE])
+            )
+            await self._transport.write_char(
+                CHAR_ACTIVE_SESSION_ID, session_id.to_bytes(2, "little")
+            )
+            await self._transport.write_char(
+                CHAR_SESSION_ACTION, bytes([SESSION_ACTION_START])
+            )
+            record = await asyncio.wait_for(received, timeout)
+        except asyncio.TimeoutError:
+            _LOGGER.debug("Stored session %d: no answer within %.0fs",
+                          session_id, timeout)
+            return None
+        except Exception as err:  # noqa: BLE001 - a refused write is not fatal
+            _LOGGER.debug("Stored session %d could not be requested: %s",
+                          session_id, err)
+            return None
+        finally:
+            try:
+                await self._transport.unsubscribe(CHAR_SESSION_DATA)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Could not unsubscribe session data: %s", err)
+
+        return await self._decode_fetched(record, session_id, chunked=True)
+
+    async def _read_session_record(self, session_id: int) -> bytes | None:
+        """Select a session, then read its record.
+
+        The shorter exchange, for a handle with no kind selector: there is
+        only one kind of record to ask for, so choosing the session is the
+        whole request.
+        """
+        try:
+            await self._transport.write_char(
+                CHAR_ACTIVE_SESSION_ID, session_id.to_bytes(2, "little")
+            )
+            raw = await self._transport.read_char(CHAR_SESSION_DATA)
+        except Exception as err:  # noqa: BLE001 - a refused request is not fatal
+            _LOGGER.debug("Stored session %d could not be read: %s", session_id, err)
+            return None
+        return bytes(raw) if raw else None
+
+    async def _decode_fetched(
+        self, record: bytes | None, session_id: int, chunked: bool = False,
+        verify: bool = False
+    ) -> dict[str, Any] | None:
+        """Decode a fetched record and read the clock that dates it."""
+        if not record:
+            return None
+        decoded = decode_session_record(record, self.model, chunked=chunked)
+        if decoded is None:
+            _LOGGER.debug("Stored session %d: answer too short (%s)",
+                          session_id, record.hex())
+            return None
+        # Reading the record straight after selecting it means nothing
+        # confirms the selection took: a handle asked for a session it does
+        # not have answers with the one still in its buffer, and says
+        # nothing about it. The record names the session it describes, so
+        # that is what decides - a mismatch is the previous answer, not this
+        # session.
+        if verify and decoded["session_id"] != session_id:
+            _LOGGER.debug(
+                "Asked for stored session %d, got %d — the selection did not "
+                "take", session_id, decoded["session_id"],
+            )
+            return None
+
+        # The handle's running counter, read as close to the record as the
+        # link allows. It is the same counter the record is stamped with, so
+        # the difference between the two is how long ago the session ended -
+        # the only way to place a stored session in real time, since the
+        # handle has no notion of the date.
+        try:
+            raw = await self._transport.read_char(CHAR_HANDLE_TIME)
+            if raw and len(raw) >= 4:
+                decoded["handle_clock"] = int.from_bytes(bytes(raw)[:4], "little")
+        except Exception as err:  # noqa: BLE001 - only costs the anchor
+            _LOGGER.debug("Could not read the handle clock: %s", err)
+        _LOGGER.info(
+            "Stored session %d: %ds of %ds, mode %s",
+            decoded["session_id"], decoded["duration"],
+            decoded["routine_length"], decoded["brushing_mode"] or "?",
+        )
+        return decoded
+
     async def set_brushing_mode(self, mode_key: str) -> None:
         mode_id = _reverse_lookup(BRUSHING_MODES, mode_key)
         if mode_id is None:
@@ -402,6 +537,74 @@ class ClassicProtocol(SonicareProtocol):
             "Settings updated: bit 0x%04x %s (0x%08x → 0x%08x)",
             bit_mask, "ON" if enabled else "OFF", current, new_value,
         )
+
+
+def decode_session_record(
+    record: bytes, model: str | None, chunked: bool = False
+) -> dict[str, Any] | None:
+    """Decode the routine record of one stored session.
+
+    Layout, verified against the live characteristics of the same session on
+    a handle that reported model HX999X (2026-08-16): the session id matched
+    ``latest_session_id``, the duration matched the peak of the live brushing
+    timer before it was wiped, and the target matched ``routine_length``.
+
+    A record that arrives as a notification is chunked and leads with a byte
+    for that, which the announced transfer length does not count - so its
+    fields sit one byte later than in a record that was simply read. Same
+    record, same order, one byte of framing.
+
+    Where the mode sits depends on the handle, in the same split the live
+    path already makes: the models that report their selected routine as an
+    id on 0x4022 carry that id here too, while the others carry the mode
+    index that 0x4080 would report. Reading the wrong one yields a plausible
+    but wrong mode, so the model decides - as it does for the live value.
+
+    ``timestamp`` is the handle's own clock at the moment the session
+    *began*, not when it ended - measured against a session that ran from
+    14:51:03 to 14:53:13, counting from the stamp landed on its start. It is
+    not wall time either: a handle whose clock was never set counts from
+    zero, so the value only means something next to another reading of the
+    same clock.
+    """
+    base = 1 if chunked else 0
+    if len(record) < base + SESSION_RECORD_MIN_LEN - 1:
+        return None
+
+    routine_id_mode = uses_routine_id_mode(model or "")
+    mode_value = record[base + 12] if routine_id_mode else record[base + 10]
+    if routine_id_mode:
+        mode = BRUSHING_MODES.get(mode_value)
+    else:
+        mode = brushing_mode_for_model(model or "", mode_value)
+    if mode is None:
+        _LOGGER.debug(
+            "Stored session carries an unmapped mode %d for model %s (raw: %s)",
+            mode_value, model or "?", record.hex(),
+        )
+
+    routine_length = int.from_bytes(record[base + 8:base + 10], "little")
+    duration = int.from_bytes(record[base + 6:base + 8], "little")
+    if not 0 < routine_length <= MAX_ROUTINE_SECONDS or (
+        duration > routine_length * MAX_DURATION_FACTOR
+    ):
+        _LOGGER.debug(
+            "Stored session does not read as a session (%ds of a %ds routine) "
+            "— the handle's record format is not the one this decodes: %s",
+            duration, routine_length, record.hex(),
+        )
+        return None
+
+    return {
+        "session_id": int.from_bytes(record[base + 4:base + 6], "little"),
+        "duration": duration,
+        "routine_length": routine_length,
+        "brushing_mode": mode,
+        "brushing_mode_value": mode_value,
+        "intensity": INTENSITIES.get(record[base + 11]),
+        "intensity_value": record[base + 11],
+        "timestamp": int.from_bytes(record[base:base + 4], "little"),
+    }
 
 
 def _reverse_lookup(mapping: dict[int, str], value: str) -> int | None:

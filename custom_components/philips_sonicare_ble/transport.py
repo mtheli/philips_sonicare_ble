@@ -309,6 +309,13 @@ async def async_unpair_bridge_slot(
 class SonicareTransport(abc.ABC):
     """Abstract BLE transport for Philips Sonicare."""
 
+    # Where a handle keeps a characteristic, when that differs from the
+    # usual arrangement. Only the bridge transport needs it - it names the
+    # service on every operation, while a direct connection looks the
+    # characteristic up itself - but it belongs to the transport either way,
+    # because it describes the device rather than the request.
+    char_service_overrides: dict[str, str] = {}
+
     @abc.abstractmethod
     async def connect(self) -> None:
         """Establish persistent connection for live monitoring."""
@@ -618,9 +625,15 @@ class EspBridgeTransport(SonicareTransport):
             return f"{base}_{self._esp_bridge_id}"
         return base
 
-    @staticmethod
-    def _get_service_uuid(char_uuid: str) -> str:
-        svc = CHAR_SERVICE_MAP.get(char_uuid)
+    def _get_service_uuid(self, char_uuid: str) -> str:
+        """Which service to address a characteristic through.
+
+        The bridge names the service on every read and write, so this has to
+        be right per handle rather than per characteristic: a Kids handle
+        keeps the session characteristics in a service of its own, and
+        addressing the storage service it does not have would simply fail.
+        """
+        svc = self.char_service_overrides.get(char_uuid) or CHAR_SERVICE_MAP.get(char_uuid)
         if not svc:
             raise TransportError(f"No service UUID mapping for characteristic {char_uuid}")
         return svc

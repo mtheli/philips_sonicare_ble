@@ -61,6 +61,10 @@ from .const import (
     CHAR_ERROR_PERSISTENT,
     CHAR_ERROR_VOLATILE,
     CHAR_HANDLE_TIME,
+    HANDLE_STATE_RUNNING,
+    KIDS_CHAR_SERVICE_OVERRIDE,
+    is_kids_model,
+    uses_direct_session_read,
     SENSOR_ENABLE_PRESSURE,
     SENSOR_ENABLE_TEMPERATURE,
     SENSOR_ENABLE_GYROSCOPE,
@@ -201,7 +205,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # decode table (0x4022 mode-id on HX9996/HX999X vs 0x4080 sequential
         # index elsewhere); the firmware model-number is stable for a paired
         # device.
-        self._protocol.model = model
+        self._apply_model(model)
         if not supports_mode_write(model):
             for charlist in (self._poll_chars, self._live_chars, self._notify_chars):
                 if CHAR_AVAILABLE_ROUTINE_IDS in charlist:
@@ -232,6 +236,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._unsub_adv_debug = None
         self._dbus_bus: MessageBus | None = None
         self._counterfeit_timer_task: asyncio.Task | None = None
+        self._session_task: asyncio.Task | None = None
+        # Operations that share the link and would otherwise overlap: the
+        # sensor stream going up or down, and a stored record being fetched.
+        self._link_lock = asyncio.Lock()
         self._counterfeit_detected: bool = False
         self._counterfeit_cleanup_done: bool = False
         # HA >= 2026.5 exposes async_clear_advertisement_history — preferred over
@@ -319,6 +327,30 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ------------------------------------------------------------------
     # Persisted device data
     # ------------------------------------------------------------------
+
+    def _apply_model(self, model: str) -> None:
+        """Settle everything that depends on which handle this is.
+
+        Called again when the model arrives from a live read rather than
+        from the config entry - a fresh pair has no model stored yet, and a
+        handle left on the defaults would take the wrong path for the rest
+        of its life.
+        """
+        self._protocol.model = model
+        # How a stored record is fetched differs with the handle: selected
+        # and notified, or selected and read.
+        self._protocol.direct_session_read = uses_direct_session_read(model)
+        if is_kids_model(model):
+            # The bridge names a service on every read and write, so it has
+            # to be told where this handle keeps its session characteristics.
+            self.transport.char_service_overrides = dict(KIDS_CHAR_SERVICE_OVERRIDE)
+            # The service filter dropped the characteristic that names the
+            # newest session, because on every other handle it belongs to a
+            # service this one does not have. It is readable here, so it
+            # goes back into the read lists but not the notify list.
+            for charlist in (self._poll_chars, self._live_chars):
+                if CHAR_LATEST_SESSION_ID not in charlist:
+                    charlist.append(CHAR_LATEST_SESSION_ID)
 
     async def async_load_stored_data(self) -> None:
         """Merge the persisted device data into the initial dataset.
@@ -585,11 +617,20 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if new_state != old_state:
                 if new_state == "on" and not self._sensor_subscribed:
                     self.hass.async_create_task(self._subscribe_sensor_data())
-                elif old_state == "on" and self._sensor_subscribed:
-                    self.hass.async_create_task(self._unsubscribe_sensor_data())
+                elif old_state == "on":
+                    # The sensor teardown belongs to the session ending and
+                    # to nothing else - it must happen whatever the handle
+                    # is, and whether or not a record is being fetched.
+                    if self._sensor_subscribed:
+                        self.hass.async_create_task(self._unsubscribe_sensor_data())
+                    self._start_session_end_task()
 
         # Counterfeit brush head detection
         self._update_counterfeit(old, new_data)
+
+        # The handle's own record of the session that just finished, and of
+        # any it ran while nobody was connected.
+        self._update_stored_session(old, new_data, parsed)
 
         # Derived: brush head wear percentage
         limit = new_data.get("brushhead_lifetime_limit")
@@ -639,7 +680,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Keep the protocol's mode-decode table in sync if we learn the model
         # from a live read (covers fresh pairs whose entry had no model yet).
         if model and not self._use_condor and self._protocol.model != model:
-            self._protocol.model = model
+            self._apply_model(model)
         if changed and (model or firmware or serial or hardware):
             dev_reg = dr.async_get(self.hass)
             device = dev_reg.async_get_device(
@@ -757,6 +798,182 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         elif brushing_now and self._counterfeit_timer_task is None and not self._counterfeit_detected:
             # Already brushing when we (re)connected — start timer if not running
             self._start_counterfeit_timer()
+
+    # ── Stored sessions ─────────────────────────────────────────────────────
+    # The handle keeps a record of every session it has run. Reading the one
+    # that just finished turns the session summary into what the handle
+    # concluded rather than what happened to be overheard: the timer is wiped
+    # the instant a session ends, so a live reading that arrives a moment too
+    # late reads zero, and one that never arrives leaves nothing at all.
+
+    def _update_stored_session(
+        self, old: dict[str, Any], new_data: dict[str, Any], parsed: dict[str, Any]
+    ) -> None:
+        """Fetch the stored record when the handle has one we do not.
+
+        Runs off ``latest_session_id``, which the handle reports on connect
+        and updates when a session ends. Comparing it against the record we
+        already hold covers both cases in one condition: the session that has
+        just finished, and the ones it ran while nobody was connected.
+        """
+        if self._use_condor:
+            return
+
+        # Handles that report no brushing state of their own still change
+        # handle state when the motor stops, and that is the only signal a
+        # Sonicare for Kids gives.
+        if "brushing_state" not in new_data and "handle_state_value" in parsed:
+            if (old.get("handle_state_value") == HANDLE_STATE_RUNNING
+                    and new_data.get("handle_state_value") != HANDLE_STATE_RUNNING):
+                self._start_session_end_task()
+
+        latest = new_data.get("latest_session_id")
+        if latest is None or "latest_session_id" not in parsed:
+            return
+
+        # Not in the middle of a session. Connecting to a handle that is
+        # already running reports both the session and the id in one go, and
+        # a record fetched then would describe the session before this one
+        # anyway - it is worth waiting the two minutes for the right answer.
+        if (new_data.get("brushing_state") == "on"
+                or new_data.get("handle_state_value") == HANDLE_STATE_RUNNING):
+            return
+        held = new_data.get("last_session") or {}
+        if held.get("session_id") == latest:
+            if held.get("time_source") in ("session_end", "handle_clock"):
+                return
+            # The time could not be established last time. Worth another go,
+            # since the reading that places it can fail for a moment - but
+            # not forever: a handle whose clock cannot be read, or whose
+            # clock disagrees with its own records, would otherwise have the
+            # whole exchange run again on every single connect.
+            if held.get("place_attempts", 0) >= self.MAX_TIME_PLACE_ATTEMPTS:
+                return
+        # Either a session we do not have, or one whose time we never managed
+        # to place: a record that only knows when it was collected is worth
+        # fetching again, because a reading of the handle's counter turns it
+        # into a real time. Once placed, it is left alone.
+        #
+        # Found rather than witnessed either way - this runs on connect, so
+        # how long ago the session was is for the counter to say, not us.
+        self._start_session_end_task(session_id=latest, witnessed=False)
+
+    def _start_session_end_task(
+        self, session_id: int | None = None, witnessed: bool = True
+    ) -> None:
+        """Queue a stored-record fetch, unless one is already running.
+
+        Only the fetch: the sensor teardown that also belongs to a session
+        ending is scheduled by the caller, so it still happens on handles
+        that keep no records and while a fetch is in flight.
+        """
+        if self._use_condor:
+            return
+        if self._session_task and not self._session_task.done():
+            return
+        self._session_task = self.entry.async_create_background_task(
+            self.hass,
+            self._run_session_end(session_id, witnessed),
+            "philips_sonicare_stored_session",
+        )
+
+    # A session is stamped with the handle's own counter, which nothing here
+    # ever sets: it starts at zero and says nothing about the date. Placing a
+    # session in real time therefore takes a second reading of that same
+    # counter, taken at a moment we do know - the difference between the two
+    # is how long ago the session ended. Measured against a handle whose
+    # session had ended 1 h 44 min earlier, this landed within a minute.
+    MAX_SESSION_AGE_DAYS = 400
+    # How often to re-fetch a record whose time could not be established.
+    # More than a couple of goes is not a retry any more, it is a loop.
+    MAX_TIME_PLACE_ATTEMPTS = 2
+
+    def _session_ended_at(
+        self, record: dict[str, Any], witnessed: bool
+    ) -> tuple[str, str]:
+        """Work out when the session ended, and say how confidently.
+
+        Watching it end beats any calculation, so that case simply uses the
+        clock on the wall. Otherwise the handle's counter places it. Only if
+        that is missing or implausible does this fall back to the time of
+        collection, which for a session found later is a lower bound rather
+        than an answer - and it is labelled as such instead of quietly
+        claiming the session happened just now.
+        """
+        now = datetime.now(timezone.utc)
+        if witnessed:
+            return now.isoformat(), "session_end"
+
+        clock = record.get("handle_clock")
+        stamp = record.get("timestamp")
+        if isinstance(clock, int) and isinstance(stamp, int):
+            # The record is stamped when the session began, so its end is one
+            # session later. Measured on a handle whose session ran 14:51:03
+            # to 14:53:13: counting from the stamp alone put the end at
+            # 14:50:33 - early by exactly the length of the session - while
+            # counting from the stamp plus the duration landed on 14:53:13
+            # to the second.
+            elapsed = clock - stamp - (record.get("duration") or 0)
+            if 0 <= elapsed <= self.MAX_SESSION_AGE_DAYS * 86400:
+                return (now - timedelta(seconds=elapsed)).isoformat(), "handle_clock"
+            _LOGGER.debug(
+                "%s: handle clock %d against session stamp %d is not a "
+                "plausible age — falling back to the collection time",
+                self.address, clock, stamp,
+            )
+        return now.isoformat(), "collection"
+
+    async def _run_session_end(
+        self, session_id: int | None, witnessed: bool = True
+    ) -> None:
+        """Ask the handle for its record of a finished session."""
+        if not self.transport.is_connected:
+            return
+        try:
+            # The sensor stream is set up and torn down on the same link, in
+            # the same seconds. Taking turns keeps the two off each other's
+            # toes without either having to know about the other.
+            async with self._link_lock:
+                record = await self._protocol.fetch_stored_session(session_id)
+        except Exception as err:  # noqa: BLE001 - never break the session flow
+            _LOGGER.debug("%s: stored session unavailable: %s", self.address, err)
+            return
+        if not record:
+            return
+
+        # A session that ended while we were watching, answered with the
+        # record we already had, means the handle has not filed it yet -
+        # some do that only as they switch off, which can be a minute later
+        # and takes the link with it. Until the newer one turns up, the one
+        # we hold is no longer "the last session": presenting it as such
+        # would show somebody the session before the one they just brushed.
+        held_id = ((self.data or {}).get("last_session") or {}).get("session_id")
+        pending = witnessed and record.get("session_id") == held_id
+        if pending:
+            _LOGGER.debug(
+                "%s: session %s ended but the handle still reports it as the "
+                "newest — a newer record is outstanding",
+                self.address, held_id,
+            )
+
+        # A superseded record is an older session, so it must not be dated
+        # to now just because a session ended a moment ago: that moment
+        # belongs to the session the handle has not filed yet.
+        record["ended_at"], record["time_source"] = self._session_ended_at(
+            record, witnessed and not pending
+        )
+        record["superseded"] = pending
+        if record["time_source"] == "collection":
+            held = ((self.data or {}).get("last_session") or {})
+            previous = (held.get("place_attempts", 0)
+                        if held.get("session_id") == record.get("session_id") else 0)
+            record["place_attempts"] = previous + 1
+        data = {**(self.data or {}), "last_session": record}
+        self.async_set_updated_data(data)
+        _LOGGER.info(
+            "%s: stored session %d recorded (%ds)",
+            self.address, record["session_id"], record["duration"],
+        )
 
     def _start_counterfeit_timer(self) -> None:
         """Start (or restart) the counterfeit detection countdown."""
@@ -1420,6 +1637,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _subscribe_sensor_data(self) -> None:
         """Enable sensors and subscribe to sensor data stream."""
+        async with self._link_lock:
+            await self._subscribe_sensor_data_locked()
+
+    async def _subscribe_sensor_data_locked(self) -> None:
         if self._sensor_subscribed or not self.transport.is_connected:
             return
         # Classic delivers the stream through the char callback; Condor routes
@@ -1437,6 +1658,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _unsubscribe_sensor_data(self) -> None:
         """Unsubscribe from sensor data stream and disable sensors."""
+        async with self._link_lock:
+            await self._unsubscribe_sensor_data_locked()
+
+    async def _unsubscribe_sensor_data_locked(self) -> None:
         if not self._sensor_subscribed:
             return
         await self._protocol.stop_sensor_stream()

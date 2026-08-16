@@ -1,0 +1,19 @@
+{
+  "captured_at": "2026-08-16T14:53:14",
+  "note": "One finished session, recorded live and then read back from the handle's own storage. The live values and the stored record describe the same session, which is what makes this fixture able to prove the record's layout rather than assume it.",
+  "model": "HX999X",
+  "firmware": "1.15.4",
+  "live": {
+    "brushing_time_peak_seconds": 160,
+    "routine_length": "a000",
+    "brushing_mode": "00",
+    "intensity": "00",
+    "available_routine_ids": "01",
+    "latest_session_id": "4f01",
+    "session_count": "5001"
+  },
+  "stored_session": {
+    "transfer_header": "4f010f0000005caa",
+    "routine_record": "006aea06004f01a000a0000000010000"
+  }
+}
