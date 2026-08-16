@@ -17,9 +17,29 @@ Usage:
   python sonicare_session_record.py --pressure          # + SensorData stream
 
   python sonicare_session_record.py --watch --pressure  # leave it running
+  python sonicare_session_record.py --fetch-session     # + stored-record probe
 
 Requirements:
   pip install bleak
+
+Stored sessions
+---------------
+A handle keeps its finished sessions itself, in a storage service built around
+a session id, a count, a type, a selector and a data characteristic. That is a
+better source than a recording of the live values: it is what the handle
+concluded rather than what was overheard, and it survives a link that dropped
+at the wrong moment.
+
+``--fetch-session`` probes that service. The request goes out the instant a
+session ends - not after the settle window - because a handle switches itself
+off once it is done and takes the link with it. In one-shot mode the exchange
+is also run once at startup, so whether it works at all can be answered in
+seconds instead of after a full routine.
+
+It is off by default because it writes to the handle, and because nothing
+about the exchange is confirmed yet. Everything it does is recorded, refusals
+included: a capture showing that a handle rejected the request answers the
+question just as well as one carrying a record.
 
 Watch mode
 ----------
@@ -52,6 +72,15 @@ not only when the window runs out. Each file says which of the two happened
 in its ``ended`` field, so a short recording can be told apart from a
 complete one without guessing.
 
+Linux
+-----
+Watch mode has to work around two BlueZ rules that the Windows and macOS
+backends do not have, and that a recording made there will never run into.
+An adapter refuses to connect while it is discovering, so scanning is paused
+for the moment a connect takes; and a client built from an address scans for
+that address itself before connecting, which costs the seconds a handle is
+awake for - so what the scan found is handed on directly instead.
+
 Bonding
 -------
 Encrypted reads (Battery Level, Device Information) need a bond. On Linux
@@ -76,6 +105,7 @@ import importlib.util
 import json
 import sys
 import time
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 from bleak import BleakClient, BleakScanner
@@ -124,6 +154,17 @@ IDENTITY_CHARS = [
 # appear at all. Polling on top covers a missed CCCD write; the integration
 # itself is push-only (coordinator update_interval=None), so it is the gentler
 # default to lower or disable this if the link proves unstable.
+# Three characteristics every Classic handle carries and no app reads. The
+# vendor's own tooling names them: the segment of the quadrant pacer, the
+# easy-start run-in stage, and whichever feature the handle has active. What
+# they actually report has never been observed, and a session is the only
+# time it could show - so they are watched rather than guessed at.
+PROBE_CHARS = [
+    const.CHAR_QUADPACER_SEGMENT,
+    const.CHAR_EASY_START_STAGE,
+    const.CHAR_ACTIVE_FEATURE,
+]
+
 POLL_CHARS = [
     const.CHAR_HANDLE_STATE,
     const.CHAR_BRUSHING_STATE,
@@ -138,6 +179,7 @@ POLL_CHARS = [
     # the only way to see it change, and without it a recording from a Prestige
     # says "clean" no matter which routine was actually running.
     const.CHAR_AVAILABLE_ROUTINE_IDS,
+    *PROBE_CHARS,
 ]
 
 AUTH_HINTS = ("insufficient", "authentication", "encryption", "not paired",
@@ -147,6 +189,25 @@ AUTH_HINTS = ("insufficient", "authentication", "encryption", "not paired",
 def _is_auth_error(err: BaseException) -> bool:
     low = str(err).lower()
     return any(hint in low for hint in AUTH_HINTS)
+
+
+# Connecting can fail for reasons that say nothing about the handle. The
+# adapter may already have an operation running against it - a paired handle
+# is usually trusted too, and then the system connects to it on its own the
+# moment it advertises, which collides with a connect of our own. Aborted
+# links are the same kind of noise.
+#
+# It is worth retrying rather than reporting, because the thing being waited
+# for is short-lived: a handle advertises while somebody is holding it and
+# stops soon after. Giving up on the first error means giving up on that
+# session, and the next advertisement may be a day away.
+TRANSIENT_HINTS = ("inprogress", "in progress", "abort", "busy",
+                   "not ready", "timeout", "temporarily")
+
+
+def _is_transient_error(err: BaseException) -> bool:
+    low = str(err).lower()
+    return any(hint in low for hint in TRANSIENT_HINTS)
 
 
 def _name(uuid: str) -> str:
@@ -165,12 +226,23 @@ class SessionRecorder:
         # and a two-minute session stays a few hundred lines rather than a few
         # thousand identical ones.
         self._last: dict[str, str] = {}
+        # Set while a stored record is being transferred. It labels the values
+        # that arrive with the request they answer, and switches off the
+        # unchanged-value filter for the storage characteristics: a record
+        # arrives in chunks that may legitimately repeat, and a dropped
+        # duplicate would corrupt it.
+        self.tag: dict | None = None
+        # The newest session id the handle has reported so far, so a fetch
+        # that comes back with the previous session can be told apart from
+        # one that came back with nothing.
+        self.last_session_id: int | None = None
 
     def record(self, uuid: str, data: bytes, kind: str) -> bool:
         """Append a value if it differs from the last one for that char."""
         hex_str = bytes(data).hex()
         key = uuid.lower()
-        if self._last.get(key) == hex_str:
+        tagged = self.tag is not None and key in STORAGE_CHARS
+        if not tagged and self._last.get(key) == hex_str:
             return False
         self._last[key] = hex_str
         event = {
@@ -180,10 +252,30 @@ class SessionRecorder:
             "uuid": key,
             "hex": hex_str,
         }
+        if tagged:
+            event.update(self.tag)
         self.events.append(event)
         if not self.quiet:
             print(f"  [{event['t']:8.3f}] {event['char']:<22} {hex_str}")
         return True
+
+    def note(self, label: str, **fields) -> None:
+        """Record something that happened rather than a value that arrived.
+
+        A stored-record request is a sequence of writes, and what came back
+        only makes sense next to what was asked for - including when the
+        answer is a refusal.
+        """
+        event = {
+            "t": round(time.monotonic() - self.started, 3),
+            "kind": "note",
+            "note": label,
+            **fields,
+        }
+        self.events.append(event)
+        if not self.quiet:
+            detail = " ".join(f"{k}={v}" for k, v in fields.items())
+            print(f"  [{event['t']:8.3f}] {label} {detail}".rstrip())
 
     def write(self, meta: dict, out_path: Path | None = None) -> Path:
         path = out_path or self.out_path
@@ -197,6 +289,10 @@ class SessionRecorder:
         """The last raw value seen for a characteristic, or None."""
         return self._last.get(uuid.lower())
 
+    def since(self, index: int) -> int:
+        """How many events have been recorded since a given position."""
+        return len(self.events) - index
+
     def restart(self) -> None:
         """Drop what has been collected so far and start timing again.
 
@@ -209,22 +305,28 @@ class SessionRecorder:
         self.started = time.monotonic()
 
 
-async def _find_handle(mac: str | None) -> str:
-    """Return the address to connect to, scanning when none was given."""
+async def _find_handle(mac: str | None):
+    """Return the device to connect to, scanning when none was given.
+
+    The device object rather than its address: handing an address to a client
+    makes it scan for the device all over again, and by then a handle that was
+    only awake because somebody pressed its button may have gone back to
+    sleep. What the scan already found is what should be connected to.
+    """
     if mac:
         print(f"Scanning for {mac} (20 s - wake the brush now)...")
         device = await BleakScanner.find_device_by_address(mac, timeout=20)
         if not device:
             sys.exit(f"Device {mac} not found. Wake the handle and try again.")
-        return mac
+        return device
 
     print("Scanning for a Sonicare handle (20 s - press the power button now)...")
     devices = await BleakScanner.discover(timeout=20.0, return_adv=True)
-    for address, (device, adv) in devices.items():
+    for device, adv in devices.values():
         name = (device.name or adv.local_name or "").lower()
         if "sonicare" in name or const.SONICARE_MANUFACTURER_ID in adv.manufacturer_data:
             print(f"Found: {device.name or adv.local_name} (RSSI {adv.rssi})")
-            return address
+            return device
     sys.exit("No Sonicare found. A sleeping handle does not advertise - press "
              "the power button, then start again within a few seconds.")
 
@@ -246,11 +348,24 @@ async def _read_identity(client: BleakClient) -> dict:
 
 
 async def _subscribe_all(client: BleakClient, recorder: SessionRecorder,
-                         pressure: bool) -> list[str]:
+                         pressure: bool, storage: bool = False) -> list[str]:
     """Subscribe to every notification characteristic the handle offers."""
-    wanted = list(const.NOTIFICATION_CHARS)
+    wanted = list(const.NOTIFICATION_CHARS) + PROBE_CHARS
     if pressure:
         wanted.append(const.CHAR_SENSOR_DATA)
+    if storage:
+        # Subscribed here rather than when a record is requested. The request
+        # happens in the seconds between the motor stopping and the handle
+        # switching itself off, and a descriptor write per characteristic is
+        # exactly the kind of delay that window does not have to spare.
+        wanted += [const.CHAR_SESSION_DATA, const.CHAR_ACTIVE_SESSION_ID,
+                   const.CHAR_SESSION_ACTION]
+        # The one characteristic in the session service that can announce
+        # anything. It reports which session is loaded for reading, and a
+        # handle appears to keep its newest one loaded - so if it loads a
+        # session as it files it, this is where that would show, which is
+        # the moment nothing else tells us about.
+        wanted.append(CHAR_SESSION_EXTRA)
 
     available = {c.uuid.lower() for s in client.services for c in s.characteristics}
     subscribed: list[str] = []
@@ -290,6 +405,52 @@ async def _enable_pressure(client: BleakClient) -> None:
         print(f"  could not enable pressure telemetry: {err}")
 
 
+# Values the handle keeps as descriptors rather than characteristics, which
+# is why a scan that lists characteristics never shows them. The names are
+# the vendor tooling's own. Two of them answer questions this project has
+# had to guess at: how many segments the pacer has, and which version of the
+# record format the handle writes.
+PROBE_DESCRIPTORS = {
+    "477ea600-a260-11e4-ae37-0002a5d5a0a0": "quadpacer_count",
+    "477ea600-a260-11e4-ae37-0002a5d5a100": "session_version",
+    "477ea600-a260-11e4-ae37-0002a5d5a0d0": "session_count",
+    "477ea600-a260-11e4-ae37-0002a5d5a090": "routine_length",
+    "477ea600-a260-11e4-ae37-0002a5d5a0b0": "highest_intensity",
+    "477ea600-a260-11e4-ae37-0002a5d5a0c0": "easy_start_stage_count",
+    "477ea600-a260-11e4-ae37-0002a5d5a030": "available_feature",
+    "477ea600-a260-11e4-ae37-0002a5d5a020": "brushing_routine_list",
+}
+
+
+async def _read_descriptors(client: BleakClient, recorder: SessionRecorder) -> None:
+    """Read the descriptors the handle carries, once.
+
+    They hold static facts about the handle rather than anything that
+    changes during a session, so once at the start is enough. Anything the
+    handle does not have is skipped in silence - most models carry only
+    some of them.
+    """
+    found = 0
+    for service in client.services:
+        for char in service.characteristics:
+            for desc in getattr(char, "descriptors", []):
+                name = PROBE_DESCRIPTORS.get(desc.uuid.lower())
+                if not name:
+                    continue
+                try:
+                    raw = await client.read_gatt_descriptor(desc.handle)
+                except Exception as err:  # noqa: BLE001 - a refusal is a result
+                    recorder.note("descriptor_failed", name=name, error=str(err))
+                    continue
+                data = bytes(raw or b"")
+                recorder.note("descriptor", name=name, hex=data.hex(),
+                              on=_name(char.uuid),
+                              value=int.from_bytes(data, "little") if data else None)
+                found += 1
+    if not found:
+        print("  no named descriptors on this handle")
+
+
 async def _read_baseline(client: BleakClient, recorder: SessionRecorder) -> None:
     """Record the current value of every session characteristic."""
     available = {c.uuid.lower() for s in client.services for c in s.characteristics}
@@ -303,8 +464,329 @@ async def _read_baseline(client: BleakClient, recorder: SessionRecorder) -> None
                 print(f"  ! {_name(uuid):<22} baseline needs a bond")
 
 
+# ── Stored sessions ─────────────────────────────────────────────────────────
+# A Classic handle keeps finished sessions in its storage service (0x0004),
+# which is why that service has an id, a count, a type, a selector, an action
+# and a data characteristic rather than one readable value. The layout implies
+# a select-then-transfer exchange:
+#
+#   read  latest_session_id  - the newest session the handle still holds
+#   read  session_count      - how many it holds
+#   write session_type       - which kind of stored data is wanted
+#   write active_session_id  - which session
+#   write session_action     - start the transfer
+#   -> the data arrives as notifications on session_data
+#
+# None of this is confirmed. This script is how it gets confirmed: it runs the
+# exchange and writes down everything that comes back, refusals included. A
+# handle that rejects a write is as useful a capture as one that answers.
+#
+# The type byte is probed rather than known. 0 is tried first because the
+# session's own record is the interesting one; the others are guesses at where
+# the pressure statistics and the brush head identity live.
+STORAGE_REQUESTS = [
+    ("routine", 0),
+    # The handle keeps more than one kind of record per session. Type 1 is
+    # its own pressure recording - the type-5 record carries only totals,
+    # and a recording would say how the pressure went rather than how much
+    # of it there was. Requested last: it is the least understood, and the
+    # routine record must not be lost to a window that closed while asking
+    # for it.
+    ("brush_head", 5),
+    ("brush_id", 4),
+    ("pressure", 1),
+]
+
+# Writing 0 is the "send it" case of a control point that has no other known
+# operation yet.
+STORAGE_ACTION_START = 0
+
+# Not every handle offers the same storage service. A Sonicare for Kids has
+# no service of its own for it at all: the same characteristics sit in the
+# brushing service, and the two that drive the exchange - the kind selector
+# and the control point - are simply absent. What is there instead is a
+# readable data characteristic, which suggests a shorter exchange for a
+# handle that only keeps one kind of record: select the session, read it.
+#
+# Both shapes are probed, whichever the handle presents. One more readable
+# characteristic sits beside them there and is read along the way, because
+# nothing else says what it holds.
+CHAR_SESSION_EXTRA = const.CHAR_LOADED_SESSION
+
+STORAGE_CHARS = {
+    const.CHAR_SESSION_DATA.lower(),
+    const.CHAR_ACTIVE_SESSION_ID.lower(),
+    const.CHAR_SESSION_ACTION.lower(),
+    CHAR_SESSION_EXTRA.lower(),
+}
+
+
+async def _probe_next_session(client: BleakClient, recorder: SessionRecorder,
+                              announce, known_id: int) -> bool:
+    """Ask for the session the handle has not announced yet.
+
+    The exchange takes any id, and the record names the session it describes,
+    so asking for one past the newest is safe to interpret: either it comes
+    back as that session, or it comes back as something else and is ignored.
+    """
+    wanted = known_id + 1
+    recorder.tag = {"request": "probe_next", "session_id": wanted}
+    try:
+        await client.write_gatt_char(const.CHAR_ACTIVE_SESSION_ID,
+                                     wanted.to_bytes(2, "little"), response=True)
+        raw = await client.read_gatt_char(const.CHAR_SESSION_DATA)
+    except Exception as err:  # noqa: BLE001 - a refusal is a result
+        recorder.note("probe_next_failed", session_id=wanted, error=str(err))
+        announce(f"asking for #{wanted} was refused ({err})")
+        return False
+    finally:
+        recorder.tag = None
+
+    data = bytes(raw or b"")
+    recorder.record(const.CHAR_SESSION_DATA, data, "storage")
+    if not data.strip(b"\x00"):
+        announce(f"#{wanted} is not there yet (empty answer)")
+        recorder.note("probe_next_empty", session_id=wanted)
+        return False
+    # The record says which session it is. Anything else is the handle
+    # repeating itself, not the session we asked about.
+    reported = int.from_bytes(data[4:6], "little") if len(data) >= 6 else None
+    recorder.note("probe_next_answer", asked=wanted, reported=reported,
+                  hex=data.hex())
+    if reported == wanted:
+        announce(f"the handle already has #{wanted} — it just had not said so")
+        return True
+    announce(f"asked for #{wanted}, got #{reported} — not filed yet")
+    return False
+
+
+async def _await_new_session(client: BleakClient, recorder: SessionRecorder,
+                             announce, known_id: int | None,
+                             timeout: float = 90.0, interval: float = 3.0) -> bool:
+    """Wait for a handle that files its sessions late.
+
+    Not every handle has the record ready the moment the motor stops: asked a
+    second after a session ended, one answered with the session before it and
+    only carried the new one minutes later. Whether that is a short delay or
+    something that waits for the next connection is the difference between
+    retrying and giving up, so the wait is measured rather than assumed.
+
+    Returns whether a new session turned up inside the window.
+    """
+    if known_id is None:
+        return False
+    # Before waiting: ask for the session after the one the handle admits to.
+    # It files late, but the record may well exist before it says so - and if
+    # it does not, the answer costs nothing, because a record carries the id
+    # it belongs to. A handle repeating the old one, or answering with
+    # nothing, is recognised rather than mistaken for the new session.
+    await _probe_next_session(client, recorder, announce, known_id)
+
+    announce(f"waiting for the handle to file the session (had #{known_id})")
+    started = time.monotonic()
+    spoken = 0.0
+    while time.monotonic() - started < timeout:
+        # A silent minute is indistinguishable from a hung script, and this
+        # runs while somebody is standing there watching it.
+        elapsed = time.monotonic() - started
+        if elapsed - spoken >= 15:
+            spoken = elapsed
+            announce(f"  still #{known_id} after {elapsed:.0f} s")
+        await asyncio.sleep(interval)
+        if not client.is_connected:
+            recorder.note("commit_wait_ended", reason="link dropped",
+                          waited=round(time.monotonic() - started, 1))
+            announce("link dropped before the handle filed the session")
+            return False
+        try:
+            raw = await client.read_gatt_char(const.CHAR_LATEST_SESSION_ID)
+        except Exception as err:  # noqa: BLE001
+            recorder.note("commit_wait_failed", error=str(err))
+            return False
+        value = int.from_bytes(bytes(raw)[:2], "little") if raw else None
+        if value is not None and value != known_id:
+            waited = round(time.monotonic() - started, 1)
+            recorder.note("commit_delay_seconds", waited=waited,
+                          was=known_id, now=value)
+            announce(f"the handle filed session #{value} after {waited:.0f} s")
+            await _fetch_stored_session(client, recorder, announce,
+                                        session_id=value)
+            return True
+    waited = round(time.monotonic() - started, 1)
+    recorder.note("commit_wait_timeout", waited=waited, still=known_id)
+    announce(f"still session #{known_id} after {waited:.0f} s")
+    return False
+
+
+async def _read_stored_session(client: BleakClient, recorder: SessionRecorder,
+                               announce, session_id: int, props: dict) -> bool:
+    """The shorter exchange, for a handle with no kind selector.
+
+    Where the full storage service takes three writes and answers by
+    notification, this one has a readable data characteristic and nothing to
+    choose between: select the session, then read it. Whether a handle shaped
+    like that answers at all is exactly what this is here to find out, so a
+    silent or refusing one is recorded rather than treated as a failure.
+    """
+    announce(f"stored session: no kind selector - reading #{session_id} directly")
+    recorder.tag = {"request": "direct", "session_id": session_id}
+    got = False
+    try:
+        try:
+            await client.write_gatt_char(
+                const.CHAR_ACTIVE_SESSION_ID,
+                session_id.to_bytes(2, "little"), response=True)
+        except Exception as err:  # noqa: BLE001 - a refusal is a result
+            recorder.note("storage_select_failed", error=str(err))
+            announce(f"stored session: the handle refused the selection ({err})")
+
+        for label, uuid in (("session_data", const.CHAR_SESSION_DATA),
+                            ("session_extra", CHAR_SESSION_EXTRA)):
+            if uuid.lower() not in props:
+                continue
+            if "read" not in props[uuid.lower()]:
+                recorder.note("storage_not_readable", char=label,
+                              props=sorted(props[uuid.lower()]))
+                continue
+            try:
+                raw = await client.read_gatt_char(uuid)
+            except Exception as err:  # noqa: BLE001
+                recorder.note("storage_read_failed", char=label, error=str(err))
+                announce(f"stored session: {label} refused the read ({err})")
+                continue
+            recorder.record(uuid, raw, "storage")
+            announce(f"stored session: {label} answered {len(bytes(raw))} byte(s)")
+            # Only the record itself decides whether this worked. The
+            # characteristic beside it is read out of curiosity, and a
+            # handle answering that one while the record stays empty has
+            # not produced a session.
+            if uuid == const.CHAR_SESSION_DATA and bytes(raw).strip(b"\x00"):
+                got = True
+    finally:
+        recorder.note("storage_request_done", request="direct", answered=got)
+        recorder.tag = None
+    if not got:
+        announce("stored session: nothing but zeroes came back")
+    return got
+
+
+async def _fetch_stored_session(client: BleakClient, recorder: SessionRecorder,
+                                announce, *, session_id: int | None = None,
+                                timeout: float = 6.0, gap: float = 1.0) -> bool:
+    """Ask the handle for the stored record of its most recent session.
+
+    Called the moment a session ends, because that is the only moment the
+    handle is reliably still there: it switches itself off once it is done,
+    and the link goes with it. Everything that can be prepared in advance -
+    the notification subscriptions - is prepared at connect time, so what
+    happens here is three writes and a wait.
+
+    Returns whether any data came back.
+    """
+    if not client.is_connected:
+        return False
+
+    # What the handle has. Read rather than assumed: the newest id is what
+    # this request is for, and the count says whether older ones are there
+    # too - the thing that would make a full history possible.
+    latest: int | None = session_id
+    for label, uuid in (("latest_session_id", const.CHAR_LATEST_SESSION_ID),
+                        ("session_count", const.CHAR_SESSION_COUNT)):
+        try:
+            raw = await client.read_gatt_char(uuid)
+        except Exception as err:  # noqa: BLE001 - a refusal is a result
+            recorder.note("storage_read_failed", char=label, error=str(err))
+            continue
+        recorder.record(uuid, raw, "storage")
+        value = int.from_bytes(bytes(raw)[:2], "little") if raw else None
+        recorder.note("storage_state", char=label, value=value)
+        if label == "latest_session_id":
+            recorder.last_session_id = value
+            if latest is None:
+                latest = value
+
+    if latest is None:
+        announce("stored session: handle did not say which session is newest")
+        return False
+
+    # The handle's running clock, read next to the record. A record is
+    # stamped with that clock and nothing else, so on its own it says only
+    # how long the handle has been counting - a second reading, taken at a
+    # moment that is known, is what turns it into a time of day.
+    try:
+        raw = await client.read_gatt_char(const.CHAR_HANDLE_TIME)
+        if raw and len(bytes(raw)) >= 4:
+            clock = int.from_bytes(bytes(raw)[:4], "little")
+            recorder.record(const.CHAR_HANDLE_TIME, raw, "storage")
+            recorder.note("handle_clock", value=clock)
+            announce(f"handle clock reads {clock} s")
+    except Exception as err:  # noqa: BLE001 - only costs the anchor
+        recorder.note("storage_read_failed", char="handle_time", error=str(err))
+
+    props = {c.uuid.lower(): set(c.properties)
+             for s in client.services for c in s.characteristics}
+    selectable = (const.CHAR_SESSION_TYPE.lower() in props
+                  and const.CHAR_SESSION_ACTION.lower() in props)
+    if not selectable:
+        return await _read_stored_session(client, recorder, announce, latest, props)
+
+    announce(f"stored session: requesting #{latest}")
+    got_any = False
+
+    for name, type_byte in STORAGE_REQUESTS:
+        if not client.is_connected:
+            recorder.note("storage_aborted", request=name, reason="link dropped")
+            break
+
+        recorder.tag = {"request": name, "request_type": type_byte,
+                        "session_id": latest}
+        mark = len(recorder.events)
+        try:
+            await client.write_gatt_char(const.CHAR_SESSION_TYPE,
+                                         bytes([type_byte]), response=True)
+            await client.write_gatt_char(const.CHAR_ACTIVE_SESSION_ID,
+                                         latest.to_bytes(2, "little"), response=True)
+            await client.write_gatt_char(const.CHAR_SESSION_ACTION,
+                                         bytes([STORAGE_ACTION_START]), response=True)
+        except Exception as err:  # noqa: BLE001
+            recorder.note("storage_request_failed", request=name, error=str(err))
+            recorder.tag = None
+            if _is_auth_error(err):
+                announce("stored session: refused without a bond")
+                break
+            continue
+
+        # Wait for the transfer to go quiet rather than for a fixed time: a
+        # record may be one notification or several, and the handle may not
+        # answer at all.
+        deadline = time.monotonic() + timeout
+        last_seen = time.monotonic()
+        count = 0
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            if not client.is_connected:
+                break
+            new = recorder.since(mark)
+            if new != count:
+                count = new
+                last_seen = time.monotonic()
+            elif count and time.monotonic() - last_seen >= gap:
+                break
+
+        recorder.note("storage_request_done", request=name, chunks=count)
+        recorder.tag = None
+        if count:
+            got_any = True
+            announce(f"stored session: {name} answered with {count} chunk(s)")
+        else:
+            announce(f"stored session: {name} stayed silent")
+
+    return got_any
+
+
 async def _poll_loop(client: BleakClient, recorder: SessionRecorder,
-                     interval: float, deadline: float) -> None:
+                     interval: float, deadline: float,
+                     fetch: bool = False) -> None:
     """Read the session characteristics until the deadline passes.
 
     Only changed values are recorded, so an idle handle costs nothing in the
@@ -312,6 +794,7 @@ async def _poll_loop(client: BleakClient, recorder: SessionRecorder,
     """
     available = {c.uuid.lower() for s in client.services for c in s.characteristics}
     chars = [u for u in POLL_CHARS if u.lower() in available]
+    was_running = False
     while time.monotonic() < deadline:
         if not client.is_connected:
             print("\n  Link dropped (handle switched off?) - ending recording.")
@@ -321,6 +804,22 @@ async def _poll_loop(client: BleakClient, recorder: SessionRecorder,
                 recorder.record(uuid, await client.read_gatt_char(uuid), "read")
             except Exception:  # noqa: BLE001 - a single failed read is not fatal
                 pass
+
+        running = _session_is_running(recorder)
+        if fetch and was_running and not running:
+            # Immediately, before the settle window: the handle switches
+            # itself off at the end of a session and takes the link with it.
+            print("\n  Session ended - asking for the stored record ...")
+            say = lambda m: print(f"  {m}")  # noqa: E731
+            before = recorder.last_session_id
+            await _fetch_stored_session(client, recorder, say)
+            if recorder.last_session_id == before:
+                # The record is not there yet. How long it takes is worth
+                # knowing: a handle that files late can be waited for, one
+                # that files on the next connection cannot.
+                await _await_new_session(client, recorder, say, before)
+        was_running = running
+
         await asyncio.sleep(interval)
 
 
@@ -375,14 +874,124 @@ def _session_path(out_dir: Path, model: str | None) -> Path:
     return path
 
 
-async def _watch_handle(address: str, args, slots: asyncio.Semaphore,
-                        active: set[str]) -> None:
+class Discovery:
+    """The scanner, and the ability to hold it still while connecting.
+
+    Scanning and connecting cannot overlap: while the adapter is discovering,
+    a connect is refused outright with "operation already in progress". A
+    one-shot recording never notices, because there the scan is over before
+    anything connects - but watch mode scans for as long as it runs, which
+    without this would mean it can find handles and never reach one.
+
+    Discovery is paused for the connect alone, not for the recording: once
+    the link is up, scanning can carry on and find the next handle. Pauses
+    nest, so several handles connecting at once resume it only once.
+    """
+
+    def __init__(self, callback) -> None:
+        self._callback = callback
+        self._scanner: BleakScanner | None = None
+        self._lock = asyncio.Lock()
+        self._paused_by = 0
+
+    async def start(self) -> None:
+        # A fresh scanner each time rather than restarting the old one: this
+        # runs for days, and a scanner that has been stopped is not worth
+        # assuming anything about.
+        self._scanner = BleakScanner(detection_callback=self._callback)
+        await self._scanner.start()
+
+    async def stop(self) -> None:
+        if self._scanner is not None:
+            try:
+                await self._scanner.stop()
+            except Exception:  # noqa: BLE001 - stopping must not raise
+                pass
+            self._scanner = None
+
+    @asynccontextmanager
+    async def paused(self):
+        async with self._lock:
+            self._paused_by += 1
+            if self._paused_by == 1:
+                await self.stop()
+        try:
+            yield
+        finally:
+            async with self._lock:
+                self._paused_by -= 1
+                if self._paused_by == 0:
+                    await self.start()
+
+
+async def _connect_with_retry(device, label: str, discovery: Discovery | None = None,
+                              attempts: int = 4, delay: float = 2.0) -> BleakClient:
+    """Connect, giving a busy adapter a moment to finish what it was doing.
+
+    Takes the device object a scan produced, not an address: a client built
+    from an address scans for the device itself before it can connect, which
+    costs the seconds a handle is awake for and fails outright once it has
+    gone back to sleep.
+
+    A link the adapter kept from an earlier run is not in the way: connecting
+    to a device BlueZ already holds is a no-op it handles itself.
+
+    Returns a client that is connected. Use ``_connected()`` rather than this
+    directly - a connected client must not be entered as a context manager,
+    because that connects it a second time.
+    """
+    last: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        client = BleakClient(device)
+        try:
+            async with discovery.paused() if discovery else nullcontext():
+                await client.connect()
+            return client
+        except Exception as err:  # noqa: BLE001
+            last = err
+            # A client whose connect failed may still hold a half-open
+            # object on the adapter, and that is itself a reason for the
+            # next attempt to be told an operation is already in progress.
+            try:
+                await client.disconnect()
+            except Exception:  # noqa: BLE001 - nothing to salvage here
+                pass
+            if not _is_transient_error(err) or attempt == attempts:
+                raise
+            log(f"[{label}] {type(err).__name__} - retrying in {delay:.0f} s "
+                f"({attempt}/{attempts - 1})")
+            await asyncio.sleep(delay)
+    raise last  # unreachable, but keeps the contract explicit
+
+
+@asynccontextmanager
+async def _connected(device, label: str, discovery: Discovery | None = None):
+    """A connected client that disconnects on the way out.
+
+    ``async with BleakClient(...)`` connects on entry, which is why an already
+    connected client cannot be handed to it: entering would call connect a
+    second time, and the second call is refused. Connecting and cleaning up
+    are therefore separated here.
+    """
+    client = await _connect_with_retry(device, label, discovery)
+    try:
+        yield client
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:  # noqa: BLE001 - the handle may already be gone
+            pass
+
+
+async def _watch_handle(device, args, slots: asyncio.Semaphore,
+                        active: set[str], discovery: Discovery | None = None) -> None:
     """Hold one handle: record every session it runs, until it goes away."""
+    address = device.address
     label = address[-5:]
     try:
         async with slots:
             log(f"[{label}] connecting")
-            async with BleakClient(address) as client:
+            async with _connected(device, label, discovery) as client:
                 meta = await _read_identity(client)
                 model = meta.get("model")
                 log(f"[{label}] connected - model {model or 'unreadable'}")
@@ -390,8 +999,9 @@ async def _watch_handle(address: str, args, slots: asyncio.Semaphore,
                 recorder = SessionRecorder(Path("unused"), quiet=True)
                 if args.pressure:
                     await _enable_pressure(client)
-                await _subscribe_all(client, recorder, args.pressure)
+                await _subscribe_all(client, recorder, args.pressure, args.fetch_session)
                 await _read_baseline(client, recorder)
+                await _read_descriptors(client, recorder)
 
                 available = {c.uuid.lower() for s in client.services
                              for c in s.characteristics}
@@ -443,6 +1053,15 @@ async def _watch_handle(address: str, args, slots: asyncio.Semaphore,
                             # still. Keep recording through the settle window.
                             log(f"[{label}] session ended, settling")
                             ended_at = time.monotonic()
+                            if args.fetch_session:
+                                # First thing in the settle window, not last:
+                                # the handle switches itself off once it is
+                                # done and the link goes with it, so the
+                                # stored record has to be asked for while
+                                # there is still someone to ask.
+                                await _fetch_stored_session(
+                                    client, recorder,
+                                    lambda m: log(f"[{label}] {m}"))
                         was_running = running
 
                         if ended_at and time.monotonic() - ended_at >= args.settle:
@@ -511,11 +1130,16 @@ async def _watch(args) -> None:
         if not _is_sonicare(device, adv) or device.address in active:
             return
         active.add(device.address)
-        asyncio.create_task(_watch_handle(device.address, args, slots, active))
+        asyncio.create_task(
+            _watch_handle(device, args, slots, active, discovery))
 
-    async with BleakScanner(detection_callback=seen):
+    discovery = Discovery(seen)
+    await discovery.start()
+    try:
         while True:
             await asyncio.sleep(3600)
+    finally:
+        await discovery.stop()
 
 
 async def main() -> None:
@@ -549,17 +1173,22 @@ async def main() -> None:
     parser.add_argument("--max-connections", type=int, default=3,
                         help="How many handles to hold at once. Adapters run out "
                              "of slots well before this matters. Default: 3")
+    parser.add_argument("--fetch-session", action="store_true",
+                        help="When a session ends, ask the handle for its own "
+                             "stored record of it. Off by default: it writes to "
+                             "the storage service, and whether a handle answers "
+                             "at all is what this is meant to find out.")
     args = parser.parse_args()
 
     if args.watch:
         await _watch(args)
         return
 
-    address = await _find_handle(args.mac)
+    device = await _find_handle(args.mac)
     out_path = Path(args.out or f"sonicare_session_{time.strftime('%Y%m%d_%H%M%S')}.jsonl")
 
-    print(f"\nConnecting to {address} ...")
-    async with BleakClient(address) as client:
+    print(f"\nConnecting to {device.address} ...")
+    async with _connected(device, device.address[-5:]) as client:
         print(f"Connected: {client.is_connected}")
 
         meta = await _read_identity(client)
@@ -571,10 +1200,18 @@ async def main() -> None:
         print("\n--- Subscribing ---")
         if args.pressure:
             await _enable_pressure(client)
-        await _subscribe_all(client, recorder, args.pressure)
+        await _subscribe_all(client, recorder, args.pressure, args.fetch_session)
 
         print("\n--- Baseline ---")
         await _read_baseline(client, recorder)
+        await _read_descriptors(client, recorder)
+
+        if args.fetch_session:
+            # Once up front, before any brushing. Whether the exchange works
+            # at all is answered here in a few seconds, rather than after a
+            # two-minute routine that may end with the handle gone.
+            print("\n--- Stored session (dry run) ---")
+            await _fetch_stored_session(client, recorder, lambda m: print(f"  {m}"))
 
         print(f"\n--- Recording for {args.seconds} s ---")
         print("Start brushing now. Run the full routine, then let the handle "
@@ -584,7 +1221,8 @@ async def main() -> None:
         deadline = time.monotonic() + args.seconds
         try:
             if args.poll_interval > 0:
-                await _poll_loop(client, recorder, args.poll_interval, deadline)
+                await _poll_loop(client, recorder, args.poll_interval, deadline,
+                                 args.fetch_session)
             else:
                 await asyncio.sleep(max(0.0, deadline - time.monotonic()))
         except (KeyboardInterrupt, asyncio.CancelledError):
