@@ -545,12 +545,17 @@ class SonicareLatestSessionIdSensor(PhilipsSonicareEntity, SensorEntity):
 # Last Session
 # ---------------------------------------------------------------------------
 class SonicareLastSessionSensor(PhilipsSonicareEntity, SensorEntity):
-    """When the handle's most recent stored session was collected.
+    """When the handle's most recent stored session began.
 
     The state is a time rather than a duration because the handle's own
     record has no wall clock in it - what it counts is its own uptime, and a
-    handle whose clock was never set counts from zero. What is known is when
-    the record was collected, which is within seconds of the session ending.
+    handle whose clock was never set counts from zero. Placing the session in
+    real time takes a second reading of that same counter.
+
+    The start rather than the end, because the start is what the handle
+    stamps on the record; the end is the start plus ``duration_seconds``,
+    which is right beside it. Anything reading this sensor gets the measured
+    quantity and can do that sum itself.
 
     The session itself is in the attributes: how long it ran, what it was
     aiming for, and how it was set up. That keeps one reading for the session
@@ -579,7 +584,7 @@ class SonicareLastSessionSensor(PhilipsSonicareEntity, SensorEntity):
             return None
         # Stored as text so it survives the round trip through the config
         # entry store, which has no notion of a datetime.
-        return dt_util.parse_datetime(record.get("ended_at") or "")
+        return dt_util.parse_datetime(record.get("started_at") or "")
 
     @property
     def extra_state_attributes(self) -> dict | None:
@@ -602,8 +607,9 @@ class SonicareLastSessionSensor(PhilipsSonicareEntity, SensorEntity):
             # what they are worth: ``session_end`` was watched happening and
             # is accurate to seconds, ``handle_clock`` was worked out from
             # the handle's own counter and lands within about a minute, and
-            # ``collection`` means only that the session was already over by
-            # then - it could be far older.
+            # ``collection`` means only that the session was already over
+            # when the record was read - it could be far older, and the state
+            # is then no more than a lower bound.
             "time_source": record.get("time_source"),
         }
 

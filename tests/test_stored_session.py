@@ -282,16 +282,16 @@ def _last_session_sensor(record):
     return sensor
 
 
-def test_entity_reports_when_the_record_was_collected():
+def test_entity_reports_when_the_session_began():
     """The state is a time, so "when did I last brush" has an answer.
 
     A duration could not be a timestamp device class, and the handle's own
-    counter is not wall time - what is known is when the record was read,
-    within seconds of the session ending.
+    counter is not wall time. The start is what the handle stamps on the
+    record; the end is that plus ``duration_seconds``, which is beside it.
     """
     sensor = _last_session_sensor(
         {**decode_session_record(RECORD, "HX999X", chunked=True),
-         "ended_at": "2026-08-16T12:53:14+00:00"}
+         "started_at": "2026-08-16T12:53:14+00:00"}
     )
     value = sensor.native_value
     assert isinstance(value, datetime)
@@ -309,7 +309,7 @@ def test_the_record_survives_being_stored_and_read_back():
     """
     import json
     record = {**decode_session_record(RECORD, "HX999X", chunked=True),
-              "ended_at": datetime(2026, 8, 16, 12, 53, 14,
+              "started_at": datetime(2026, 8, 16, 12, 53, 14,
                                    tzinfo=timezone.utc).isoformat()}
     round_tripped = json.loads(json.dumps({"last_session": record}))["last_session"]
     assert round_tripped == record
@@ -337,20 +337,25 @@ def test_the_handle_clock_places_a_session_found_later():
     coordinator.address = "AA:BB:CC:DD:EE:FF"
 
     # The measured case: a session stamped at 453226 that ran 160 s, with
-    # the counter reading 464479 when the record was fetched. The end is one
-    # session after the stamp, so the age is 464479 - 453226 - 160.
+    # the counter reading 464479 when the record was fetched. Both readings
+    # come off the same counter, so the stamp's age is 464479 - 453226 -
+    # and that is when the session began.
     record = {**decode_session_record(RECORD, "HX999X", chunked=True), "handle_clock": 464479}
-    ended_at, source = coordinator._session_ended_at(record, witnessed=False)
+    started_at, source = coordinator._session_started_at(record, witnessed=False)
     assert source == "handle_clock"
-    age = datetime.now(timezone.utc) - datetime.fromisoformat(ended_at)
-    assert 11090 < age.total_seconds() < 11100, (
-        "counting from the stamp alone would be a whole session too early")
+    age = datetime.now(timezone.utc) - datetime.fromisoformat(started_at)
+    assert 11250 < age.total_seconds() < 11260
+    # Adding the duration puts the end where counting the end directly used
+    # to: a session that ran 160 s finished 11093 s ago.
+    assert 11090 < age.total_seconds() - 160 < 11100
 
-    # Watching it end beats any calculation.
-    ended_at, source = coordinator._session_ended_at(record, witnessed=True)
+    # Watching it happen beats any calculation - but the state is still the
+    # start, so it is one session back from now rather than now.
+    started_at, source = coordinator._session_started_at(record, witnessed=True)
     assert source == "session_end"
-    assert (datetime.now(timezone.utc)
-            - datetime.fromisoformat(ended_at)).total_seconds() < 5
+    since = (datetime.now(timezone.utc)
+             - datetime.fromisoformat(started_at)).total_seconds()
+    assert 160 <= since < 165
 
 
 @pytest.mark.parametrize("clock", [None, 453225, 453226 + 500 * 86400])
@@ -368,7 +373,7 @@ def test_an_implausible_clock_is_not_trusted(clock):
     record = {**decode_session_record(RECORD, "HX999X", chunked=True)}
     if clock is not None:
         record["handle_clock"] = clock
-    _, source = coordinator._session_ended_at(record, witnessed=False)
+    _, source = coordinator._session_started_at(record, witnessed=False)
     assert source == "collection"
 
 
@@ -376,7 +381,7 @@ def test_the_entity_says_where_its_time_came_from():
     base = decode_session_record(RECORD, "HX999X", chunked=True)
     for source in ("session_end", "handle_clock", "collection"):
         sensor = _last_session_sensor(
-            {**base, "ended_at": "2026-08-16T12:53:14+00:00", "time_source": source}
+            {**base, "started_at": "2026-08-16T12:53:14+00:00", "time_source": source}
         )
         assert sensor.extra_state_attributes["time_source"] == source
         assert sensor.extra_state_attributes["duration_seconds"] == 160
@@ -450,7 +455,7 @@ def test_a_record_the_handle_has_outrun_is_marked():
     """
     sensor = _last_session_sensor(
         {**decode_session_record(RECORD, "HX999X", chunked=True),
-         "ended_at": "2026-08-16T12:53:14+00:00", "superseded": True}
+         "started_at": "2026-08-16T12:53:14+00:00", "superseded": True}
     )
     assert sensor.extra_state_attributes["superseded"] is True
     # The session it does describe is still worth having.
@@ -460,7 +465,7 @@ def test_a_record_the_handle_has_outrun_is_marked():
 def test_a_current_record_is_not_marked():
     sensor = _last_session_sensor(
         {**decode_session_record(RECORD, "HX999X", chunked=True),
-         "ended_at": "2026-08-16T12:53:14+00:00"}
+         "started_at": "2026-08-16T12:53:14+00:00"}
     )
     assert sensor.extra_state_attributes["superseded"] is False
 
@@ -480,9 +485,9 @@ def test_an_outrun_record_keeps_its_own_time():
     record = {**decode_session_record(RECORD, "HX999X", chunked=True), "handle_clock": 464479}
 
     # witnessed, but superseded → dated from the handle's counter, not now.
-    _, source = coordinator._session_ended_at(record, witnessed=False)
+    _, source = coordinator._session_started_at(record, witnessed=False)
     assert source == "handle_clock"
-    _, live_source = coordinator._session_ended_at(record, witnessed=True)
+    _, live_source = coordinator._session_started_at(record, witnessed=True)
     assert live_source == "session_end", "a current record still dates to now"
 
 

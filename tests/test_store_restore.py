@@ -104,6 +104,50 @@ async def test_load_restores_values_and_parses_last_seen(hass, hass_storage) -> 
     assert coordinator.data["brushing_state"] is None
 
 
+async def test_a_session_record_that_cannot_be_placed_is_not_restored(
+    hass, hass_storage
+) -> None:
+    """A record has to carry the time its session began, or it is no use.
+
+    The reconnect leaves a record alone once its time is settled, so one
+    written in an older shape would sit there unreadable until somebody
+    brushed again. Dropped, the handle is asked afresh on the next connect.
+    """
+    coordinator, entry = make_coordinator(hass)
+    hass_storage[_storage_key(entry.entry_id)] = {
+        "version": STORAGE_VERSION,
+        "data": {
+            "battery": 42,
+            "last_session": {
+                "session_id": 341, "duration": 160,
+                "ended_at": "2026-08-16T12:53:14+00:00",
+                "time_source": "handle_clock",
+            },
+        },
+    }
+
+    await coordinator.async_load_stored_data()
+
+    assert coordinator.data.get("last_session") is None
+    assert coordinator.data["battery"] == 42, "the rest of the store still restores"
+
+
+async def test_a_placed_session_record_survives_a_restart(hass, hass_storage) -> None:
+    coordinator, entry = make_coordinator(hass)
+    record = {
+        "session_id": 341, "duration": 160,
+        "started_at": "2026-08-16T12:50:34+00:00",
+        "time_source": "handle_clock",
+    }
+    hass_storage[_storage_key(entry.entry_id)] = {
+        "version": STORAGE_VERSION, "data": {"last_session": record},
+    }
+
+    await coordinator.async_load_stored_data()
+
+    assert coordinator.data["last_session"] == record
+
+
 async def test_load_without_store_is_noop(hass, hass_storage) -> None:
     coordinator, _ = make_coordinator(hass)
     before = dict(coordinator.data)

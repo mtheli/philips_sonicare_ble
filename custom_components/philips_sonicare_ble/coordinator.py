@@ -369,6 +369,14 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 restored["last_seen"] = datetime.fromisoformat(last_seen)
             except ValueError:
                 restored.pop("last_seen")
+        # A session record is only worth restoring if it can still be placed
+        # in time. One written before the record carried a start cannot be,
+        # and keeping it would be worse than dropping it: the reconnect below
+        # leaves a record alone once its time is settled, so a shape that no
+        # longer reads would sit there unreadable until somebody brushed
+        # again. Dropped, the handle is simply asked afresh.
+        if not (restored.get("last_session") or {}).get("started_at"):
+            restored.pop("last_session", None)
         self.data = {**(self.data or {}), **restored}
         _LOGGER.debug(
             "Restored %d stored values for %s", len(restored), self.address
@@ -888,40 +896,47 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # More than a couple of goes is not a retry any more, it is a loop.
     MAX_TIME_PLACE_ATTEMPTS = 2
 
-    def _session_ended_at(
+    def _session_started_at(
         self, record: dict[str, Any], witnessed: bool
     ) -> tuple[str, str]:
-        """Work out when the session ended, and say how confidently.
+        """Work out when the session began, and say how confidently.
 
-        Watching it end beats any calculation, so that case simply uses the
-        clock on the wall. Otherwise the handle's counter places it. Only if
-        that is missing or implausible does this fall back to the time of
-        collection, which for a session found later is a lower bound rather
-        than an answer - and it is labelled as such instead of quietly
+        The start rather than the end because that is what the handle itself
+        records: the stamp on the record is taken as the session begins, and
+        everything else here is arithmetic around it. Reporting the measured
+        quantity keeps the conversion in one place - anything wanting the end
+        adds the duration, which is on the record beside it.
+
+        Watching it happen beats any calculation, so that case simply counts
+        back from the clock on the wall. Otherwise the handle's counter places
+        it. Only if that is missing or implausible does this fall back to the
+        time of collection, which for a session found later is a lower bound
+        rather than an answer - and it is labelled as such instead of quietly
         claiming the session happened just now.
         """
         now = datetime.now(timezone.utc)
+        duration = record.get("duration") or 0
         if witnessed:
-            return now.isoformat(), "session_end"
+            return (now - timedelta(seconds=duration)).isoformat(), "session_end"
 
         clock = record.get("handle_clock")
         stamp = record.get("timestamp")
         if isinstance(clock, int) and isinstance(stamp, int):
-            # The record is stamped when the session began, so its end is one
-            # session later. Measured on a handle whose session ran 14:51:03
-            # to 14:53:13: counting from the stamp alone put the end at
-            # 14:50:33 - early by exactly the length of the session - while
-            # counting from the stamp plus the duration landed on 14:53:13
-            # to the second.
-            elapsed = clock - stamp - (record.get("duration") or 0)
-            if 0 <= elapsed <= self.MAX_SESSION_AGE_DAYS * 86400:
-                return (now - timedelta(seconds=elapsed)).isoformat(), "handle_clock"
+            # Both readings come off the same counter, so their difference is
+            # how long ago the session started, with no clock of ours in it.
+            # Measured on a handle whose session ran 14:51:03 to 14:53:13,
+            # this landed on 14:51:03 to the second.
+            age = clock - stamp
+            # Judged on the end, as before: a session cannot have finished in
+            # the future, and one older than the bound is not worth placing.
+            if 0 <= age - duration <= self.MAX_SESSION_AGE_DAYS * 86400:
+                return (now - timedelta(seconds=age)).isoformat(), "handle_clock"
             _LOGGER.debug(
                 "%s: handle clock %d against session stamp %d is not a "
                 "plausible age — falling back to the collection time",
                 self.address, clock, stamp,
             )
-        return now.isoformat(), "collection"
+        return (now - timedelta(seconds=duration)).isoformat(), "collection"
 
     async def _run_session_end(
         self, session_id: int | None, witnessed: bool = True
@@ -959,7 +974,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # A superseded record is an older session, so it must not be dated
         # to now just because a session ended a moment ago: that moment
         # belongs to the session the handle has not filed yet.
-        record["ended_at"], record["time_source"] = self._session_ended_at(
+        record["started_at"], record["time_source"] = self._session_started_at(
             record, witnessed and not pending
         )
         record["superseded"] = pending
