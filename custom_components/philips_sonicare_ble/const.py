@@ -90,8 +90,8 @@ CHAR_MANUFACTURER_NAME = "00002a29-0000-1000-8000-00805f9b34fb"
 CHAR_HANDLE_STATE = "477ea600-a260-11e4-ae37-0002a5d54010"
 CHAR_AVAILABLE_ROUTINES = "477ea600-a260-11e4-ae37-0002a5d54020"
 CHAR_AVAILABLE_ROUTINE_IDS = "477ea600-a260-11e4-ae37-0002a5d54022"
-# Named by the handle's own vendor tooling: which feature the handle
-# currently has active. Not read by this integration yet.
+# Which feature the handle currently has active. The name is established,
+# the contents are not. Not read by this integration yet.
 CHAR_ACTIVE_FEATURE = "477ea600-a260-11e4-ae37-0002a5d54030"
 CHAR_MOTOR_RUNTIME = "477ea600-a260-11e4-ae37-0002a5d54040"
 CHAR_HANDLE_TIME = "477ea600-a260-11e4-ae37-0002a5d54050"
@@ -144,6 +144,18 @@ CHAR_LOADED_SESSION = "477ea600-a260-11e4-ae37-0002a5d540f0"
 # switching itself off.
 SESSION_RECORD_ROUTINE = 0
 SESSION_ACTION_START = 0
+# The control point answers as well as takes orders: when a transfer is done
+# the handle notifies its status there, and that - not the arrival of data -
+# is what says the record is complete. A record may be one notification or
+# several dozen, so anything that treats the first one as the whole answer
+# asks for the next record while the handle is still sending this one, and
+# the handle, still in a transfer, does not answer again.
+SESSION_ACTION_CANCEL = 2
+# Status 0 is a complete record. Status 1 is an answer too: the handle sent
+# what it had and says so, which leaves a record that may be short rather
+# than no record at all.
+SESSION_STATUS_COMPLETE = 0
+SESSION_STATUS_PARTIAL = 1
 
 # Not every handle keeps its sessions behind a storage service. A Sonicare
 # for Kids has none: the same characteristics sit in the brushing service,

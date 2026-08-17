@@ -1348,7 +1348,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._brushhead_read_pending = True
                         self.hass.async_create_task(self._read_brushhead_chars())
                 else:
-                    # All zeros = brush head removed → clear data (like OEM app)
+                    # All zeros = brush head removed → clear data
                     self._clear_brushhead_data()
 
             new_data = self._process_results({char_uuid: data})
@@ -1377,7 +1377,12 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return _callback
 
     def _clear_brushhead_data(self) -> None:
-        """Clear all brush head data when head is removed (like OEM app)."""
+        """Clear all brush head data when the head is removed.
+
+        The values describe the head that was on the handle, and a handle
+        without one has nothing to describe - keeping them would report a
+        head that is lying on the shelf.
+        """
         if not self.data:
             return
         self.data["brushhead_serial"] = None
@@ -1393,10 +1398,11 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.info("%s: brush head removed — data cleared", self.address)
 
     # Chars to re-read after brush head attach notification.
-    # OEM app reads only 4 (version, limit, usage, ring_id) — but their
-    # initial read succeeds because NFC is already scanned by then.
-    # With ESP bridge timing, the initial read often happens before NFC
-    # data is ready, so we also re-read payload, brush head type, and date.
+    # Four of them (version, limit, usage, ring_id) are enough for a reader
+    # that arrives once the handle has finished scanning the head's tag.
+    # Over the ESP bridge the first read regularly lands before the scan is
+    # done, and the characteristics answer with what they held beforehand -
+    # so payload, brush head type and date are re-read as well.
     # Serial is excluded (already in the notification, re-reading loops).
     _BRUSHHEAD_REREAD_CHARS = [
         CHAR_BRUSHHEAD_NFC_VERSION,     # 0x4210
@@ -1409,7 +1415,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     ]
 
     async def _read_brushhead_chars(self) -> None:
-        """Re-read brush head characteristics after NFC scan (like OEM app)."""
+        """Re-read brush head characteristics once the head's tag is scanned."""
         try:
             if not self.transport.is_connected:
                 return

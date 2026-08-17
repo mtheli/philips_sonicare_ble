@@ -66,7 +66,10 @@ from .const import (
     PRESSURE_ALARM_STATES,
     SENSOR_FRAME_PRESSURE,
     SENSOR_FRAME_TEMPERATURE,
+    SESSION_ACTION_CANCEL,
     SESSION_ACTION_START,
+    SESSION_STATUS_COMPLETE,
+    SESSION_STATUS_PARTIAL,
     MAX_DURATION_FACTOR,
     MAX_ROUTINE_SECONDS,
     SESSION_RECORD_MIN_LEN,
@@ -176,10 +179,10 @@ class ClassicProtocol(SonicareProtocol):
         callback: Callable[[str, bytes], None],
     ) -> bool:
         """Turn the sensor frontend on and subscribe to its notification
-        stream. Returns True if the subscribe succeeded. The enable write
-        is attempted even if a previous write failed, matching the OEM
-        app's best-effort behavior — some firmwares emit data even with a
-        stale enable-bitmask."""
+        stream. Returns True if the subscribe succeeded. Subscribing is
+        worth attempting even when the enable write failed — some firmwares
+        emit data on a stale enable bitmask, so a failed write is not proof
+        that the stream will stay silent."""
         try:
             await self._transport.write_char(
                 CHAR_SENSOR_ENABLE, bytes([enable_mask])
@@ -410,24 +413,81 @@ class ClassicProtocol(SonicareProtocol):
             return await self._decode_fetched(record, session_id, verify=True)
 
         loop = asyncio.get_running_loop()
-        received: asyncio.Future[bytes] = loop.create_future()
+        chunks: list[bytes] = []
+        pending: asyncio.Future[int] | None = None
+        # Whether the handle is in a transfer that nobody has ended yet.
+        open_transfer = False
 
         def _on_record(_uuid: str, data: bytes) -> None:
-            if not received.done():
-                received.set_result(bytes(data))
+            chunks.append(bytes(data))
 
-        await self._transport.subscribe(CHAR_SESSION_DATA, _on_record)
-        try:
-            await self._transport.write_char(
-                CHAR_SESSION_TYPE, bytes([SESSION_RECORD_ROUTINE])
-            )
-            await self._transport.write_char(
-                CHAR_ACTIVE_SESSION_ID, session_id.to_bytes(2, "little")
-            )
+        def _on_status(_uuid: str, data: bytes) -> None:
+            # Only while a transfer of ours is open. A status outside one is
+            # an answer to nothing that is being waited for here - the
+            # handle acknowledging a transfer taken back, most likely.
+            if not open_transfer:
+                return
+            if pending is not None and not pending.done():
+                pending.set_result(bytes(data)[0] if data else SESSION_STATUS_COMPLETE)
+
+        async def _cancel_transfer() -> None:
+            """Take back a transfer the handle never finished.
+
+            Without it a handle that went quiet stays in the transfer it was
+            in, and every later request on the same link goes unanswered -
+            reconnecting does not clear it, because as far as the handle is
+            concerned nobody ever ended the last read.
+            """
+            try:
+                await self._transport.write_char(
+                    CHAR_SESSION_ACTION, bytes([SESSION_ACTION_CANCEL])
+                )
+            except Exception as err:  # noqa: BLE001 - nothing left to save
+                _LOGGER.debug("Could not cancel the transfer: %s", err)
+
+        async def _request(kind: int) -> bytes | None:
+            """Select a kind, start the transfer, wait for the handle to end it.
+
+            The end of a record is the status the handle notifies on the
+            control point, not the first data notification: a record arrives
+            in as many pieces as it needs, and asking for the next one while
+            the handle is still sending this one is answered with silence.
+            """
+            nonlocal pending, open_transfer
+            chunks.clear()
+            pending = loop.create_future()
+            open_transfer = True
+            await self._transport.write_char(CHAR_SESSION_TYPE, bytes([kind]))
             await self._transport.write_char(
                 CHAR_SESSION_ACTION, bytes([SESSION_ACTION_START])
             )
-            record = await asyncio.wait_for(received, timeout)
+            try:
+                status = await asyncio.wait_for(pending, timeout)
+            except asyncio.TimeoutError:
+                await _cancel_transfer()
+                open_transfer = False
+                raise
+            open_transfer = False
+            if status not in (SESSION_STATUS_COMPLETE, SESSION_STATUS_PARTIAL):
+                _LOGGER.debug("Record %d of session %d ended with status %d",
+                              kind, session_id, status)
+            return chunks[0] if chunks else None
+
+        # The control point is subscribed alongside the data: the handle says
+        # there when a record is complete, and without that there is nothing
+        # to wait for but the first piece of it.
+        await self._transport.subscribe(CHAR_SESSION_DATA, _on_record)
+        await self._transport.subscribe(CHAR_SESSION_ACTION, _on_status)
+        try:
+            # Which session, once - the kind is what changes per record.
+            await self._transport.write_char(
+                CHAR_ACTIVE_SESSION_ID, session_id.to_bytes(2, "little")
+            )
+            record = await _request(SESSION_RECORD_ROUTINE)
+            if not record:
+                _LOGGER.debug("Stored session %d: the handle sent no record",
+                              session_id)
+                return None
         except asyncio.TimeoutError:
             _LOGGER.debug("Stored session %d: no answer within %.0fs",
                           session_id, timeout)
@@ -437,10 +497,16 @@ class ClassicProtocol(SonicareProtocol):
                           session_id, err)
             return None
         finally:
-            try:
-                await self._transport.unsubscribe(CHAR_SESSION_DATA)
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Could not unsubscribe session data: %s", err)
+            # However this ended - a refused write, a link that went away
+            # mid-sequence - a transfer left open is one the handle is still
+            # in, and it answers nothing else until it is out of it.
+            if open_transfer:
+                await _cancel_transfer()
+            for char in (CHAR_SESSION_DATA, CHAR_SESSION_ACTION):
+                try:
+                    await self._transport.unsubscribe(char)
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.debug("Could not unsubscribe %s: %s", char, err)
 
         return await self._decode_fetched(record, session_id, chunked=True)
 

@@ -154,11 +154,12 @@ IDENTITY_CHARS = [
 # appear at all. Polling on top covers a missed CCCD write; the integration
 # itself is push-only (coordinator update_interval=None), so it is the gentler
 # default to lower or disable this if the link proves unstable.
-# Three characteristics every Classic handle carries and no app reads. The
-# vendor's own tooling names them: the segment of the quadrant pacer, the
-# easy-start run-in stage, and whichever feature the handle has active. What
-# they actually report has never been observed, and a session is the only
-# time it could show - so they are watched rather than guessed at.
+# Three characteristics every Classic handle carries whose readings nothing
+# here has ever seen. Their names are established - the segment of the
+# quadrant pacer, the easy-start run-in stage, and whichever feature the
+# handle has active - but what they actually report has never been observed,
+# and a session is the only time it could show. So they are watched rather
+# than guessed at.
 PROBE_CHARS = [
     const.CHAR_QUADPACER_SEGMENT,
     const.CHAR_EASY_START_STAGE,
@@ -406,10 +407,9 @@ async def _enable_pressure(client: BleakClient) -> None:
 
 
 # Values the handle keeps as descriptors rather than characteristics, which
-# is why a scan that lists characteristics never shows them. The names are
-# the vendor tooling's own. Two of them answer questions this project has
-# had to guess at: how many segments the pacer has, and which version of the
-# record format the handle writes.
+# is why a scan that lists characteristics never shows them. Two of them
+# answer questions this project has had to guess at: how many segments the
+# pacer has, and which version of the record format the handle writes.
 PROBE_DESCRIPTORS = {
     "477ea600-a260-11e4-ae37-0002a5d5a0a0": "quadpacer_count",
     "477ea600-a260-11e4-ae37-0002a5d5a100": "session_version",
@@ -451,6 +451,25 @@ async def _read_descriptors(client: BleakClient, recorder: SessionRecorder) -> N
         print("  no named descriptors on this handle")
 
 
+async def _set_mode(client: BleakClient, mode: str) -> None:
+    """Ask the handle to switch routine before the recording starts.
+
+    The routine decides how long a session runs, so an experiment that only
+    needs a session - not a long one - can say so instead of waiting out
+    whatever the handle was left on.
+    """
+    mode_id = next((k for k, v in const.BRUSHING_MODES.items() if v == mode), None)
+    if mode_id is None:
+        known = ", ".join(sorted(const.BRUSHING_MODES.values()))
+        sys.exit(f"Unknown mode {mode!r}. Known: {known}")
+    try:
+        await client.write_gatt_char(const.CHAR_AVAILABLE_ROUTINE_IDS,
+                                     bytes([mode_id]), response=True)
+        print(f"  routine set to {mode} (id {mode_id})")
+    except Exception as err:  # noqa: BLE001 - not worth losing the recording
+        print(f"  could not set the routine: {err}")
+
+
 async def _read_baseline(client: BleakClient, recorder: SessionRecorder) -> None:
     """Record the current value of every session characteristic."""
     available = {c.uuid.lower() for s in client.services for c in s.characteristics}
@@ -486,20 +505,33 @@ async def _read_baseline(client: BleakClient, recorder: SessionRecorder) -> None
 # the pressure statistics and the brush head identity live.
 STORAGE_REQUESTS = [
     ("routine", 0),
-    # The handle keeps more than one kind of record per session. Type 1 is
-    # its own pressure recording - the type-5 record carries only totals,
-    # and a recording would say how the pressure went rather than how much
-    # of it there was. Requested last: it is the least understood, and the
-    # routine record must not be lost to a window that closed while asking
-    # for it.
     ("brush_head", 5),
     ("brush_id", 4),
+    # Kinds nobody has asked this handle for yet. The numbering is fixed, but
+    # which of them a handle actually keeps is not published anywhere - the
+    # only way to find out is to ask and see what comes back. A summary is
+    # the one worth hoping for: the pressure recording answers the same
+    # question at five hundred times the size.
+    ("summary", 8),
+    ("diagnostics", 7),
+    ("temperature", 2),
+    ("acc_gyro", 3),
+    ("gyro_compensation", 6),
+    # The pressure recording, last because it is by far the largest: 3612
+    # bytes in thirty-three chunks against nine for the others. Three bytes
+    # per sample, ten samples a second, and the third byte of each says
+    # whether the handle objected to how hard it was being pressed - which
+    # makes this, and not the brush-head record, where the time spent
+    # pressing too hard can be counted. Anything requested before it must
+    # not be lost to a window that closed during a transfer this long.
     ("pressure", 1),
 ]
 
-# Writing 0 is the "send it" case of a control point that has no other known
-# operation yet.
+# Writing 0 is the "send it" case of the control point. Writing 2 takes back
+# a transfer that was started and never finished - without it a handle that
+# stayed silent is still in that transfer, and answers nothing afterwards.
 STORAGE_ACTION_START = 0
+STORAGE_ACTION_CANCEL = 2
 
 # Not every handle offers the same storage service. A Sonicare for Kids has
 # no service of its own for it at all: the same characteristics sit in the
@@ -773,13 +805,51 @@ async def _fetch_stored_session(client: BleakClient, recorder: SessionRecorder,
             elif count and time.monotonic() - last_seen >= gap:
                 break
 
-        recorder.note("storage_request_done", request=name, chunks=count)
+        # What the handle said about this kind, separately from what it sent:
+        # the announcement names the size before the first byte arrives, and
+        # the control point says when it considers the transfer over. A kind
+        # the handle does not keep is answered by one, the other, or neither
+        # - and telling those apart is the point of asking at all.
+        announced = status = None
+        payload = chunks = 0
+        for event in recorder.events[mark:]:
+            if event.get("kind") == "note":
+                continue
+            raw = bytes.fromhex(event["hex"])
+            if event["char"] == "active_session_id" and len(raw) >= 6:
+                announced = int.from_bytes(raw[2:6], "little")
+            elif event["char"] == "session_action" and raw:
+                status = raw[0]
+            elif event["char"] == "session_data":
+                chunks += 1
+                payload += max(len(raw) - 1, 0)  # without the chunk index
+
+        recorder.note("storage_request_done", request=name, chunks=count,
+                      data_chunks=chunks, payload=payload,
+                      announced=announced, status=status)
         recorder.tag = None
-        if count:
+        if chunks:
             got_any = True
-            announce(f"stored session: {name} answered with {count} chunk(s)")
+            announce(f"stored session: {name} -> {payload} B in {chunks} "
+                     f"chunk(s), announced {announced}, status {status}")
         else:
-            announce(f"stored session: {name} stayed silent")
+            announce(f"stored session: {name} sent nothing "
+                     f"(announced {announced}, status {status})")
+
+        # A kind that never got acknowledged left the handle in a transfer.
+        # Taking it back is what keeps a probe for one kind from costing
+        # every kind after it - the failure mode that hid this whole
+        # exchange until now.
+        if status is None:
+            try:
+                await client.write_gatt_char(const.CHAR_SESSION_ACTION,
+                                             bytes([STORAGE_ACTION_CANCEL]),
+                                             response=True)
+                recorder.note("storage_transfer_cancelled", request=name)
+            except Exception as err:  # noqa: BLE001 - nothing left to save
+                recorder.note("storage_cancel_failed", request=name,
+                              error=str(err))
+            await asyncio.sleep(gap)
 
     return got_any
 
@@ -1173,6 +1243,11 @@ async def main() -> None:
     parser.add_argument("--max-connections", type=int, default=3,
                         help="How many handles to hold at once. Adapters run out "
                              "of slots well before this matters. Default: 3")
+    parser.add_argument("--mode",
+                        help="Set the brushing routine before recording (e.g. "
+                             "clean). Handy for keeping an experiment short "
+                             "and repeatable, rather than reaching for the "
+                             "handle's own button between runs.")
     parser.add_argument("--fetch-session", action="store_true",
                         help="When a session ends, ask the handle for its own "
                              "stored record of it. Off by default: it writes to "
@@ -1201,6 +1276,9 @@ async def main() -> None:
         if args.pressure:
             await _enable_pressure(client)
         await _subscribe_all(client, recorder, args.pressure, args.fetch_session)
+
+        if args.mode:
+            await _set_mode(client, args.mode)
 
         print("\n--- Baseline ---")
         await _read_baseline(client, recorder)

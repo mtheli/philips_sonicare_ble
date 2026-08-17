@@ -670,7 +670,7 @@ def _parse_generic_resp(body: bytes) -> tuple[int, Any]:
     """Decode a GenericResponse body into (status, parsed_payload).
 
     Wire format is ``<status_byte> <utf8_json_body> 0x00``. The trailing
-    NUL terminator is emitted by the OEM firmware regardless of body
+    NUL terminator is emitted by the handle's firmware regardless of body
     content. When the body isn't valid JSON (empty-port answers,
     unexpected framing), ``parsed_payload`` is ``None``.
     """

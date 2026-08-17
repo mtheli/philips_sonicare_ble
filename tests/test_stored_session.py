@@ -114,14 +114,23 @@ def test_timestamp_is_the_handles_own_count():
 # ── The exchange ────────────────────────────────────────────────────────────
 
 class FakeTransport:
-    """A handle that answers the select-then-transfer exchange."""
+    """A handle that answers the select-then-transfer exchange.
 
-    def __init__(self, record: bytes | None = RECORD, latest: int = 335):
+    It answers the way a handle does: the record on the data characteristic,
+    and then, separately, the status on the control point that says the
+    transfer is over. A caller that mistakes the first for the second is
+    talking over the handle, which is what this stands in for.
+    """
+
+    def __init__(self, record: bytes | None = RECORD, latest: int = 335,
+                 status: int = 0):
         self.record = record
+        self.status = status
+        self.kind = 0
         self.latest = latest
         self.writes: list[tuple[str, bytes]] = []
         self.subscribed: set[str] = set()
-        self._cb = None
+        self._cbs: dict[str, object] = {}
         self.is_connected = True
 
     async def read_char(self, uuid):
@@ -129,16 +138,25 @@ class FakeTransport:
 
     async def subscribe(self, uuid, cb):
         self.subscribed.add(uuid)
-        self._cb = cb
+        self._cbs[uuid[-4:]] = cb
 
     async def unsubscribe(self, uuid):
         self.subscribed.discard(uuid)
+        self._cbs.pop(uuid[-4:], None)
+
+    def _notify(self, suffix: str, data: bytes) -> None:
+        cb = self._cbs.get(suffix)
+        if cb:
+            cb(f"477ea600-a260-11e4-ae37-0002a5d5{suffix}", data)
 
     async def write_char(self, uuid, data):
         self.writes.append((uuid[-4:], bytes(data)))
+        if uuid.endswith("40d5"):
+            self.kind = data[0]
         # The handle answers once the transfer is started, not before.
-        if uuid.endswith("4110") and self.record is not None and self._cb:
-            self._cb(uuid, self.record)
+        if uuid.endswith("4110") and data[0] == 0 and self.record is not None:
+            self._notify("4100", self.record)
+            self._notify("4110", bytes([self.status]))
 
 
 def _protocol(transport):
@@ -149,12 +167,87 @@ def _protocol(transport):
 
 
 async def test_fetch_selects_then_transfers():
-    """Kind, session and start - in that order, and the id little-endian."""
+    """Which session, which kind, then start - in that order."""
     transport = FakeTransport()
     out = await _protocol(transport).fetch_stored_session()
     assert out["session_id"] == 335
-    assert [u for u, _ in transport.writes] == ["40d5", "40e0", "4110"]
-    assert transport.writes[1][1] == (335).to_bytes(2, "little")
+    assert [u for u, _ in transport.writes] == ["40e0", "40d5", "4110"]
+    assert transport.writes[0][1] == (335).to_bytes(2, "little")
+    assert transport.writes[1][1] == b"\x00"
+
+
+async def test_the_data_and_the_control_point_are_both_listened_to():
+    """A record is not complete until the handle says so.
+
+    The data characteristic carries the record and the control point carries
+    the status that ends the transfer, so a fetch that subscribes to only one
+    of them either misses the record or never learns that it is whole.
+    """
+    class Watching(FakeTransport):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.log: list[str] = []
+
+        async def subscribe(self, uuid, cb):
+            self.log.append("subscribe")
+            await super().subscribe(uuid, cb)
+
+        async def unsubscribe(self, uuid):
+            self.log.append("unsubscribe")
+            await super().unsubscribe(uuid)
+
+        async def write_char(self, uuid, data):
+            if uuid.endswith("40d5"):
+                self.log.append(f"select kind {data[0]}")
+            await super().write_char(uuid, data)
+
+    transport = Watching()
+    await _protocol(transport).fetch_stored_session()
+    assert transport.log == [
+        "subscribe", "subscribe", "select kind 0", "unsubscribe", "unsubscribe",
+    ]
+
+
+async def test_a_transfer_that_went_quiet_is_taken_back():
+    """A handle left mid-transfer answers nothing afterwards.
+
+    Silence is not the end of a request: as far as the handle is concerned
+    the read is still running, and the next one - this connection or the
+    next - goes unanswered until somebody ends it.
+    """
+    transport = FakeTransport(record=None)
+    await _protocol(transport).fetch_stored_session(timeout=0.2)
+    assert transport.writes[-1] == ("4110", b"\x02")
+
+
+async def test_a_sequence_that_broke_off_is_taken_back_too():
+    """A transfer is left open by more than a silent handle.
+
+    A write refused halfway through the sequence leaves the handle exactly
+    as a timeout does, and the cost is the same: nothing it is asked
+    afterwards gets an answer.
+    """
+    class Refusing(FakeTransport):
+        async def write_char(self, uuid, data):
+            if uuid.endswith("4110") and data[0] == 0:
+                self.writes.append((uuid[-4:], bytes(data)))
+                raise RuntimeError("write refused")
+            await super().write_char(uuid, data)
+
+    transport = Refusing()
+    assert await _protocol(transport).fetch_stored_session(timeout=0.2) is None
+    assert transport.writes[-1] == ("4110", b"\x02")
+
+
+async def test_a_short_record_the_handle_admits_to_is_still_an_answer():
+    """The handle sends what it has and says the record is incomplete.
+
+    That is a status, not a failure - waiting past it would cost the record
+    that did arrive.
+    """
+    transport = FakeTransport(status=1)
+    out = await _protocol(transport).fetch_stored_session(timeout=0.2)
+    assert out["session_id"] == 335
 
 
 async def test_fetch_leaves_no_subscription_behind():
