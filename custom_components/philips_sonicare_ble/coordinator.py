@@ -901,6 +901,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "started_at": (now - timedelta(seconds=duration)).isoformat(),
             # Watched from the inside, so the time needs no reconstruction.
             "time_source": "session_end",
+            # No counterpart to borrow: the other integration's values for a
+            # session it added up itself name the way the readings reached
+            # it, and there is only one way here. What matters to a reader
+            # is the distinction from `retained_session`.
             "source": "observed",
             "superseded": False,
         }
@@ -1106,7 +1110,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return
         self._place_attempts.pop(record.get("session_id"), None)
-        record["source"] = "handle"
+        # Named as the other integration that files a record names it, so a
+        # reader has one word to know rather than one per handle.
+        record["source"] = "retained_session"
         data = {**(self.data or {}), "last_session": record}
         self.async_set_updated_data(data)
         _LOGGER.info(

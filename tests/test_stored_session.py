@@ -890,7 +890,8 @@ def test_the_observed_record_claims_no_session_number():
     here belongs to an earlier session - and inventing one by counting up
     would collide with what the handle later assigns."""
     c = _bare_coordinator()
-    c.data = {"last_session": {"session_id": 335, "source": "handle"}}
+    c.data = {"last_session": {"session_id": 335,
+                                       "source": "retained_session"}}
     ended = _brush(c, 160)
     ended["last_session"] = c.data["last_session"]
     c._file_observed_session(ended)
@@ -959,7 +960,7 @@ async def test_the_handle_s_own_record_takes_over():
     await c._run_session_end(None, witnessed=True)
 
     filed = c.published[-1]["last_session"]
-    assert filed["source"] == "handle"
+    assert filed["source"] == "retained_session", "the name oralb_live uses"
     assert filed["session_id"] == 336
     assert filed["duration"] == 158
 
@@ -972,7 +973,8 @@ async def test_a_handle_still_holding_the_previous_session_does_not_win():
     the session somebody just brushed with the one before it.
     """
     c = _bare_coordinator()
-    c.data = {"last_session": {"session_id": 335, "source": "handle"}}
+    c.data = {"last_session": {"session_id": 335,
+                                       "source": "retained_session"}}
     ended = _brush(c, 160)
     ended["last_session"] = c.data["last_session"]
     c._file_observed_session(ended)
@@ -992,7 +994,8 @@ async def test_without_an_observed_record_the_old_one_is_still_marked():
     """Nothing was watched - a restart mid-session, say. Then the outrun
     record is all there is, and it says so rather than being dropped."""
     c = _bare_coordinator()
-    c.data = {"last_session": {"session_id": 335, "source": "handle"}}
+    c.data = {"last_session": {"session_id": 335,
+                                       "source": "retained_session"}}
     _ready_to_fetch(c, {"session_id": 335, "duration": 42,
                         "routine_length": 160, "timestamp": 453226,
                         "handle_clock": 453400})
