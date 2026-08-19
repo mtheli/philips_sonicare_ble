@@ -820,6 +820,50 @@ def test_a_kids_session_is_watched_through_handle_state():
     assert ended["last_session"]["duration"] == 92
 
 
+def test_a_partial_update_does_not_reset_the_peak():
+    """Most updates carry only what changed.
+
+    A reading of the timer on its own says nothing about a session starting,
+    and treating it as a start would throw away everything counted so far -
+    leaving the duration at whatever the last delta happened to hold.
+    """
+    c = _bare_coordinator()
+    old = {"brushing_state": "off", "brushing_time": 0}
+    for elapsed in (1, 2, 3):
+        new = {"brushing_state": "on", "brushing_time": elapsed}
+        c._track_session(old, new)
+        old = new
+    # Only the timer moved: brushing_state is carried forward by the merge.
+    c._track_session(old, {"brushing_state": "on", "brushing_time": 4})
+    assert c._session_peak == 4
+
+    c._track_session({"brushing_state": "on", "brushing_time": 4},
+                     {"brushing_state": "off", "brushing_time": 0})
+    ended = {"brushing_state": "off", "brushing_time": 0}
+    c._file_observed_session(ended)
+    assert ended["last_session"]["duration"] == 4
+
+
+async def test_the_first_session_ever_is_not_mistaken_for_a_stale_answer():
+    """No handle record has been filed yet, so there is no previous number.
+
+    Absent on both sides must not read as "the same session", or the very
+    first record the handle offers would be refused.
+    """
+    c = _bare_coordinator()
+    ended = _brush(c, 160)
+    c._file_observed_session(ended)
+    assert ended["last_session"]["previous_id"] is None
+    c.data = ended
+    _ready_to_fetch(c, {"session_id": 1, "duration": 158,
+                        "routine_length": 160, "timestamp": 453226,
+                        "handle_clock": 453400})
+
+    await c._run_session_end(None, witnessed=True)
+
+    assert c.published[-1]["last_session"]["session_id"] == 1
+
+
 def test_a_second_session_does_not_inherit_the_first_one_s_duration():
     """Two runs a second apart is a real capture, not a hypothetical."""
     c = _bare_coordinator()
