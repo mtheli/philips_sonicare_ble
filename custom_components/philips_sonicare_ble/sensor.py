@@ -594,8 +594,12 @@ class SonicareLastSessionSensor(PhilipsSonicareEntity, SensorEntity):
         return {
             "session_id": record.get("session_id"),
             "duration_seconds": record.get("duration"),
-            "routine_length_seconds": record.get("routine_length"),
-            "brushing_mode": record.get("brushing_mode"),
+            # Named as the other integration that files a record names them,
+            # so anything reading a session has one spelling to know rather
+            # than one per handle. What a Sonicare calls the routine length
+            # is the same number an Oral-B calls the target duration.
+            "target_duration_seconds": record.get("routine_length"),
+            "mode": record.get("brushing_mode"),
             "intensity": record.get("intensity"),
             # True while the handle has finished a session it has not filed
             # yet. Some only write the record as they switch off, a minute

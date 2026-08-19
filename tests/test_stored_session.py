@@ -297,7 +297,7 @@ def test_entity_reports_when_the_session_began():
     assert isinstance(value, datetime)
     assert value == datetime(2026, 8, 16, 12, 53, 14, tzinfo=timezone.utc)
     assert sensor.extra_state_attributes["duration_seconds"] == 160
-    assert sensor.extra_state_attributes["routine_length_seconds"] == 160
+    assert sensor.extra_state_attributes["target_duration_seconds"] == 160
 
 
 def test_the_record_survives_being_stored_and_read_back():
