@@ -19,6 +19,7 @@ import pytest
 from custom_components.philips_sonicare_ble.classic_protocol import (
     decode_session_record,
 )
+from custom_components.philips_sonicare_ble.const import HANDLE_STATE_RUNNING
 
 from .conftest import load_json_fixture
 
@@ -763,3 +764,197 @@ def test_a_record_in_an_unrecognised_format_is_refused():
     assert decode_session_record(altered(6, 9999), "HX6340") is None, "absurd duration"
     # A session that ran a little past its target is still a session.
     assert decode_session_record(altered(6, 70), "HX6340")["duration"] == 70
+
+
+# ── The session this integration watched, written down itself ───────────────
+#
+# The handle keeps the better record, but not always in time: one files it
+# only as it switches off, and a Sonicare for Kids not until something
+# connects to it again. Until then the reading would still describe the
+# session before the one somebody just brushed. So the session is written
+# down from what was watched, and the handle's own record takes over when it
+# arrives.
+
+def _bare_coordinator():
+    from custom_components.philips_sonicare_ble.coordinator import (
+        PhilipsSonicareCoordinator,
+    )
+    c = PhilipsSonicareCoordinator.__new__(PhilipsSonicareCoordinator)
+    c.address = "AA:BB:CC:DD:EE:FF"
+    c._use_condor = False
+    c._session_peak = 0
+    c._place_attempts = {}
+    c.data = {}
+    return c
+
+
+def _brush(c, seconds, *, kids=False):
+    """Run a session through the tracker, second by second, and end it."""
+    key = "handle_state_value" if kids else "brushing_state"
+    running = HANDLE_STATE_RUNNING if kids else "on"
+    idle = 1 if kids else "off"
+    old = {key: idle, "brushing_time": 0}
+    for elapsed in range(1, seconds + 1):
+        new = {key: running, "brushing_time": elapsed}
+        c._track_session(old, new)
+        old = new
+    # The handle wipes the timer in the same instant it reports the stop.
+    ended = {key: idle, "brushing_time": 0}
+    c._track_session(old, ended)
+    return ended
+
+
+def test_the_duration_survives_the_wipe():
+    """The timer reads zero by the time the session is noticed to be over."""
+    c = _bare_coordinator()
+    ended = _brush(c, 137)
+    c._file_observed_session(ended)
+    assert ended["last_session"]["duration"] == 137
+
+
+def test_a_kids_session_is_watched_through_handle_state():
+    """No brushing state at all on those - the handle state is the signal."""
+    c = _bare_coordinator()
+    ended = _brush(c, 92, kids=True)
+    c._file_observed_session(ended)
+    assert ended["last_session"]["duration"] == 92
+
+
+def test_a_second_session_does_not_inherit_the_first_one_s_duration():
+    """Two runs a second apart is a real capture, not a hypothetical."""
+    c = _bare_coordinator()
+    _brush(c, 160)
+    ended = _brush(c, 22)
+    c._file_observed_session(ended)
+    assert ended["last_session"]["duration"] == 22
+
+
+def test_nothing_watched_means_nothing_written():
+    """Connecting mid-session, or readings that never arrived.
+
+    An empty record would claim a session of no length; the handle is being
+    asked for its own either way.
+    """
+    c = _bare_coordinator()
+    ended = {"brushing_state": "off", "brushing_time": 0}
+    c._file_observed_session(ended)
+    assert "last_session" not in ended
+
+
+def test_the_observed_record_claims_no_session_number():
+    """The handle reports one a moment after the end, so any number on hand
+    here belongs to an earlier session - and inventing one by counting up
+    would collide with what the handle later assigns."""
+    c = _bare_coordinator()
+    c.data = {"last_session": {"session_id": 335, "source": "handle"}}
+    ended = _brush(c, 160)
+    ended["last_session"] = c.data["last_session"]
+    c._file_observed_session(ended)
+    record = ended["last_session"]
+    assert record["session_id"] is None
+    assert record["previous_id"] == 335, "but it remembers the last filed one"
+    assert record["source"] == "observed"
+    assert record["time_source"] == "session_end"
+
+
+def test_the_observed_record_dates_itself_from_the_end():
+    c = _bare_coordinator()
+    ended = _brush(c, 120)
+    c._file_observed_session(ended)
+    started = datetime.fromisoformat(ended["last_session"]["started_at"])
+    age = (datetime.now(timezone.utc) - started).total_seconds()
+    assert 119 <= age <= 125
+
+
+def test_it_carries_the_settings_the_session_ran_with():
+    c = _bare_coordinator()
+    ended = _brush(c, 160)
+    ended.update({"routine_length": 180, "brushing_mode": "white_plus",
+                  "intensity": "low"})
+    c._file_observed_session(ended)
+    record = ended["last_session"]
+    assert (record["routine_length"], record["brushing_mode"],
+            record["intensity"]) == (180, "white_plus", "low")
+
+
+# ── Handing over to the handle's own record ─────────────────────────────────
+
+class _Handle:
+    """A handle that answers a fetch with whatever record it has filed."""
+
+    def __init__(self, record):
+        self.record = record
+        self.asked = 0
+
+    async def fetch_stored_session(self, session_id=None):
+        self.asked += 1
+        return dict(self.record) if self.record else None
+
+
+def _ready_to_fetch(c, record):
+    from types import SimpleNamespace
+    c.transport = SimpleNamespace(is_connected=True)
+    c._link_lock = asyncio.Lock()
+    c._protocol = _Handle(record)
+    c.published = []
+    c.async_set_updated_data = c.published.append
+    return c
+
+
+async def test_the_handle_s_own_record_takes_over():
+    """It describes the same session better - it has the number, and it is
+    what the device concluded rather than what was counted from outside."""
+    c = _bare_coordinator()
+    ended = _brush(c, 160)
+    c._file_observed_session(ended)
+    c.data = ended
+    _ready_to_fetch(c, {"session_id": 336, "duration": 158,
+                        "routine_length": 160, "timestamp": 453226,
+                        "handle_clock": 453400})
+
+    await c._run_session_end(None, witnessed=True)
+
+    filed = c.published[-1]["last_session"]
+    assert filed["source"] == "handle"
+    assert filed["session_id"] == 336
+    assert filed["duration"] == 158
+
+
+async def test_a_handle_still_holding_the_previous_session_does_not_win():
+    """The one case the observed record exists for.
+
+    Asked right after the motor stops, some handles answer with the record
+    they filed last time. Written over the observed one, that would replace
+    the session somebody just brushed with the one before it.
+    """
+    c = _bare_coordinator()
+    c.data = {"last_session": {"session_id": 335, "source": "handle"}}
+    ended = _brush(c, 160)
+    ended["last_session"] = c.data["last_session"]
+    c._file_observed_session(ended)
+    c.data = ended
+    _ready_to_fetch(c, {"session_id": 335, "duration": 42,
+                        "routine_length": 160, "timestamp": 453226,
+                        "handle_clock": 453400})
+
+    await c._run_session_end(None, witnessed=True)
+
+    assert c.published == [], "nothing was filed over the observed record"
+    assert c.data["last_session"]["source"] == "observed"
+    assert c.data["last_session"]["duration"] == 160
+
+
+async def test_without_an_observed_record_the_old_one_is_still_marked():
+    """Nothing was watched - a restart mid-session, say. Then the outrun
+    record is all there is, and it says so rather than being dropped."""
+    c = _bare_coordinator()
+    c.data = {"last_session": {"session_id": 335, "source": "handle"}}
+    _ready_to_fetch(c, {"session_id": 335, "duration": 42,
+                        "routine_length": 160, "timestamp": 453226,
+                        "handle_clock": 453400})
+
+    await c._run_session_end(None, witnessed=True)
+
+    filed = c.published[-1]["last_session"]
+    assert filed["superseded"] is True
+    assert filed["session_id"] == 335

@@ -241,6 +241,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # that has been tried. Deliberately not persisted: a restart is
         # as good a moment as any to try the handle again.
         self._place_attempts: dict[int | None, int] = {}
+        # Highest brushing time seen in the running session. The handle
+        # wipes the reading as it stops, so this is where the duration
+        # of a session survives long enough to be written down.
+        self._session_peak: int = 0
         # Operations that share the link and would otherwise overlap: the
         # sensor stream going up or down, and a stored record being fetched.
         self._link_lock = asyncio.Lock()
@@ -611,6 +615,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         old = self.data or {}
         new_data = old.copy()
         new_data.update(parsed)
+        self._track_session(old, new_data)
 
         # Condor RoutineStatus.Mode is a position into the device's static
         # RoutineIDs list, not a routine id — resolve it against the list we
@@ -640,6 +645,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # is, and whether or not a record is being fetched.
                     if self._sensor_subscribed:
                         self.hass.async_create_task(self._unsubscribe_sensor_data())
+                    self._file_observed_session(new_data)
                     self._start_session_end_task()
 
         # Counterfeit brush head detection
@@ -823,6 +829,87 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # the instant a session ends, so a live reading that arrives a moment too
     # late reads zero, and one that never arrives leaves nothing at all.
 
+    def _track_session(self, old: dict[str, Any], new_data: dict[str, Any]) -> None:
+        """Keep the running session's highest brushing time.
+
+        The reading is wiped as the handle stops - on the same handle, in the
+        same instant the state says the session is over - so by the time a
+        session end is noticed the timer often reads zero. The peak is the
+        only place the duration survives, and it has to be kept while the
+        session runs rather than read at the end.
+
+        Reset on both starts, because both are real: a handle reporting
+        ``brushing_state`` announces the session, and a Sonicare for Kids
+        only changes handle state. Two sessions can follow each other within
+        a second, and a peak carried across would report the first one's
+        duration for the second.
+        """
+        started = (
+            (new_data.get("brushing_state") == "on" != old.get("brushing_state"))
+            or (new_data.get("handle_state_value") == HANDLE_STATE_RUNNING
+                != old.get("handle_state_value"))
+        )
+        if started:
+            self._session_peak = 0
+        elapsed = new_data.get("brushing_time")
+        if isinstance(elapsed, int) and elapsed > self._session_peak:
+            self._session_peak = elapsed
+
+    def _file_observed_session(self, new_data: dict[str, Any]) -> None:
+        """Write down the session that just ended, from what was watched.
+
+        The handle keeps its own record and that one is better - it is what
+        the device concluded - but it is not there yet, and on some handles
+        it will not be for a while: one files it only as it switches off,
+        and a Sonicare for Kids not until something connects to it again.
+        Until then this is the only account of the session there is, and the
+        alternative is a reading that still describes the session before it.
+
+        Deliberately no session number. The handle reports one a moment
+        *after* the session ends, so whatever is on hand here belongs to an
+        earlier session - and a number invented by counting up would collide
+        with the one the handle later assigns. Absent, and ``source`` says
+        which kind of record this is instead.
+
+        Written into the dict being built rather than published: this runs
+        inside the update cycle, and the merge that follows would overwrite
+        anything set behind its back.
+        """
+        if self._use_condor:
+            return
+        duration = self._session_peak
+        if not duration:
+            # Nothing was watched - a session already running at connect, or
+            # one whose readings never arrived. There is nothing to write
+            # down, and the handle is being asked anyway.
+            return
+        now = datetime.now(timezone.utc)
+        held = new_data.get("last_session") or {}
+        new_data["last_session"] = {
+            "session_id": None,
+            # The last number the handle filed, carried forward: with no
+            # number of its own, that is what says whether an answer the
+            # handle gives later is this session or the one before it.
+            # Persisted with the record, so a restart does not lose it.
+            "previous_id": (held.get("session_id")
+                            if held.get("session_id") is not None
+                            else held.get("previous_id")),
+            "duration": duration,
+            "routine_length": new_data.get("routine_length"),
+            "brushing_mode": new_data.get("brushing_mode"),
+            "intensity": new_data.get("intensity"),
+            "started_at": (now - timedelta(seconds=duration)).isoformat(),
+            # Watched from the inside, so the time needs no reconstruction.
+            "time_source": "session_end",
+            "source": "observed",
+            "superseded": False,
+        }
+        self._session_peak = 0
+        _LOGGER.debug(
+            "%s: observed session filed (%ds), awaiting the handle's own record",
+            self.address, duration,
+        )
+
     def _update_stored_session(
         self, old: dict[str, Any], new_data: dict[str, Any], parsed: dict[str, Any]
     ) -> None:
@@ -842,6 +929,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if "brushing_state" not in new_data and "handle_state_value" in parsed:
             if (old.get("handle_state_value") == HANDLE_STATE_RUNNING
                     and new_data.get("handle_state_value") != HANDLE_STATE_RUNNING):
+                self._file_observed_session(new_data)
                 self._start_session_end_task()
 
         latest = new_data.get("latest_session_id")
@@ -969,7 +1057,12 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # and takes the link with it. Until the newer one turns up, the one
         # we hold is no longer "the last session": presenting it as such
         # would show somebody the session before the one they just brushed.
-        held_id = ((self.data or {}).get("last_session") or {}).get("session_id")
+        held = (self.data or {}).get("last_session") or {}
+        # A record written from watching has no number of its own and carries
+        # the last one the handle filed instead.
+        held_id = held.get("session_id")
+        if held_id is None:
+            held_id = held.get("previous_id")
         pending = witnessed and record.get("session_id") == held_id
         if pending:
             _LOGGER.debug(
@@ -977,6 +1070,17 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "newest — a newer record is outstanding",
                 self.address, held_id,
             )
+            if held.get("source") == "observed":
+                # There is already a better account of the session that just
+                # ended: the one written from watching it. Filing the older
+                # record over it would replace a right answer with a wrong
+                # one. The handle is asked again on the next connect, where
+                # the number it reports still has no record to account for it.
+                _LOGGER.debug(
+                    "%s: keeping the observed record until the handle files "
+                    "the session it describes", self.address,
+                )
+                return
 
         # A superseded record is an older session, so it must not be dated
         # to now just because a session ended a moment ago: that moment
@@ -1002,6 +1106,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return
         self._place_attempts.pop(record.get("session_id"), None)
+        record["source"] = "handle"
         data = {**(self.data or {}), "last_session": record}
         self.async_set_updated_data(data)
         _LOGGER.info(

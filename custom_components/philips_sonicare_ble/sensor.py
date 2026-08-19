@@ -593,6 +593,12 @@ class SonicareLastSessionSensor(PhilipsSonicareEntity, SensorEntity):
             return None
         return {
             "session_id": record.get("session_id"),
+            # Which kind of account this is: ``handle`` was read from the
+            # handle's own store, ``observed`` was written by this
+            # integration from watching the session end - the same session,
+            # but counted from the outside and without a number, until the
+            # handle files its own and that one takes over.
+            "source": record.get("source"),
             "duration_seconds": record.get("duration"),
             # Named as the other integration that files a record names them,
             # so anything reading a session has one spelling to know rather
