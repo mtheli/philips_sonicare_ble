@@ -607,13 +607,13 @@ class SonicareLastSessionSensor(PhilipsSonicareEntity, SensorEntity):
             # last session - and anything presenting it as one would show
             # the session before the one that was just brushed.
             "superseded": bool(record.get("superseded")),
-            # How the state was arrived at, because the three ways differ in
+            # How the state was arrived at, because the two ways differ in
             # what they are worth: ``session_end`` was watched happening and
-            # is accurate to seconds, ``handle_clock`` was worked out from
-            # the handle's own counter and lands within about a minute, and
-            # ``collection`` means only that the session was already over
-            # when the record was read - it could be far older, and the state
-            # is then no more than a lower bound.
+            # is accurate to seconds, while ``handle_clock`` was worked out
+            # from the handle's own counter and lands within about a minute.
+            # There is no third value - a session that can be placed neither
+            # way is not filed at all, since this reading is a time and an
+            # invented one would be read as a real one.
             "time_source": record.get("time_source"),
         }
 

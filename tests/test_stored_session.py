@@ -363,7 +363,8 @@ def test_an_implausible_clock_is_not_trusted(clock):
     """A counter behind the stamp, or absurdly ahead of it, proves nothing.
 
     Reporting a session in the future or centuries old would be worse than
-    admitting the time is only a lower bound.
+    saying nothing, and so is the time of collection - it is the moment
+    somebody looked, and reads as the moment somebody brushed.
     """
     from custom_components.philips_sonicare_ble.coordinator import (
         PhilipsSonicareCoordinator,
@@ -373,13 +374,13 @@ def test_an_implausible_clock_is_not_trusted(clock):
     record = {**decode_session_record(RECORD, "HX999X", chunked=True)}
     if clock is not None:
         record["handle_clock"] = clock
-    _, source = coordinator._session_started_at(record, witnessed=False)
-    assert source == "collection"
+    started, source = coordinator._session_started_at(record, witnessed=False)
+    assert (started, source) == (None, None), "an unplaceable session has no time"
 
 
 def test_the_entity_says_where_its_time_came_from():
     base = decode_session_record(RECORD, "HX999X", chunked=True)
-    for source in ("session_end", "handle_clock", "collection"):
+    for source in ("session_end", "handle_clock"):
         sensor = _last_session_sensor(
             {**base, "started_at": "2026-08-16T12:53:14+00:00", "time_source": source}
         )
@@ -401,6 +402,7 @@ def _coordinator_with(record):
     c._start_session_end_task = lambda session_id=None, witnessed=True: (
         c.asked.append((session_id, witnessed))
     )
+    c._place_attempts = {}
     data = {"latest_session_id": 335}
     if record is not None:
         data["last_session"] = record
@@ -418,20 +420,25 @@ def test_a_session_already_placed_in_time_is_left_alone():
     for source in ("session_end", "handle_clock"):
         c, data = _coordinator_with({"session_id": 335, "time_source": source})
         c._update_stored_session({}, data, {"latest_session_id": 335})
-        assert c.asked == []
+        assert c.asked == [], f"held a {source} record and asked anyway"
 
 
-@pytest.mark.parametrize("held", [
-    {"session_id": 335},                             # written before the clock was read
-    {"session_id": 335, "time_source": "collection"},  # the clock did not answer
-])
-def test_a_session_whose_time_is_unplaced_is_fetched_again(held):
-    """A record that only knows when it was collected is worth another try.
+def test_a_session_whose_time_could_not_be_placed_is_fetched_again():
+    """The handle was asked and could not date it, so nothing was filed.
 
-    Its state is a time the session demonstrably did not happen at - reading
-    the handle's counter once more replaces a wrong answer with a right one.
+    Which leaves the same gap as never having asked: the newest id the handle
+    reports is one no record accounts for, and the reading that places it
+    fails a moment at a time - the next connect is a fresh chance at it.
     """
-    c, data = _coordinator_with(held)
+    c, data = _coordinator_with(None)
+    c._place_attempts = {335: 1}
+    c._update_stored_session({}, data, {"latest_session_id": 335})
+    assert c.asked == [(335, False)]
+
+
+def test_a_record_written_before_records_carried_a_time_is_replaced():
+    """Restored from an older version of this integration."""
+    c, data = _coordinator_with({"session_id": 334})
     c._update_stored_session({}, data, {"latest_session_id": 335})
     assert c.asked == [(335, False)]
 
@@ -673,6 +680,7 @@ def test_a_session_in_progress_is_not_interrupted_by_a_backfill():
     c.address = "AA:BB"
     c._use_condor = False
     c.asked = []
+    c._place_attempts = {}
     c._start_session_end_task = lambda session_id=None, witnessed=True: (
         c.asked.append(session_id))
     parsed = {"latest_session_id": 335}
@@ -695,14 +703,14 @@ def test_a_record_whose_time_cannot_be_placed_is_not_chased_forever():
     c.address = "AA:BB"
     c._use_condor = False
     c.asked = []
+    c._place_attempts = {}
     c._start_session_end_task = lambda session_id=None, witnessed=True: (
         c.asked.append(session_id))
     parsed = {"latest_session_id": 335}
 
+    data = {"latest_session_id": 335}
     for attempts, expected in ((0, 1), (1, 2), (2, 2), (5, 2)):
-        data = {"latest_session_id": 335,
-                "last_session": {"session_id": 335, "time_source": "collection",
-                                 "place_attempts": attempts}}
+        c._place_attempts = {335: attempts}
         c._update_stored_session({}, data, parsed)
         assert len(c.asked) == expected, f"after {attempts} attempts"
 

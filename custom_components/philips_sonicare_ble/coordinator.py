@@ -237,6 +237,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._dbus_bus: MessageBus | None = None
         self._counterfeit_timer_task: asyncio.Task | None = None
         self._session_task: asyncio.Task | None = None
+        # Sessions whose time could not be established, and how often
+        # that has been tried. Deliberately not persisted: a restart is
+        # as good a moment as any to try the handle again.
+        self._place_attempts: dict[int | None, int] = {}
         # Operations that share the link and would otherwise overlap: the
         # sensor stream going up or down, and a stored record being fetched.
         self._link_lock = asyncio.Lock()
@@ -375,7 +379,12 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # leaves a record alone once its time is settled, so a shape that no
         # longer reads would sit there unreadable until somebody brushed
         # again. Dropped, the handle is simply asked afresh.
-        if not (restored.get("last_session") or {}).get("started_at"):
+        # Same for one written when a session that could not be dated was
+        # filed anyway: its start is the moment somebody happened to look,
+        # which is a bound and not a time. Dropped rather than shown, and
+        # the handle is asked for it again on the next connect.
+        held = restored.get("last_session") or {}
+        if not held.get("started_at") or held.get("time_source") == "collection":
             restored.pop("last_session", None)
         self.data = {**(self.data or {}), **restored}
         _LOGGER.debug(
@@ -848,15 +857,13 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         held = new_data.get("last_session") or {}
         if held.get("session_id") == latest:
-            if held.get("time_source") in ("session_end", "handle_clock"):
-                return
-            # The time could not be established last time. Worth another go,
-            # since the reading that places it can fail for a moment - but
-            # not forever: a handle whose clock cannot be read, or whose
-            # clock disagrees with its own records, would otherwise have the
-            # whole exchange run again on every single connect.
-            if held.get("place_attempts", 0) >= self.MAX_TIME_PLACE_ATTEMPTS:
-                return
+            # Held and filed, which now means dated too: a record that could
+            # not be placed in time was never filed in the first place.
+            return
+        if self._place_attempts.get(latest, 0) >= self.MAX_TIME_PLACE_ATTEMPTS:
+            # Tried and failed to date this one often enough. More than a
+            # couple of goes is not a retry any more, it is a loop.
+            return
         # Either a session we do not have, or one whose time we never managed
         # to place: a record that only knows when it was collected is worth
         # fetching again, because a reading of the handle's counter turns it
@@ -898,7 +905,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _session_started_at(
         self, record: dict[str, Any], witnessed: bool
-    ) -> tuple[str, str]:
+    ) -> tuple[str | None, str | None]:
         """Work out when the session began, and say how confidently.
 
         The start rather than the end because that is what the handle itself
@@ -909,10 +916,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         Watching it happen beats any calculation, so that case simply counts
         back from the clock on the wall. Otherwise the handle's counter places
-        it. Only if that is missing or implausible does this fall back to the
-        time of collection, which for a session found later is a lower bound
-        rather than an answer - and it is labelled as such instead of quietly
-        claiming the session happened just now.
+        it. If that reading is missing or implausible the session cannot be
+        placed at all, and this says so - the time of collection is only ever
+        "no later than this", and everything downstream would read it as
+        "just now". A record nobody can date is not filed.
         """
         now = datetime.now(timezone.utc)
         duration = record.get("duration") or 0
@@ -933,10 +940,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return (now - timedelta(seconds=age)).isoformat(), "handle_clock"
             _LOGGER.debug(
                 "%s: handle clock %d against session stamp %d is not a "
-                "plausible age — falling back to the collection time",
+                "plausible age — the session cannot be placed in time",
                 self.address, clock, stamp,
             )
-        return (now - timedelta(seconds=duration)).isoformat(), "collection"
+        return None, None
 
     async def _run_session_end(
         self, session_id: int | None, witnessed: bool = True
@@ -978,11 +985,23 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             record, witnessed and not pending
         )
         record["superseded"] = pending
-        if record["time_source"] == "collection":
-            held = ((self.data or {}).get("last_session") or {})
-            previous = (held.get("place_attempts", 0)
-                        if held.get("session_id") == record.get("session_id") else 0)
-            record["place_attempts"] = previous + 1
+        if record["started_at"] is None:
+            # The sensor's state is the time the session began - there is no
+            # such thing as this record without one. Filing it would mean
+            # inventing a time, and everything downstream reads a time as a
+            # claim about when somebody brushed. So it is dropped, and tried
+            # again on a later connect: the reading that places it fails for
+            # a moment at a time, usually because the handle switched off
+            # mid-exchange. Not forever, though - a handle whose clock never
+            # reads would otherwise run the whole exchange on every connect.
+            sid = record.get("session_id")
+            self._place_attempts[sid] = self._place_attempts.get(sid, 0) + 1
+            _LOGGER.debug(
+                "%s: session %s could not be placed in time (attempt %d)",
+                self.address, sid, self._place_attempts[sid],
+            )
+            return
+        self._place_attempts.pop(record.get("session_id"), None)
         data = {**(self.data or {}), "last_session": record}
         self.async_set_updated_data(data)
         _LOGGER.info(
