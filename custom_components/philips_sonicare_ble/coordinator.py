@@ -930,7 +930,14 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Handles that report no brushing state of their own still change
         # handle state when the motor stops, and that is the only signal a
         # Sonicare for Kids gives.
-        if "brushing_state" not in new_data and "handle_state_value" in parsed:
+        #
+        # Tested on the value, not on the key: the data dict is seeded with
+        # every field a handle might report, so `brushing_state` is present
+        # from the first update whether or not anything ever fills it. Asked
+        # the other way round this never fired, and the Kids handle only ever
+        # got its record on the next connect - which read as something the
+        # handle did rather than something never asked of it.
+        if new_data.get("brushing_state") is None and "handle_state_value" in parsed:
             if (old.get("handle_state_value") == HANDLE_STATE_RUNNING
                     and new_data.get("handle_state_value") != HANDLE_STATE_RUNNING):
                 self._file_observed_session(new_data)

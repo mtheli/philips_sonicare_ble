@@ -922,6 +922,31 @@ def test_it_carries_the_settings_the_session_ran_with():
             record["intensity"]) == (180, "white_plus", "low")
 
 
+def test_a_kids_session_end_is_noticed_through_handle_state():
+    """The only signal that handle gives, against the data dict as it is.
+
+    Every field a handle might report is seeded into that dict at setup, so
+    `brushing_state` is present from the first update whether or not anything
+    ever fills it. A check for the key rather than the value therefore never
+    fires - which is how the Kids handle came to look like a device that only
+    files its record on the next connect, when in truth it was never asked at
+    the end of a session at all.
+    """
+    c = _bare_coordinator()
+    c.asked = []
+    c._start_session_end_task = lambda session_id=None, witnessed=True: (
+        c.asked.append((session_id, witnessed)))
+    seeded = {"brushing_state": None, "brushing_state_value": None}
+    old = {**seeded, "handle_state_value": HANDLE_STATE_RUNNING}
+    new = {**seeded, "handle_state_value": 1}
+    c._session_peak = 118
+
+    c._update_stored_session(old, new, {"handle_state_value": 1})
+
+    assert c.asked == [(None, True)], "the handle was asked for its record"
+    assert new["last_session"]["duration"] == 118, "and the session was written down"
+
+
 # ── Handing over to the handle's own record ─────────────────────────────────
 
 class _Handle:
