@@ -1058,9 +1058,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # A session that ended while we were watching, answered with the
         # record we already had, means the handle has not filed it yet -
         # some do that only as they switch off, which can be a minute later
-        # and takes the link with it. Until the newer one turns up, the one
-        # we hold is no longer "the last session": presenting it as such
-        # would show somebody the session before the one they just brushed.
+        # and takes the link with it, and one waits for the next connection
+        # entirely. Seen in the field: 0.6 s after a session ended, the
+        # handle still answered with the one before it.
         held = (self.data or {}).get("last_session") or {}
         # A record written from watching has no number of its own and carries
         # the last one the handle filed instead.

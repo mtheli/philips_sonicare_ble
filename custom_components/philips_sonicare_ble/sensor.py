@@ -609,11 +609,14 @@ class SonicareLastSessionSensor(PhilipsSonicareEntity, SensorEntity):
             "target_duration_seconds": record.get("routine_length"),
             "mode": record.get("brushing_mode"),
             "intensity": record.get("intensity"),
-            # True while the handle has finished a session it has not filed
-            # yet. Some only write the record as they switch off, a minute
-            # or so later, so between the two this record is no longer the
-            # last session - and anything presenting it as one would show
-            # the session before the one that was just brushed.
+            # True where a session has finished that this record is not.
+            # Ordinarily the gap it names is filled instead: the session is
+            # written down as it ends and `source` says so. This is what is
+            # left when that could not happen - a session whose end was seen
+            # but whose length never was, because the link came up midway
+            # through it or Home Assistant restarted. Then the older record
+            # is all there is, and saying so beats presenting it as the
+            # session somebody just brushed.
             "superseded": bool(record.get("superseded")),
             # How the state was arrived at, because the two ways differ in
             # what they are worth: ``session_end`` was watched happening and
