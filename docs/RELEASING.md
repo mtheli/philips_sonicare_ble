@@ -62,6 +62,12 @@ quietly do not qualify — an update prompt without a real need is noise.
 symbol names (`MIN_BRIDGE_VERSION` is the exception — it is the one value a
 reader may want to verify), and documentation-only changes.
 
+**Credit belongs in the notes.** Name whoever reported the problem, tested
+the fix or supplied the logs, with `@handle` and the issue number, in the
+bullet their work belongs to. The `@` is not decoration: it notifies them
+and links their profile, and it is how the release and the issue thread
+explain each other.
+
 When an external change caused the release, link it. A reader who upgraded
 Home Assistant and then saw something break deserves to know the two are
 connected — see v0.24.0, which links the core pull request that changed the
