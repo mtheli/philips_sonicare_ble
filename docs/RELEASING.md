@@ -13,6 +13,15 @@ every reader can open beats a partial set of translated ones. German belongs
 in the German-language forum threads, where a release gets announced in the
 reader's own language; the notes themselves stay English.
 
+**Plain language.** Write the way you would explain it to someone standing
+next to you. The commit messages in this repository are deliberately literary;
+the notes are not, and borrowing that voice makes them hard to skim. Three
+habits to avoid: inverted sentences ("… is not reported rather than dated
+wrongly"), headings that describe where they should name ("The session the
+handle remembers" for what is simply "Last session"), and clauses that justify
+a design decision — those belong in the commit message. Name the entity or the
+setting, say what it does, say who it is for.
+
 **Structure:** `##` sections by theme, each holding bullets that open with a
 bold phrase and then explain themselves in one or two sentences.
 
