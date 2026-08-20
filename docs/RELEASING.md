@@ -13,36 +13,32 @@ every reader can open beats a partial set of translated ones. German belongs
 in the German-language forum threads, where a release gets announced in the
 reader's own language; the notes themselves stay English.
 
-**Plain language.** Write the way you would explain it to someone standing
-next to you. The commit messages in this repository are deliberately literary;
-the notes are not, and borrowing that voice makes them hard to skim. Three
-habits to avoid: inverted sentences ("… is not reported rather than dated
-wrongly"), headings that describe where they should name ("The session the
-handle remembers" for what is simply "Last session"), and clauses that justify
-a design decision — those belong in the commit message. Name the entity or the
-setting, say what it does, say who it is for.
+**One section per feature.** The bullets underneath carry the details. If it is
+not obvious who a feature applies to, say so in one line under the heading.
 
-**Structure:** `##` sections by theme, each holding bullets that open with a
-bold phrase and then explain themselves in one or two sentences.
+**One sentence per bullet,** opening with two to five bold words that run into
+the sentence. No labels, no whole sentence in bold. Write what the user sees,
+with the previous behaviour as a short trailing clause where one is needed.
+
+**Plain language.** No literary voice, no marketing tone, no idiom where a verb
+will do. This holds for commit messages too. Reasoning belongs in the commit
+message, not in the notes.
+
+**No hard line breaks.** GitHub renders a single newline as a line break and
+tears prose apart mid-sentence. One paragraph, one line.
 
 ```markdown
-## Pairing over a bridge
+## Last session
 
-Optional lead-in paragraph — only when the bullets need context to make
-sense, e.g. an external cause the reader could not know about.
+Two new sensors, Last Session and Last Session Duration. On brushes with the storage service and on the Sonicare for Kids, not on the 7100 (HX742X).
 
-- **Setup requests an active scan window** while pairing runs, and keeps
-  asking until it closes. Pairing works again without any change to your
-  configuration.
-- **A timeout now names its cause** when no window could be had at all.
-
-## Setup & diagnostics
-
-- **Bonded is easier to spot** — the slot picker marks it 🔐 instead of 🔒.
+- **The state is the start time** of the session, the attributes hold duration, routine, mode and intensity.
+- **Sessions brushed without a connection** are read on the next one.
+- **Sessions the brush cannot date** are skipped.
 
 ---
 
-📟 **No ESP bridge firmware change** — `MIN_BRIDGE_VERSION` stays 1.4.0. ([bridge changelog](https://github.com/mtheli/philips_sonicare_ble/blob/master/esphome/CHANGELOG.md))
+📟 **No ESP bridge firmware change** — `MIN_BRIDGE_VERSION` stays 1.4.0.
 ```
 
 **Title:** `vX.Y.Z — what it is about`, e.g.
