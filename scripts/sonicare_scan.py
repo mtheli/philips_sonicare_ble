@@ -27,6 +27,11 @@ from bleak.exc import BleakCharacteristicNotFoundError, BleakError
 LEGACY_PREFIX = "477ea600"
 NEWER_PREFIX = "e50ba3c0"
 SONICARE_NAMES = ("philips ohc", "philips sonicare")
+# A handle whose name follows none of the patterns above still advertises the
+# service it speaks — that is what the scan really keys on. "Sonicare4Kids"
+# is one such name, and a handle advertising a rotating private address can
+# only be found this way, since its address is different on every scan.
+SONICARE_ADV_SERVICES = (LEGACY_PREFIX, NEWER_PREFIX)
 
 # --- Newer protocol BLE UUIDs ---
 CHAR_RX = "e50b0001-af04-4564-92ad-fef019489de6"
@@ -942,6 +947,24 @@ def _adv_summary(adv) -> str:
     return f"  [{', '.join(parts)}]" if parts else ""
 
 
+def _is_sonicare(device, adv) -> bool:
+    """True when this advertisement belongs to a Sonicare handle.
+
+    Two independent signals, either of which is enough:
+
+    * the advertised name, for the handles that carry the brand in it, and
+    * an advertised service UUID we know, which holds for every handle
+      regardless of what it calls itself.
+    """
+    name = (device.name or "").lower()
+    if name.startswith(SONICARE_NAMES) or "sonicare" in name:
+        return True
+    for uuid in getattr(adv, "service_uuids", None) or ():
+        if uuid.lower().startswith(SONICARE_ADV_SERVICES):
+            return True
+    return False
+
+
 async def find_sonicare():
     """Scan for any Sonicare toothbrush nearby. Returns (BLEDevice, adv).
 
@@ -957,7 +980,7 @@ async def find_sonicare():
     devices = await BleakScanner.discover(timeout=20, return_adv=True)
     found = []
     for _addr, (device, adv) in devices.items():
-        if device.name and device.name.lower().startswith(SONICARE_NAMES):
+        if _is_sonicare(device, adv):
             found.append((device, adv))
 
     if not found:
