@@ -200,7 +200,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._notify_chars.remove(char)
 
         # Remove 0x4022 for models without mode write — they use 0x4080 for mode
-        model = entry.data.get("model", "")
+        model = entry.data.get("model") or ""
         # The protocol needs the model family to pick the right brushing-mode
         # decode table (0x4022 mode-id on HX9996/HX999X vs 0x4080 sequential
         # index elsewhere); the firmware model-number is stable for a paired

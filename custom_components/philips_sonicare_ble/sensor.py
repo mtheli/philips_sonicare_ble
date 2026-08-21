@@ -70,7 +70,7 @@ async def async_setup_entry(
 
     services = {s.lower() for s in entry.data.get(CONF_SERVICES, [])}
 
-    model = entry.data.get("model", "")
+    model = entry.data.get("model") or ""
     is_kids = model.upper().startswith("HX63")
     is_condor = SVC_CONDOR.lower() in services
 
@@ -447,7 +447,7 @@ class SonicareNumberOfSectorsSensor(PhilipsSonicareEntity, SensorEntity):
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{self._device_id}_number_of_sectors"
-        self._sectors = number_of_sectors_for_model(entry.data.get("model", ""))
+        self._sectors = number_of_sectors_for_model(entry.data.get("model") or "")
 
     @property
     def native_value(self) -> int:
@@ -472,7 +472,7 @@ class SonicareSectorSensor(PhilipsSonicareEntity, SensorEntity):
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{self._device_id}_sector"
-        self._model = entry.data.get("model", "")
+        self._model = entry.data.get("model") or ""
 
     @property
     def native_value(self) -> str | None:

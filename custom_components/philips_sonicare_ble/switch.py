@@ -22,7 +22,7 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up Philips Sonicare switch entities."""
-    model = entry.data.get("model", "")
+    model = entry.data.get("model") or ""
     if not supports_settings_write(model):
         return
 

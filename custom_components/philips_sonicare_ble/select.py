@@ -21,7 +21,7 @@ async def async_setup_entry(
     """Set up Philips Sonicare select entities."""
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
-    model = entry.data.get("model", "")
+    model = entry.data.get("model") or ""
     entities: list[SelectEntity] = []
     # Condor (HX742X+) PutProps lands in a later phase; model-based
     # gating alone would still try to wire a Classic-flavoured select on

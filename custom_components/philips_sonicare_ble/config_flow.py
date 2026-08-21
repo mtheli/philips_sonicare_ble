@@ -3105,7 +3105,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
             entry_data: dict[str, Any] = {
                 CONF_SERVICES: services,
-                "model": self._fetched_data.get("model", ""),
+                "model": self._fetched_data.get("model") or "",
                 CONF_DEVICE_NAME: device_name,
             }
 
