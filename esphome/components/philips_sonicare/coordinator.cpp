@@ -531,6 +531,16 @@ void SonicareCoordinator::unpair() {
   // resubscribe against stale UUIDs and emit a flurry of "characteristic not
   // found" warnings — clear here so the new brush starts clean.
   this->desired_subscriptions_.clear();
+  // The per-link bookkeeping has to go with it. It normally dies in
+  // DISCONNECT_EVT, but unpair can run while no disconnect ever reaches us
+  // (the link was already down, or the client is re-targeted at a new
+  // address): notify_map_ then survives into the *next* connection, where
+  // subscribe() reads it as "already subscribed" and skips the CCCD write.
+  // The subscription is dead from that moment on — nothing is ever notified
+  // and the handshake stalls with no error anywhere.
+  this->notify_map_.clear();
+  this->cccd_map_.clear();
+  this->char_props_map_.clear();
   // Drop any queued GATT calls — they'd race the disconnect.
   if (!this->pending_calls_.empty()) {
     ESP_LOGW(this->log_tag_.c_str(),
@@ -654,6 +664,15 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       if (param->open.status == ESP_GATT_OK) {
         this->auth_completed_ = false;
         this->connect_time_ms_ = millis();
+        // A fresh link carries no live notify registrations, whatever the
+        // previous one left behind — the CCCD has to be written again for
+        // this connection. Clearing here makes that an invariant instead of
+        // relying on every teardown path having run. desired_subscriptions_
+        // is deliberately untouched: that is the wish list resubscribe_all_
+        // rebuilds from in SEARCH_CMPL.
+        this->notify_map_.clear();
+        this->cccd_map_.clear();
+        this->char_props_map_.clear();
         this->refresh_bond_status_();
         ESP_LOGI(this->log_tag_.c_str(), "Connected to Sonicare (%s)",
                  this->get_device_mac().c_str());
