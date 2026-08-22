@@ -267,6 +267,13 @@ class SonicareCoordinator {
   std::map<uint16_t, uint16_t> cccd_map_;
   // char_handle -> characteristic properties (to distinguish notify vs indicate)
   std::map<uint16_t, uint8_t> char_props_map_;
+  // Characteristics whose CCCD write was already re-issued with link
+  // encryption on this connection — bounds the retry to one per handle.
+  std::set<uint16_t> cccd_auth_retried_;
+  // True while such a retry is outstanding. The SMP handshake it triggers
+  // must not be mistaken for a broken bond in AUTH_CMPL: a subscription
+  // that cannot be set up is a reason to log, not to drop the pairing.
+  bool cccd_auth_retry_pending_{false};
   // Condor auto-TX_ACK: cached handle of e50b0004 (TX_ACK char), resolved
   // lazily on the first e50b0003 notify so we don't pay the GATT cache
   // lookup on every packet. Reset to 0 on disconnect — re-resolved against
@@ -367,6 +374,8 @@ class SonicareCoordinator {
   // identity_address_ is empty (will set peer_is_bonded_ = false).
   void refresh_bond_status_();
   uint16_t find_cccd_handle_(uint16_t char_handle);
+  // CCCD payload for a characteristic: notify, indicate, or both.
+  uint16_t cccd_value_for_(uint16_t char_handle) const;
   void emit_(const std::string &event_type,
               const std::map<std::string, std::string> &data);
   void emit_status_(const std::string &status,
