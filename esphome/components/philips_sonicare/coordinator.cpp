@@ -207,7 +207,6 @@ void SonicareCoordinator::on_loop(uint32_t now_ms) {
     this->retry_read_after_auth_ = false;
     this->encryption_requested_ = false;
     this->pending_eager_smp_ = false;
-    this->cccd_auth_retry_pending_ = false;
     this->att_last_progress_ms_ = 0;
     this->drain_pending_calls_();
   }
@@ -542,8 +541,6 @@ void SonicareCoordinator::unpair() {
   this->notify_map_.clear();
   this->cccd_map_.clear();
   this->char_props_map_.clear();
-  this->cccd_auth_retried_.clear();
-  this->cccd_auth_retry_pending_ = false;
   // Drop any queued GATT calls — they'd race the disconnect.
   if (!this->pending_calls_.empty()) {
     ESP_LOGW(this->log_tag_.c_str(),
@@ -676,8 +673,6 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
         this->notify_map_.clear();
         this->cccd_map_.clear();
         this->char_props_map_.clear();
-        this->cccd_auth_retried_.clear();
-        this->cccd_auth_retry_pending_ = false;
         this->refresh_bond_status_();
         ESP_LOGI(this->log_tag_.c_str(), "Connected to Sonicare (%s)",
                  this->get_device_mac().c_str());
@@ -730,8 +725,6 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       this->notify_map_.clear();
       this->cccd_map_.clear();
       this->char_props_map_.clear();
-      this->cccd_auth_retried_.clear();
-      this->cccd_auth_retry_pending_ = false;
       this->condor_tx_ack_handle_ = 0;
       this->condor_rx_handle_ = 0;
       this->condor_wire_tx_seq_ = 1;
@@ -1161,59 +1154,22 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
                  "CCCD write confirmed for handle 0x%04X (descr 0x%04X)",
                  char_handle, param->write.handle);
       } else {
+        // Not final. Bluedroid answers an INSUF_ENCRYPTION on a descriptor
+        // write by raising link security from the stored bond and sending
+        // the write again on its own — one issued write can therefore
+        // produce two result events, a failure followed by a confirmation
+        // (measured on HX742X: FAILED at .026, confirmed at .162, with the
+        // SMP handshake completing at .139 in between).
+        //
+        // So this branch only reports. An earlier version dropped the
+        // characteristic from the bookkeeping here, which destroyed the very
+        // subscription the stack was about to complete: the late
+        // confirmation found no handle any more and every notification was
+        // discarded. Whatever the handling of a permanently refused
+        // subscription turns out to be, it cannot key off this event alone.
         ESP_LOGW(this->log_tag_.c_str(),
                  "CCCD write FAILED for handle 0x%04X (descr 0x%04X), status=%d",
                  char_handle, param->write.handle, param->write.status);
-
-        bool retried = false;
-        // Insufficient Authentication / Encryption on a bonded peer: the
-        // handle protects its subscriptions and the link is still in the
-        // clear. Re-issue once with AUTH_REQ_NO_MITM — the stack then
-        // raises link security from the stored bond and repeats the write
-        // itself, the same treatment reads have had for a long time
-        // (see READ_CHAR_EVT). Descriptor writes simply never got it.
-        //
-        // Not for unbonded peers: handles that ask for no security at all
-        // would be pushed into a pairing they never wanted.
-        if (char_handle != 0 && this->peer_is_bonded_ &&
-            (param->write.status == ESP_GATT_INSUF_AUTHENTICATION ||
-             param->write.status == ESP_GATT_INSUF_ENCRYPTION) &&
-            this->cccd_auth_retried_.count(char_handle) == 0) {
-          this->cccd_auth_retried_.insert(char_handle);
-          uint16_t cccd_val = this->cccd_value_for_(char_handle);
-          auto wr_status = esp_ble_gattc_write_char_descr(
-              gattc_if,
-              this->parent_->get_conn_id(),
-              param->write.handle,
-              sizeof(cccd_val),
-              (uint8_t *) &cccd_val,
-              ESP_GATT_WRITE_TYPE_RSP,
-              ESP_GATT_AUTH_REQ_NO_MITM);
-          if (wr_status == ESP_OK) {
-            ESP_LOGI(this->log_tag_.c_str(),
-                     "Repeating CCCD write for handle 0x%04X over an encrypted link",
-                     char_handle);
-            this->pending_cccd_writes_++;
-            this->cccd_auth_retry_pending_ = true;
-            this->att_progress_();
-            retried = true;
-          } else {
-            ESP_LOGW(this->log_tag_.c_str(),
-                     "CCCD retry could not be issued for handle 0x%04X: %d",
-                     char_handle, wr_status);
-          }
-        }
-
-        // Nothing will be notified on this characteristic, so it must not
-        // stay in the books as subscribed — otherwise subscribe() skips it
-        // for the rest of the connection and no later attempt ever reaches
-        // the air. Dropping it lets the next attempt do the full job.
-        // desired_subscriptions_ keeps the entry: the wish is unchanged.
-        if (!retried && char_handle != 0) {
-          this->notify_map_.erase(char_handle);
-          this->cccd_map_.erase(char_handle);
-          this->char_props_map_.erase(char_handle);
-        }
       }
 
       if (this->pending_cccd_writes_ > 0) {
@@ -1374,8 +1330,6 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
         this->auth_completed_ = true;
         this->rapid_disconnect_count_ = 0;
         this->auth_fail_count_ = 0;
-        // Whatever asked for this handshake, it is over.
-        this->cccd_auth_retry_pending_ = false;
         // Fresh bond just landed in NVS — re-read so subsequent writes use
         // AUTH_REQ_NO_MITM. identity_address_ may still be empty on a brand-
         // new pair (set a few lines below); the second refresh after assignment
@@ -1452,19 +1406,6 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
         // Don't leave queued calls stranded — they'll likely fail too
         // (same unencrypted link) but at least HA's futures resolve.
         this->drain_pending_calls_();
-        // SMP that our own CCCD retry asked for. The bond is not in
-        // question here — only this subscription is — and wiping it would
-        // send the user back through the pairing flow for a handle that is
-        // otherwise reachable. Leave it; a genuinely stale bond is still
-        // caught by the rapid-disconnect detector above.
-        if (this->cccd_auth_retry_pending_) {
-          ESP_LOGW(this->log_tag_.c_str(),
-                   "Could not encrypt the link for a notification setup "
-                   "(reason=0x%X) — keeping the bond, subscription stays off",
-                   auth.fail_reason);
-          this->cccd_auth_retry_pending_ = false;
-          break;
-        }
         esp_ble_remove_bond_device(auth.bd_addr);
         // Pair-mode: user just asked to bond. Don't enter the auth-backoff
         // path — that would freeze the bridge for 60 s and effectively kill
