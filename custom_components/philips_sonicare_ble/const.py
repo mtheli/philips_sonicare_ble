@@ -406,6 +406,69 @@ MODE_SECTOR_SEQUENCES: dict[str, list[int]] = {
 }
 
 
+def sector_sequence(model: str, mode: str | None) -> list[int] | None:
+    """The zones this routine visits, in the order the handle announces them.
+
+    One entry per pacing step, so a zone that comes round again appears
+    again: Gum Health ends on 1, 3, 4, 6 after its first sweep. Everything
+    else about the pacing follows from this list - how many steps there
+    are, which of them repeat, and how many zones exist at all - which is
+    why it is published rather than a count or a flag.
+
+    Empty for a routine with no zones (Tongue Care): it still takes one
+    step, it just never names a zone, so the step list and this one differ
+    in length there. `None` where the mode is not known at all.
+
+    The sequence is the one the handle uses by default. A different
+    starting zone can be chosen on the handle, and that choice is not
+    broadcast - the same assumption `current_sector` has always made,
+    stated openly now that it is published.
+    """
+    if (model or "").upper().startswith("HX63"):
+        return list(range(1, number_of_sectors_for_model(model) + 1))
+    seq = MODE_SECTOR_SEQUENCES.get(mode or "")
+    if seq is None:
+        return None
+    return list(seq)
+
+
+def sector_step_seconds(
+    model: str,
+    mode: str | None,
+    routine_length: float | None,
+) -> list[float] | None:
+    """Return one duration per pacing step of this routine, in seconds.
+
+    A step is one buzz of the handle, not one zone: White+ and Gum Health
+    revisit sectors, so they take 8 and 10 steps over six zones. Anything
+    drawing the routine as a row of segments needs this length, because the
+    zone count would put the boundaries in the wrong places - two thirds of
+    a Gum Health step off, by the end of the routine.
+
+    A routine without sectors is one step, not none: Tongue Care runs
+    straight through without ever moving the user on, and that is a bar
+    with no divisions in it - which is what a single step draws. Returning
+    nothing would leave a consumer to guess, and the obvious guess (the
+    handle's zone count) would draw five boundaries that do not exist.
+
+    None only where there is nothing to divide: no routine length yet.
+    """
+    if routine_length is None or routine_length <= 0:
+        return None
+    is_kids = (model or "").upper().startswith("HX63")
+    seq = None if is_kids else MODE_SECTOR_SEQUENCES.get(mode or "")
+    if seq is not None and not seq:
+        return [float(routine_length)]
+    steps = len(seq) if seq is not None else number_of_sectors_for_model(model)
+    if steps <= 0:
+        return None
+    # Every step of every mode is the same length - the modes differ in how
+    # many steps they take, not in how long one lasts. Kept as a list rather
+    # than a count so an uneven routine, if one ever turns up, needs no new
+    # field.
+    return [routine_length / steps] * steps
+
+
 def current_sector(
     model: str,
     mode: str | None,

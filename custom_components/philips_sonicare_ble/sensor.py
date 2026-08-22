@@ -40,6 +40,8 @@ from .const import (
     supports_stored_sessions,
     number_of_sectors_for_model,
     current_sector,
+    sector_sequence,
+    sector_step_seconds,
 )
 from .condor_adapter import CONDOR_BRUSHING_MODES
 from .entity import PhilipsSonicareEntity, PhilipsBrushHeadEntity, PhilipsConnectionEntity
@@ -273,6 +275,38 @@ class SonicareBrushingModeSensor(PhilipsSonicareEntity, SensorEntity):
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{self._device_id}_brushing_mode"
+        self._model = entry.data.get("model") or ""
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        """How the mode paces the routine: which zones, and for how long.
+
+        Both belong to the mode rather than to the sector reading: they
+        change when somebody switches routine, not while brushing, and they
+        are known before a session starts - the sector reads `no_sector`
+        until the motor runs, but the mode is there all along, so a display
+        can lay out the routine in advance.
+
+        `sector_sequence` lists one zone per pacing step, repeats included:
+        everything else about the pacing follows from it. `step_times_seconds`
+        adds the one thing it cannot say - how long a step lasts - and is
+        the length to divide a progress bar by. Where the mode is not known
+        neither is published, and a consumer falls back to whatever it did
+        before.
+        """
+        if not self.coordinator.data:
+            return None
+        mode = self.coordinator.data.get("brushing_mode")
+        attributes: dict = {}
+        sequence = sector_sequence(self._model, mode)
+        if sequence is not None:
+            attributes["sector_sequence"] = sequence
+        steps = sector_step_seconds(
+            self._model, mode, self.coordinator.data.get("routine_length")
+        )
+        if steps is not None:
+            attributes["step_times_seconds"] = steps
+        return attributes or None
 
     def _restore_from_state(self, state: str) -> None:
         if self.coordinator.data is None:
@@ -544,6 +578,26 @@ class SonicareLatestSessionIdSensor(PhilipsSonicareEntity, SensorEntity):
 # ---------------------------------------------------------------------------
 # Last Session
 # ---------------------------------------------------------------------------
+def _routine_shape(model: str, record: dict) -> dict:
+    """The pacing of a recorded routine, as far as the record can say.
+
+    The order is left out where the mode is unknown: a sequence is a claim
+    about which zones were announced, and inventing one would put zones in
+    a recap that never came up. The step lengths survive that case as the
+    even split every sequenceless mode uses anyway, and are left out only
+    where the routine length itself is missing.
+    """
+    mode = record.get("brushing_mode")
+    shape: dict = {}
+    sequence = sector_sequence(model, mode)
+    if sequence is not None:
+        shape["sector_sequence"] = sequence
+    steps = sector_step_seconds(model, mode, record.get("routine_length"))
+    if steps is not None:
+        shape["step_times_seconds"] = steps
+    return shape
+
+
 class SonicareLastSessionSensor(PhilipsSonicareEntity, SensorEntity):
     """When the handle's most recent stored session began.
 
@@ -571,6 +625,7 @@ class SonicareLastSessionSensor(PhilipsSonicareEntity, SensorEntity):
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{self._device_id}_last_session"
+        self._model = entry.data.get("model") or ""
 
     def _record(self) -> dict | None:
         if not self.coordinator.data:
@@ -609,6 +664,14 @@ class SonicareLastSessionSensor(PhilipsSonicareEntity, SensorEntity):
             "target_duration_seconds": record.get("routine_length"),
             "mode": record.get("brushing_mode"),
             "intensity": record.get("intensity"),
+            # How the routine that ran was paced, under the same names the
+            # mode carries them. Repeated here because a recap outlives the
+            # session it describes: by the time anything draws it, the
+            # handle may be set to another mode, and taking the pacing from
+            # there would divide a Gum Health session into a Clean one's
+            # steps. Derived from the two fields above rather than stored,
+            # so an old record gains them without a migration.
+            **_routine_shape(getattr(self, "_model", ""), record),
             # True where a session has finished that this record is not.
             # Ordinarily the gap it names is filled instead: the session is
             # written down as it ends and `source` says so. This is what is
