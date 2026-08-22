@@ -1154,7 +1154,10 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       }
 
       if (param->write.status == ESP_GATT_OK) {
-        ESP_LOGD(this->log_tag_.c_str(),
+        // INFO, not DEBUG: this is the line that separates a live
+        // subscription from a silently refused one, and a bridge logging at
+        // INFO is exactly where that question comes up.
+        ESP_LOGI(this->log_tag_.c_str(),
                  "CCCD write confirmed for handle 0x%04X (descr 0x%04X)",
                  char_handle, param->write.handle);
       } else {
