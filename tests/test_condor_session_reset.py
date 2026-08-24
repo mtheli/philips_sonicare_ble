@@ -11,6 +11,7 @@ once latched, only an integration reload recovered.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -28,11 +29,13 @@ from custom_components.philips_sonicare_ble.const import (
     CONF_SERVICES,
     CONF_TRANSPORT_TYPE,
     DOMAIN,
+    SVC_CONDOR,
     TRANSPORT_ESP_BRIDGE,
 )
 from custom_components.philips_sonicare_ble.coordinator import (
     PhilipsSonicareCoordinator,
 )
+from custom_components.philips_sonicare_ble.exceptions import TransportError
 
 ADDRESS = "AA:BB:CC:DD:EE:FF"
 
@@ -131,6 +134,27 @@ async def test_invalidation_forgets_the_negotiated_session_state() -> None:
     assert protocol._subscribed_ports == []
 
 
+def _condor_entry(hass) -> MockConfigEntry:
+    """A config entry whose discovered services select the Condor protocol.
+
+    Set here rather than by flipping ``_use_condor`` after construction:
+    the flag and the protocol object are chosen together, and a test that
+    sets only one of them stops describing the real object graph.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_ADDRESS: ADDRESS,
+            CONF_TRANSPORT_TYPE: TRANSPORT_ESP_BRIDGE,
+            CONF_ESP_DEVICE_NAME: "sonicare-bridge",
+            CONF_SERVICES: [SVC_CONDOR],
+            "model": "HX7425",
+        },
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
 class FailingBridgeTransport:
     """ESP-bridge stand-in whose live setup always fails."""
 
@@ -155,19 +179,10 @@ class FailingBridgeTransport:
 
 async def test_failed_setup_invalidates_the_session(hass) -> None:
     """The retry path drops the session before it waits for another link."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={
-            CONF_ADDRESS: ADDRESS,
-            CONF_TRANSPORT_TYPE: TRANSPORT_ESP_BRIDGE,
-            CONF_ESP_DEVICE_NAME: "sonicare-bridge",
-            CONF_SERVICES: [],
-            "model": "HX7425",
-        },
+    coordinator = PhilipsSonicareCoordinator(
+        hass, _condor_entry(hass), FailingBridgeTransport()
     )
-    entry.add_to_hass(hass)
-    coordinator = PhilipsSonicareCoordinator(hass, entry, FailingBridgeTransport())
-    coordinator._use_condor = True
+    assert coordinator._use_condor
     coordinator._is_esp_bridge = True
 
     protocol, _transport = await _open_session()
@@ -190,3 +205,39 @@ async def test_failed_setup_invalidates_the_session(hass) -> None:
             await task
 
     assert not protocol._connected
+
+
+class SilentBridgeTransport(FailingBridgeTransport):
+    """A bridge that never answers — connect() fails before setup runs."""
+
+    async def connect(self) -> None:
+        raise TransportError("ESP bridge did not respond within 10s")
+
+
+async def test_silent_bridge_is_not_a_warning(hass, caplog) -> None:
+    """An unreachable bridge is a reachability fact, not a fault.
+
+    The retry wait is short, so a bridge that stays offline runs this path
+    every half minute — logging each pass at WARNING would bury the log in
+    something the user can do nothing about.
+    """
+    coordinator = PhilipsSonicareCoordinator(
+        hass, _condor_entry(hass), SilentBridgeTransport()
+    )
+    coordinator._is_esp_bridge = True
+
+    caplog.set_level(logging.DEBUG)
+    task = hass.async_create_task(coordinator._start_live_monitoring())
+    try:
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if any("did not respond" in r.message for r in caplog.records):
+                break
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    hits = [r for r in caplog.records if "did not respond" in r.message]
+    assert hits, "the silent bridge never reached the retry path"
+    assert all(r.levelno == logging.DEBUG for r in hits)

@@ -95,6 +95,11 @@ _LOGGER = logging.getLogger(__name__)
 _RAW_LOGGER = logging.getLogger(__name__ + ".raw")
 _RAW_LOGGER.setLevel(logging.WARNING)  # silent unless explicitly enabled
 
+# Delay before a failed ESP-bridge setup is retried. The bridge re-offers a
+# connected device every 15 s, so waiting much longer than that only adds
+# dead time.
+ESP_RETRY_DELAY = 20
+
 STORAGE_VERSION = 1
 # Debounced: brushing sessions update data every second, so the actual disk
 # write lands once, shortly after the burst ends. Store flushes any pending
@@ -1342,6 +1347,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "no longer reachable" in err_msg
                         or "connection slot" in err_msg
                         or "timeout" in err_msg
+                        # A bridge that stays silent is unreachable, not a
+                        # fault worth a warning — same class as the rest.
+                        or "did not respond" in err_msg
                     )
                     if is_unreachable:
                         _LOGGER.debug(
@@ -1378,11 +1386,18 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                                     pass
                         # If still not connected, loop back to ADV wait
                     else:
-                        # ESP bridge: wait for next ready event before retrying
+                        # ESP bridge: wait before retrying. The transport
+                        # teardown above also drops the status listener, so
+                        # the bridge's events cannot reach us here and this
+                        # always runs into the timeout — keep it short enough
+                        # that a bridge that is still connected gets picked up
+                        # again quickly.
                         self._wake_event.clear()
                         _LOGGER.debug("Waiting for ESP bridge ready event for %s...", self.address)
                         try:
-                            await asyncio.wait_for(self._wake_event.wait(), timeout=60)
+                            await asyncio.wait_for(
+                                self._wake_event.wait(), timeout=ESP_RETRY_DELAY
+                            )
                         except asyncio.TimeoutError:
                             pass
                     continue
