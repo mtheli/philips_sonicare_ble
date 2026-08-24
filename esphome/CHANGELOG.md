@@ -21,6 +21,13 @@
   to paste. Build-time change only — no firmware behavior change, no version
   bump.
 
+## v1.14.0 — unreleased
+
+- **CHANGE_IND_RESP now carries a two-byte body** (`FE FF 09 00 02 00 00`) instead of one (`FE FF 09 00 01 00`). Handles differ in what they accept here; one that refuses the short form terminates the link (`reason=0x13`) roughly 100 ms after the first change indication it sends ([#33](https://github.com/mtheli/philips_sonicare_ble/issues/33)).
+- **The integration's CHANGE_IND_RESP is dropped again.** The filter on `e50b0001` matched a fixed 7-byte frame, so it stopped matching when the integration's body grew to two bytes — since then every change indication was answered twice, by the bridge and ~80 ms later by Home Assistant. It now matches the `FE FF 09` header against the frame's own length field. One INFO line per link reports the suppression.
+- **`notify_map_` is cleared when a link ends without a disconnect event.** `unpair` can run while no disconnect reaches the bridge; the stale map made the next connection treat a characteristic as already subscribed, skip the CCCD write, and stall with nothing notified and no error logged.
+- `MIN_BRIDGE_VERSION` stays 1.4.0 — handles that accept the short response keep working on older firmware.
+
 ## v1.12.0 — 2026-07-27
 
 - **A slot no longer bonds a toothbrush that another slot already owns.** In
