@@ -282,6 +282,7 @@ class SonicareCoordinator {
   uint16_t condor_rx_handle_{0};          // cached e50b0001 handle (lazy)
   uint8_t condor_wire_tx_seq_{1};         // 1..63 mod-64, rebased on channel open
   std::vector<uint8_t> condor_tx_reasm_;  // e50b0003 frame-reassembly buffer
+  bool condor_resp_drop_logged_{false};   // announce the suppression once a link
   // Answer every complete CHANGE_INDICATION (msg_type 0x08) reassembled from
   // the e50b0003 stream with a CHANGE_IND_RESP on e50b0001.
   void condor_answer_change_indications_(const uint8_t *data, uint16_t len);

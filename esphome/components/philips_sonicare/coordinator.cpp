@@ -729,6 +729,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       this->condor_rx_handle_ = 0;
       this->condor_wire_tx_seq_ = 1;
       this->condor_tx_reasm_.clear();
+      this->condor_resp_drop_logged_ = false;
       this->last_notify_ms_.clear();
       this->pending_calls_.clear();
       char reason_str[5];
@@ -1719,16 +1720,29 @@ void SonicareCoordinator::write_characteristic(const std::string &service_uuid,
   // ourselves on the notify path) without consuming a wire seq so the
   // sequence stays gap-free; every other frame gets its seq rewritten to our
   // own monotonic counter. Only the first fragment of a frame carries the
-  // FE FF header, so a 7-byte FE FF 09 00 01 00 match is unambiguous.
+  // FE FF header, and a CHANGE_IND_RESP always fits in one packet, so
+  // matching the header plus a length field that accounts for exactly the
+  // rest of the write identifies it without pinning the body size — the
+  // body grew from one byte to two once and must not be able to slip
+  // through this filter again.
   if (char_uuid == "e50b0001-af04-4564-92ad-fef019489de6") {
     if (bytes.size() == 1 && (bytes[0] & 0x40)) {
       this->condor_wire_tx_seq_ = 1;
-    } else if (bytes.size() == 7 && bytes[1] == 0xFE && bytes[2] == 0xFF &&
-               bytes[3] == 0x09 && bytes[4] == 0x00 && bytes[5] == 0x01 &&
-               bytes[6] == 0x00) {
+    } else if (bytes.size() >= 6 && bytes[1] == 0xFE && bytes[2] == 0xFF &&
+               bytes[3] == 0x09 &&
+               static_cast<size_t>((bytes[4] << 8) | bytes[5]) ==
+                   bytes.size() - 6) {
       // We answer this ourselves on the notify path — drop it here without
       // issuing an ATT op or consuming a wire seq. No drain needed: if this
       // ran from the pending-call drain, that loop simply continues.
+      // Announced once per link at INFO: a log has to be able to show that
+      // the handle really sees one response per indication and not two.
+      if (!this->condor_resp_drop_logged_) {
+        this->condor_resp_drop_logged_ = true;
+        ESP_LOGI(this->log_tag_.c_str(),
+                 "Condor: answering CHANGE_INDICATION on the bridge, "
+                 "suppressing the duplicate response");
+      }
       ESP_LOGV(this->log_tag_.c_str(), "Condor: dropping HA CHANGE_IND_RESP");
       return;
     } else {
@@ -1826,16 +1840,21 @@ void SonicareCoordinator::condor_answer_change_indications_(const uint8_t *data,
     if (this->condor_rx_handle_ == 0)
       continue;
 
-    uint8_t resp[7] = {
+    // The response body is two bytes — a status byte followed by a reserved
+    // zero — which is the form the handle answers to. Handles differ in how
+    // much they tolerate here: a one-byte body passes on some and is refused
+    // on others, so send the full form unconditionally.
+    uint8_t resp[8] = {
         static_cast<uint8_t>(this->condor_wire_tx_seq_ & 0x3F),
-        0xFE, 0xFF, 0x09, 0x00, 0x01, 0x00};
+        0xFE, 0xFF, 0x09, 0x00, 0x02, 0x00, 0x00};
     this->condor_wire_tx_seq_ = (this->condor_wire_tx_seq_ + 1) % 64;
     esp_gatt_auth_req_t auth_req = this->peer_is_bonded_
                                        ? ESP_GATT_AUTH_REQ_NO_MITM
                                        : ESP_GATT_AUTH_REQ_NONE;
     auto status = esp_ble_gattc_write_char(
         this->parent_->get_gattc_if(), this->parent_->get_conn_id(),
-        this->condor_rx_handle_, 7, resp, ESP_GATT_WRITE_TYPE_NO_RSP, auth_req);
+        this->condor_rx_handle_, static_cast<uint16_t>(sizeof(resp)), resp,
+        ESP_GATT_WRITE_TYPE_NO_RSP, auth_req);
     if (status != ESP_OK) {
       ESP_LOGW(this->log_tag_.c_str(),
                "Auto CHANGE_IND_RESP write failed: status=%d", status);
