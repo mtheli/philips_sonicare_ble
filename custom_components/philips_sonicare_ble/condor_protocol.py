@@ -191,18 +191,34 @@ class CondorProtocol(SonicareProtocol):
             "Condor session open (max_packet=%d)", self._max_packet_size,
         )
 
+    def invalidate_session(self) -> None:
+        """Forget the open session without touching the link.
+
+        The handshake state lives here, the notification registrations live
+        in the transport. When a link drops, the transport drops its half on
+        its own — this drops ours, synchronously, so ``connect()`` cannot
+        short-circuit on a session that ended with the previous link. Safe to
+        call at any time, including when no session was ever open.
+        """
+        self._connected = False
+        self._live_callback = None
+        self._subscribed_ports = []
+        self._max_packet_size = _DEFAULT_PACKET_SIZE
+        self._rx_buffer = bytearray()
+        self._next_data_seq = 1
+        self._server_cfg_data = b""
+        self._server_cfg_event.clear()
+        self._handshake_ack_event.clear()
+
     async def disconnect(self) -> None:
         """Tear down protocol-level subscriptions. The BLE link itself is
         the transport's concern — disconnect is idempotent."""
-        self._connected = False
-        self._live_callback = None
+        self.invalidate_session()
         for uuid in (CHAR_SERVER_CFG, CHAR_TX, CHAR_RX_ACK):
             try:
                 await self._transport.unsubscribe(uuid)
             except Exception:  # noqa: BLE001
                 pass
-        self._rx_buffer = bytearray()
-        self._next_data_seq = 1
 
     async def _await_server_cfg(self, expected_len: int) -> bytes:
         try:

@@ -1265,6 +1265,13 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             # to the link drop when falling asleep (live-
                             # verified), so require a fresh ADV to reconnect.
                             self._adv_wake = False
+                            # The handshake state cannot outlive the link it
+                            # was negotiated on. Dropping it here — before any
+                            # retry runs — is what keeps the next setup from
+                            # skipping the handshake and writing a framed
+                            # request into a channel that was never opened.
+                            if self._use_condor:
+                                self._protocol.invalidate_session()
                             # Wake the loop so it observes the disconnect
                             # before the brush reconnects — otherwise the
                             # 5 s poll below can miss the transition
@@ -1344,6 +1351,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         _LOGGER.warning(
                             "%s: live monitoring error: %s", self.address, err
                         )
+                    if self._use_condor:
+                        self._protocol.invalidate_session()
                     try:
                         await self.transport.disconnect()
                     except Exception:
