@@ -49,6 +49,7 @@ See [Configuration](#configuration) for setup instructions.
 | **Sonicare For Kids** | | | |
 | [HX6340](https://www.usa.philips.com/c-p/HX6351_41/sonicare-for-kids-sonic-electric-toothbrush) | :white_check_mark: | :white_check_mark: | Maintainer |
 | HX6322, HX6352 | :white_check_mark: | — | Community ([GrumpyMeow#14](https://github.com/GrumpyMeow/sonicare-ble-hacs/issues/14#issuecomment-4258415247)) |
+| HX6600 | *not yet tested* | :white_check_mark: | Community ([#33](https://github.com/mtheli/philips_sonicare_ble/issues/33)) |
 | **FlexCare Platinum Connected** | | | |
 | HX9120 | *not yet tested* | *not yet tested* | — |
 | **ExpertClean** | | | |
@@ -69,10 +70,10 @@ See [Configuration](#configuration) for setup instructions.
 | **Series 7100** | | | |
 | [HX742X](https://www.usa.philips.com/c-p/HX7423_43/sonicare-7100) | :white_check_mark: | :white_check_mark: | Maintainer, Community ([#4](https://github.com/mtheli/philips_sonicare_ble/issues/4), [#13](https://github.com/mtheli/philips_sonicare_ble/issues/13), [#27](https://github.com/mtheli/philips_sonicare_ble/issues/27)) |
 
-Any BLE-enabled Philips Sonicare toothbrush using either the standard protocol or the newer Condor protocol (HX742X / Series 7100) should work (Sonicare For Kids, ExpertClean, DiamondClean Smart, DiamondClean 9000, DiamondClean Prestige, Series 7100, and more). The integration auto-discovers compatible devices via BLE and selects the right protocol automatically. If you have a different model — happy to hear your test results!
+Any BLE-enabled Philips Sonicare toothbrush using either the standard protocol or the newer Condor protocol (Series 7100 HX742X, Sonicare For Kids HX6600) should work (Sonicare For Kids, ExpertClean, DiamondClean Smart, DiamondClean 9000, DiamondClean Prestige, Series 7100, and more). The integration auto-discovers compatible devices via BLE and selects the right protocol automatically. If you have a different model — happy to hear your test results!
 
 > [!NOTE]
-> Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100) require **BLE bonding**. The integration detects this automatically and pairs the device during setup. Models like DiamondClean Smart and Sonicare For Kids use open GATT and connect without pairing. Series 7100 brushes additionally use a **rolling private address (RPA)** that can change as often as every ~15–20 seconds — bonding is what allows the host to follow the brush across address rotations. Bonding also needs a host adapter with a working SMP implementation; some cheap USB dongles can't complete it (see [Known Issues](docs/KNOWN_ISSUES.md#some-usb-dongles-cannot-complete-smp-bonding)).
+> Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100, Sonicare For Kids HX6600) require **BLE bonding**. The integration detects this automatically and pairs the device during setup. Models like DiamondClean Smart and the earlier Sonicare For Kids (HX63xx) use open GATT and connect without pairing. Series 7100 brushes additionally use a **rolling private address (RPA)** that can change as often as every ~15–20 seconds — bonding is what allows the host to follow the brush across address rotations. Bonding also needs a host adapter with a working SMP implementation; some cheap USB dongles can't complete it (see [Known Issues](docs/KNOWN_ISSUES.md#some-usb-dongles-cannot-complete-smp-bonding)).
 
 ---
 

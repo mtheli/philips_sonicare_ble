@@ -282,6 +282,7 @@ class SonicareCoordinator {
   uint16_t condor_rx_handle_{0};          // cached e50b0001 handle (lazy)
   uint8_t condor_wire_tx_seq_{1};         // 1..63 mod-64, rebased on channel open
   std::vector<uint8_t> condor_tx_reasm_;  // e50b0003 frame-reassembly buffer
+  bool condor_resp_drop_logged_{false};   // announce the suppression once a link
   // Answer every complete CHANGE_INDICATION (msg_type 0x08) reassembled from
   // the e50b0003 stream with a CHANGE_IND_RESP on e50b0001.
   void condor_answer_change_indications_(const uint8_t *data, uint16_t len);
@@ -367,6 +368,8 @@ class SonicareCoordinator {
   // identity_address_ is empty (will set peer_is_bonded_ = false).
   void refresh_bond_status_();
   uint16_t find_cccd_handle_(uint16_t char_handle);
+  // CCCD payload for a characteristic: notify, indicate, or both.
+  uint16_t cccd_value_for_(uint16_t char_handle) const;
   void emit_(const std::string &event_type,
               const std::map<std::string, std::string> &data);
   void emit_status_(const std::string &status,

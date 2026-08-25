@@ -531,6 +531,16 @@ void SonicareCoordinator::unpair() {
   // resubscribe against stale UUIDs and emit a flurry of "characteristic not
   // found" warnings — clear here so the new brush starts clean.
   this->desired_subscriptions_.clear();
+  // The per-link bookkeeping has to go with it. It normally dies in
+  // DISCONNECT_EVT, but unpair can run while no disconnect ever reaches us
+  // (the link was already down, or the client is re-targeted at a new
+  // address): notify_map_ then survives into the *next* connection, where
+  // subscribe() reads it as "already subscribed" and skips the CCCD write.
+  // The subscription is dead from that moment on — nothing is ever notified
+  // and the handshake stalls with no error anywhere.
+  this->notify_map_.clear();
+  this->cccd_map_.clear();
+  this->char_props_map_.clear();
   // Drop any queued GATT calls — they'd race the disconnect.
   if (!this->pending_calls_.empty()) {
     ESP_LOGW(this->log_tag_.c_str(),
@@ -654,6 +664,15 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       if (param->open.status == ESP_GATT_OK) {
         this->auth_completed_ = false;
         this->connect_time_ms_ = millis();
+        // A fresh link carries no live notify registrations, whatever the
+        // previous one left behind — the CCCD has to be written again for
+        // this connection. Clearing here makes that an invariant instead of
+        // relying on every teardown path having run. desired_subscriptions_
+        // is deliberately untouched: that is the wish list resubscribe_all_
+        // rebuilds from in SEARCH_CMPL.
+        this->notify_map_.clear();
+        this->cccd_map_.clear();
+        this->char_props_map_.clear();
         this->refresh_bond_status_();
         ESP_LOGI(this->log_tag_.c_str(), "Connected to Sonicare (%s)",
                  this->get_device_mac().c_str());
@@ -710,6 +729,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
       this->condor_rx_handle_ = 0;
       this->condor_wire_tx_seq_ = 1;
       this->condor_tx_reasm_.clear();
+      this->condor_resp_drop_logged_ = false;
       this->last_notify_ms_.clear();
       this->pending_calls_.clear();
       char reason_str[5];
@@ -1084,17 +1104,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
 
         auto it = this->cccd_map_.find(param->reg_for_notify.handle);
         if (it != this->cccd_map_.end()) {
-          // Use 0x0002 for indicate, 0x0001 for notify, 0x0003 for both
-          uint16_t cccd_val = 0x0001;
-          auto props_it = this->char_props_map_.find(param->reg_for_notify.handle);
-          if (props_it != this->char_props_map_.end()) {
-            bool has_notify = props_it->second & ESP_GATT_CHAR_PROP_BIT_NOTIFY;
-            bool has_indicate = props_it->second & ESP_GATT_CHAR_PROP_BIT_INDICATE;
-            if (has_indicate && has_notify)
-              cccd_val = 0x0003;
-            else if (has_indicate)
-              cccd_val = 0x0002;
-          }
+          uint16_t cccd_val = this->cccd_value_for_(param->reg_for_notify.handle);
           auto wr_status = esp_ble_gattc_write_char_descr(
               gattc_if,
               this->parent_->get_conn_id(),
@@ -1107,7 +1117,8 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
             this->pending_cccd_writes_++;
             this->att_progress_();
           }
-          ESP_LOGI(this->log_tag_.c_str(), "CCCD written for handle 0x%04X (descr 0x%04X, value 0x%04X)",
+          // Issued, not accepted — the result arrives in WRITE_DESCR_EVT.
+          ESP_LOGI(this->log_tag_.c_str(), "CCCD write sent for handle 0x%04X (descr 0x%04X, value 0x%04X)",
                    param->reg_for_notify.handle, it->second, cccd_val);
         }
       } else {
@@ -1121,8 +1132,47 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
     }
 
     case ESP_GATTC_WRITE_DESCR_EVT: {
-      // CCCD write completed (success or failure) — reads deferred behind
-      // the subscribe burst may resume once the last write is done.
+      // The CCCD write came back. Its status used to be dropped here, which
+      // made a refused subscription indistinguishable from a live one: the
+      // handle stayed in the books, nothing was ever notified, and every
+      // later attempt was skipped as "already subscribed".
+      //
+      // The maps are keyed by characteristic handle, the event carries the
+      // descriptor handle — walk cccd_map_ back.
+      uint16_t char_handle = 0;
+      for (const auto &entry : this->cccd_map_) {
+        if (entry.second == param->write.handle) {
+          char_handle = entry.first;
+          break;
+        }
+      }
+
+      if (param->write.status == ESP_GATT_OK) {
+        // INFO, not DEBUG: this is the line that separates a live
+        // subscription from a silently refused one, and a bridge logging at
+        // INFO is exactly where that question comes up.
+        ESP_LOGI(this->log_tag_.c_str(),
+                 "CCCD write confirmed for handle 0x%04X (descr 0x%04X)",
+                 char_handle, param->write.handle);
+      } else {
+        // Not final. Bluedroid answers an INSUF_ENCRYPTION on a descriptor
+        // write by raising link security from the stored bond and sending
+        // the write again on its own — one issued write can therefore
+        // produce two result events, a failure followed by a confirmation
+        // (measured on HX742X: FAILED at .026, confirmed at .162, with the
+        // SMP handshake completing at .139 in between).
+        //
+        // So this branch only reports. An earlier version dropped the
+        // characteristic from the bookkeeping here, which destroyed the very
+        // subscription the stack was about to complete: the late
+        // confirmation found no handle any more and every notification was
+        // discarded. Whatever the handling of a permanently refused
+        // subscription turns out to be, it cannot key off this event alone.
+        ESP_LOGW(this->log_tag_.c_str(),
+                 "CCCD write FAILED for handle 0x%04X (descr 0x%04X), status=%d",
+                 char_handle, param->write.handle, param->write.status);
+      }
+
       if (this->pending_cccd_writes_ > 0) {
         this->pending_cccd_writes_--;
         this->att_progress_();
@@ -1670,16 +1720,29 @@ void SonicareCoordinator::write_characteristic(const std::string &service_uuid,
   // ourselves on the notify path) without consuming a wire seq so the
   // sequence stays gap-free; every other frame gets its seq rewritten to our
   // own monotonic counter. Only the first fragment of a frame carries the
-  // FE FF header, so a 7-byte FE FF 09 00 01 00 match is unambiguous.
+  // FE FF header, and a CHANGE_IND_RESP always fits in one packet, so
+  // matching the header plus a length field that accounts for exactly the
+  // rest of the write identifies it without pinning the body size — the
+  // body grew from one byte to two once and must not be able to slip
+  // through this filter again.
   if (char_uuid == "e50b0001-af04-4564-92ad-fef019489de6") {
     if (bytes.size() == 1 && (bytes[0] & 0x40)) {
       this->condor_wire_tx_seq_ = 1;
-    } else if (bytes.size() == 7 && bytes[1] == 0xFE && bytes[2] == 0xFF &&
-               bytes[3] == 0x09 && bytes[4] == 0x00 && bytes[5] == 0x01 &&
-               bytes[6] == 0x00) {
+    } else if (bytes.size() >= 6 && bytes[1] == 0xFE && bytes[2] == 0xFF &&
+               bytes[3] == 0x09 &&
+               static_cast<size_t>((bytes[4] << 8) | bytes[5]) ==
+                   bytes.size() - 6) {
       // We answer this ourselves on the notify path — drop it here without
       // issuing an ATT op or consuming a wire seq. No drain needed: if this
       // ran from the pending-call drain, that loop simply continues.
+      // Announced once per link at INFO: a log has to be able to show that
+      // the handle really sees one response per indication and not two.
+      if (!this->condor_resp_drop_logged_) {
+        this->condor_resp_drop_logged_ = true;
+        ESP_LOGI(this->log_tag_.c_str(),
+                 "Condor: answering CHANGE_INDICATION on the bridge, "
+                 "suppressing the duplicate response");
+      }
       ESP_LOGV(this->log_tag_.c_str(), "Condor: dropping HA CHANGE_IND_RESP");
       return;
     } else {
@@ -1777,16 +1840,21 @@ void SonicareCoordinator::condor_answer_change_indications_(const uint8_t *data,
     if (this->condor_rx_handle_ == 0)
       continue;
 
-    uint8_t resp[7] = {
+    // The response body is two bytes — a status byte followed by a reserved
+    // zero — which is the form the handle answers to. Handles differ in how
+    // much they tolerate here: a one-byte body passes on some and is refused
+    // on others, so send the full form unconditionally.
+    uint8_t resp[8] = {
         static_cast<uint8_t>(this->condor_wire_tx_seq_ & 0x3F),
-        0xFE, 0xFF, 0x09, 0x00, 0x01, 0x00};
+        0xFE, 0xFF, 0x09, 0x00, 0x02, 0x00, 0x00};
     this->condor_wire_tx_seq_ = (this->condor_wire_tx_seq_ + 1) % 64;
     esp_gatt_auth_req_t auth_req = this->peer_is_bonded_
                                        ? ESP_GATT_AUTH_REQ_NO_MITM
                                        : ESP_GATT_AUTH_REQ_NONE;
     auto status = esp_ble_gattc_write_char(
         this->parent_->get_gattc_if(), this->parent_->get_conn_id(),
-        this->condor_rx_handle_, 7, resp, ESP_GATT_WRITE_TYPE_NO_RSP, auth_req);
+        this->condor_rx_handle_, static_cast<uint16_t>(sizeof(resp)), resp,
+        ESP_GATT_WRITE_TYPE_NO_RSP, auth_req);
     if (status != ESP_OK) {
       ESP_LOGW(this->log_tag_.c_str(),
                "Auto CHANGE_IND_RESP write failed: status=%d", status);
@@ -2022,6 +2090,21 @@ uint16_t SonicareCoordinator::find_cccd_handle_(uint16_t char_handle) {
   ESP_LOGW(this->log_tag_.c_str(), "CCCD not found via API for char 0x%04X, using fallback 0x%04X",
            char_handle, fallback);
   return fallback;
+}
+
+uint16_t SonicareCoordinator::cccd_value_for_(uint16_t char_handle) const {
+  // 0x0002 for indicate, 0x0001 for notify, 0x0003 for both.
+  uint16_t cccd_val = 0x0001;
+  auto props_it = this->char_props_map_.find(char_handle);
+  if (props_it != this->char_props_map_.end()) {
+    bool has_notify = props_it->second & ESP_GATT_CHAR_PROP_BIT_NOTIFY;
+    bool has_indicate = props_it->second & ESP_GATT_CHAR_PROP_BIT_INDICATE;
+    if (has_indicate && has_notify)
+      cccd_val = 0x0003;
+    else if (has_indicate)
+      cccd_val = 0x0002;
+  }
+  return cccd_val;
 }
 
 void SonicareCoordinator::resubscribe_all_() {
