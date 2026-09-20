@@ -89,14 +89,56 @@ def test_mode_follows_the_model_not_the_offset():
     assert routine_id_model["brushing_mode"] != index_model["brushing_mode"]
 
 
-@pytest.mark.parametrize("payload", [b"", RECORD[:13], bytes(13)])
+@pytest.mark.parametrize("payload", [b"", RECORD[:12], bytes(12)])
 def test_an_answer_too_short_is_not_a_record(payload):
     """Short answers are refused rather than decoded into zeroes.
 
-    The offsets reach into byte 13, so anything shorter would read past the
-    end or silently produce a session of zero seconds.
+    Every record reaches the intensity in byte 12, so anything shorter would
+    read past the end or silently produce a session of zero seconds.
     """
     assert decode_session_record(payload, "HX999X", chunked=True) is None
+
+
+# Reported from a handle identifying as HX991X that ran a 120 s routine to
+# the end. The handle filed it as session 29, and the live readings of that
+# same session said clean at high intensity. The record stops at the
+# intensity - one byte shorter than a record carrying a routine id, and
+# whole for a handle that has none to report.
+SHORT_RECORD = bytes.fromhex("002f8c08001d00780078000002")
+
+
+def test_a_record_that_ends_at_the_intensity_is_whole():
+    """The shorter kind of record is a record, not a truncated one.
+
+    Pinned field by field against the same session as the handle reported it
+    live, because the point is not that the bytes decode - a wrong reading
+    decodes too - but that they decode into what the handle said while
+    brushing. Measured against the longer layout this was refused outright,
+    and the session was left reading a second short off the watched
+    fallback, which is all that remained of it.
+    """
+    out = decode_session_record(SHORT_RECORD, "HX991X", chunked=True)
+
+    assert out is not None
+    assert out["session_id"] == 29
+    assert out["duration"] == 120
+    assert out["routine_length"] == 120
+    assert out["brushing_mode"] == "clean"
+    assert out["intensity"] == "high"
+
+
+def test_the_mode_is_an_index_where_no_routine_id_follows():
+    """A handle that usually reads a routine id has none in a short record.
+
+    The field simply is not there, and reading the byte before it as though
+    it were would name a mode from the wrong table. So the record decides,
+    not the model - the model only decides where there is a choice.
+    """
+    out = decode_session_record(SHORT_RECORD, "HX999X", chunked=True)
+
+    assert out is not None
+    assert out["duration"] == 120
+    assert out["brushing_mode_value"] == SHORT_RECORD[11]
 
 
 def test_timestamp_is_the_handles_own_count():

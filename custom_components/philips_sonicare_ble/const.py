@@ -166,8 +166,20 @@ SESSION_STATUS_PARTIAL = 1
 # Both shapes answer with the same record. The one difference is that a
 # notified record is chunked and carries a leading byte for it, which a read
 # one has no need of - so the fields sit one byte earlier.
-# Offsets below reach up to 13, and a shorter answer is not a record.
-SESSION_RECORD_MIN_LEN = 14
+# Every record carries the same fields in the same order, up to and
+# including the intensity - that is what makes it a record, and a handle
+# sends no more than its own layout fills. The shorter kind ends there, on a
+# record of 13 bytes counting the chunk byte; the longer kind adds further
+# fields after it, the first of which is the routine id.
+#
+# So a record is not short for lacking a field it never had. Measuring every
+# answer against the longer kind refused the shorter one whole - and with it
+# the handle's own account of a session, leaving only the watched fallback.
+#
+# Offsets from the first field, before the chunk byte is accounted for.
+SESSION_RECORD_MODE_INDEX_OFFSET = 10
+SESSION_RECORD_INTENSITY_OFFSET = 11
+SESSION_RECORD_ROUTINE_ID_OFFSET = 12
 # The record format carries a version, which the handle reports in a
 # descriptor - and descriptors are not readable over every transport this
 # integration supports. So the guard against a different format is the

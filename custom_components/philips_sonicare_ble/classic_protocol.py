@@ -72,7 +72,9 @@ from .const import (
     SESSION_STATUS_PARTIAL,
     MAX_DURATION_FACTOR,
     MAX_ROUTINE_SECONDS,
-    SESSION_RECORD_MIN_LEN,
+    SESSION_RECORD_INTENSITY_OFFSET,
+    SESSION_RECORD_MODE_INDEX_OFFSET,
+    SESSION_RECORD_ROUTINE_ID_OFFSET,
     SESSION_RECORD_ROUTINE,
     brushing_mode_for_model,
     uses_routine_id_mode,
@@ -626,6 +628,11 @@ def decode_session_record(
     index that 0x4080 would report. Reading the wrong one yields a plausible
     but wrong mode, so the model decides - as it does for the live value.
 
+    That is also where a record can end. The fields up to the intensity are
+    the same on every handle; a routine id, where there is one, comes after
+    it. So a handle with no routine id to report sends one byte less, and
+    that record is complete rather than truncated.
+
     ``timestamp`` is the handle's own clock at the moment the session
     *began*, not when it ended - measured against a session that ran from
     14:51:03 to 14:53:13, counting from the stamp landed on its start. It is
@@ -634,14 +641,22 @@ def decode_session_record(
     same clock.
     """
     base = 1 if chunked else 0
-    if len(record) < base + SESSION_RECORD_MIN_LEN - 1:
+    # Every record reaches the intensity; anything shorter is not one.
+    if len(record) <= base + SESSION_RECORD_INTENSITY_OFFSET:
         return None
 
-    routine_id_mode = uses_routine_id_mode(model or "")
-    mode_value = record[base + 12] if routine_id_mode else record[base + 10]
+    # Which byte the mode comes from follows the handle - except on a record
+    # that stops at the intensity, which carries no routine id to read and
+    # states its mode as an index whatever the handle usually does.
+    routine_id_mode = (
+        uses_routine_id_mode(model or "")
+        and len(record) > base + SESSION_RECORD_ROUTINE_ID_OFFSET
+    )
     if routine_id_mode:
+        mode_value = record[base + SESSION_RECORD_ROUTINE_ID_OFFSET]
         mode = BRUSHING_MODES.get(mode_value)
     else:
+        mode_value = record[base + SESSION_RECORD_MODE_INDEX_OFFSET]
         mode = brushing_mode_for_model(model or "", mode_value)
     if mode is None:
         _LOGGER.debug(
@@ -667,8 +682,8 @@ def decode_session_record(
         "routine_length": routine_length,
         "brushing_mode": mode,
         "brushing_mode_value": mode_value,
-        "intensity": INTENSITIES.get(record[base + 11]),
-        "intensity_value": record[base + 11],
+        "intensity": INTENSITIES.get(record[base + SESSION_RECORD_INTENSITY_OFFSET]),
+        "intensity_value": record[base + SESSION_RECORD_INTENSITY_OFFSET],
         "timestamp": int.from_bytes(record[base:base + 4], "little"),
     }
 
