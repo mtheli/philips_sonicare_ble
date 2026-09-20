@@ -148,3 +148,24 @@ everyone's release-notes dialog.
 4. `custom_components/philips_sonicare_ble/manifest.json` — new integration
    version, as its own commit: `release: vX.Y.Z`.
 5. Tag `vX.Y.Z`, push, then `gh release create` with the notes above.
+
+## Every release carries a tag — including a beta
+
+**No release without its own tag,** and the tag is named exactly as the
+version is: `vX.Y.Z` for a release, `vX.Y.ZbN` for a beta. A release built
+against a branch instead of a tag has nothing that pins what it contains —
+the branch moves on, and afterwards nobody can tell which commit the version
+was cut from. HACS resolves a download by tag, so a release without one is
+also a release nobody can install.
+
+**Push that tag by name, never `--tags`:**
+
+```
+git push origin vX.Y.Z
+```
+
+`git push --tags` pushes *every* local tag, and a working repository
+collects tags that were never meant to leave it — backups taken before a
+squash, markers from an experiment. They land on GitHub alongside the
+release, and taking one back is a second public action rather than an undo.
+Name the one tag being released and nothing else travels with it.
