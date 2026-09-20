@@ -176,6 +176,12 @@ SESSION_STATUS_PARTIAL = 1
 # answer against the longer kind refused the shorter one whole - and with it
 # the handle's own account of a session, leaving only the watched fallback.
 #
+# A record that is read rather than notified comes off a fixed-width
+# characteristic and is always this long - the handle pads it out. So the
+# length is not a floor there but the shape itself, and a read of any other
+# size is a different answer rather than a shorter record.
+SESSION_RECORD_READ_LEN = 16
+
 # Offsets from the first field, before the chunk byte is accounted for.
 SESSION_RECORD_MODE_INDEX_OFFSET = 10
 SESSION_RECORD_INTENSITY_OFFSET = 11

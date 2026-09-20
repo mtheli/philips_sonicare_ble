@@ -74,6 +74,7 @@ from .const import (
     MAX_ROUTINE_SECONDS,
     SESSION_RECORD_INTENSITY_OFFSET,
     SESSION_RECORD_MODE_INDEX_OFFSET,
+    SESSION_RECORD_READ_LEN,
     SESSION_RECORD_ROUTINE_ID_OFFSET,
     SESSION_RECORD_ROUTINE,
     brushing_mode_for_model,
@@ -622,6 +623,12 @@ def decode_session_record(
     fields sit one byte later than in a record that was simply read. Same
     record, same order, one byte of framing.
 
+    The two also differ in what their length means. A notified record is as
+    long as its own layout fills, so the length is a floor. A read one comes
+    off a characteristic of fixed width and is always that size, so there it
+    is the shape itself - which is what tells a record apart from whatever
+    else a handle might leave in the same buffer.
+
     Where the mode sits depends on the handle, in the same split the live
     path already makes: the models that report their selected routine as an
     id on 0x4022 carry that id here too, while the others carry the mode
@@ -640,10 +647,21 @@ def decode_session_record(
     zero, so the value only means something next to another reading of the
     same clock.
     """
-    base = 1 if chunked else 0
-    # Every record reaches the intensity; anything shorter is not one.
-    if len(record) <= base + SESSION_RECORD_INTENSITY_OFFSET:
-        return None
+    if chunked:
+        # A notified record leads with the byte that numbers its chunk, and
+        # runs as far as its own layout fills. Every one of them reaches the
+        # intensity; anything shorter is not a record.
+        base = 1
+        if len(record) <= base + SESSION_RECORD_INTENSITY_OFFSET:
+            return None
+    else:
+        # A record that is read instead comes off a characteristic of fixed
+        # width, with no chunk byte and the same length every time. Measured
+        # as a floor this would accept a neighbouring answer that happens to
+        # be longer, so it is measured exactly.
+        base = 0
+        if len(record) != SESSION_RECORD_READ_LEN:
+            return None
 
     # Which byte the mode comes from follows the handle - except on a record
     # that stops at the intensity, which carries no routine id to read and

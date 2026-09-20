@@ -562,6 +562,21 @@ def test_a_read_record_is_decoded_without_the_chunk_byte():
     assert out["intensity_value"] == 0
 
 
+@pytest.mark.parametrize("payload", [
+    KIDS_RECORD[:15], KIDS_RECORD + b"\x00", KIDS_RECORD[:12], b"",
+])
+def test_a_read_record_is_a_fixed_width_answer(payload):
+    """Read the wrong length and it is not this record at all.
+
+    The characteristic a record is read from is of fixed width, so the
+    handle pads it out to the same size every time. Anything else came from
+    somewhere else - a truncated read, or whatever the handle had in the
+    buffer - and measuring it as a floor would let the longer of those
+    decode into a plausible session.
+    """
+    assert decode_session_record(payload, "HX6340") is None
+
+
 def test_the_two_shapes_do_not_decode_each_other():
     """The one byte of framing is the whole difference, and it matters.
 
