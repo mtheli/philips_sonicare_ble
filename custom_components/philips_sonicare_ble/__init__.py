@@ -30,7 +30,7 @@ from .const import (
     SVC_CONDOR,
 )
 from .coordinator import PhilipsSonicareCoordinator, async_remove_stored_data
-from .helpers import esphome_service_id
+from .helpers import async_get_own_device, esphome_service_id
 from .transport import (
     BleakTransport,
     EspBridgeTransport,
@@ -118,20 +118,47 @@ def _async_link_via_esp_device(hass: HomeAssistant, entry: ConfigEntry) -> None:
     device_id = entry.data.get(CONF_ADDRESS) or esp_device_name
 
     # Link Sonicare toothbrush device → ESPHome device
-    sonicare_device = dev_reg.async_get_device(
-        identifiers={(DOMAIN, device_id)}
-    )
+    sonicare_device = async_get_own_device(dev_reg, device_id, entry.entry_id)
     if sonicare_device:
         dev_reg.async_update_device(sonicare_device.id, via_device_id=esp_device.id)
         _LOGGER.info("Linked Sonicare device to ESP bridge '%s'", esp_device_name)
 
     # Link ESP Bridge sub-device → ESPHome device
-    bridge_device = dev_reg.async_get_device(
-        identifiers={(DOMAIN, f"{device_id}_bridge")}
+    bridge_device = async_get_own_device(
+        dev_reg, f"{device_id}_bridge", entry.entry_id
     )
     if bridge_device:
         dev_reg.async_update_device(bridge_device.id, via_device_id=esp_device.id)
         _LOGGER.info("Linked Bridge sub-device to ESP '%s'", esp_device_name)
+
+
+def _async_link_sub_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Hang the Brush Head and Connection sub-devices under the brush.
+
+    DeviceInfo(via_device=…) is deprecated since HA 2026.8 and its replacement,
+    via_device_id, needs the parent's registry id — which the entities cannot
+    know when they are built. The devices exist once the platforms are set up,
+    so the link is made here instead. Only an unset link is filled: the ESP
+    bridge path moves the Connection device under the ESPHome node, and that
+    must survive a restart.
+    """
+    device_id = entry.data.get(
+        CONF_ADDRESS, entry.data.get(CONF_ESP_DEVICE_NAME, "unknown")
+    )
+    dev_reg = dr.async_get(hass)
+    main_device = async_get_own_device(dev_reg, device_id, entry.entry_id)
+    if main_device is None:
+        _LOGGER.debug(
+            "Sonicare device '%s' not in registry, sub-devices left unlinked",
+            device_id,
+        )
+        return
+    for suffix in ("_brushhead", "_bridge"):
+        sub_device = async_get_own_device(
+            dev_reg, f"{device_id}{suffix}", entry.entry_id
+        )
+        if sub_device is not None and sub_device.via_device_id is None:
+            dev_reg.async_update_device(sub_device.id, via_device_id=main_device.id)
 
 
 def _async_apply_yaml_area(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -153,7 +180,7 @@ def _async_apply_yaml_area(hass: HomeAssistant, entry: ConfigEntry) -> None:
         return
 
     dev_reg = dr.async_get(hass)
-    device = dev_reg.async_get_device(identifiers={(DOMAIN, device_id)})
+    device = async_get_own_device(dev_reg, device_id, entry.entry_id)
     if device is None:
         return
 
@@ -262,6 +289,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator.async_set_updated_data(coordinator.data or {})
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    _async_link_sub_devices(hass, entry)
 
     # Link device to ESP bridge in device registry
     if transport_type == TRANSPORT_ESP_BRIDGE:

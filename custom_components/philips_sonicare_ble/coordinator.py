@@ -28,6 +28,7 @@ except ImportError:
 from .transport import BleakTransport, EspBridgeTransport, SonicareTransport
 from .exceptions import TransportError
 from .condor_adapter import resolve_brushing_mode
+from .helpers import async_get_own_device
 from .const import (
     DOMAIN,
     SVC_CONDOR,
@@ -711,8 +712,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._apply_model(model)
         if changed and (model or firmware or serial or hardware):
             dev_reg = dr.async_get(self.hass)
-            device = dev_reg.async_get_device(
-                identifiers={(DOMAIN, self.address)}
+            device = async_get_own_device(
+                dev_reg, self.address, self.entry.entry_id
             )
             if device:
                 resolved_model = model or "Philips Sonicare"
@@ -1465,8 +1466,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "esp_device_name", ""
         )
         dev_reg = dr.async_get(self.hass)
-        bridge_device = dev_reg.async_get_device(
-            identifiers={(DOMAIN, f"{device_id}_bridge")}
+        bridge_device = async_get_own_device(
+            dev_reg, f"{device_id}_bridge", self.entry.entry_id
         )
         if bridge_device:
             dev_reg.async_update_device(bridge_device.id, sw_version=version)

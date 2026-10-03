@@ -2,7 +2,9 @@
 
 from typing import Any
 
-from .const import SVC_DEVICE_INFO
+from homeassistant.helpers import device_registry as dr
+
+from .const import DOMAIN, SVC_DEVICE_INFO
 
 # Proprietary Sonicare service families: Classic (477ea600…) and the newer
 # framed transport (e50ba3c0…). Deliberately narrower than the config flow's
@@ -56,3 +58,19 @@ def esphome_service_id(device_name: str) -> str:
     silently misses every device whose name contains a hyphen.
     """
     return device_name.replace("-", "_")
+
+
+def async_get_own_device(
+    dev_reg: dr.DeviceRegistry, identifier: str, entry_id: str
+) -> dr.DeviceEntry | None:
+    """Return the device with ``(DOMAIN, identifier)`` owned by this entry.
+
+    async_get_device is deprecated since HA 2026.9 and logs a warning on every
+    call: identifiers are only unique within a config entry, so a lookup
+    across entries can be ambiguous. async_get_device_by_identifier scopes the
+    lookup to the entry. It only exists from 2026.8 on; older cores have no
+    split devices, so the plain lookup is correct there.
+    """
+    if hasattr(dev_reg, "async_get_device_by_identifier"):
+        return dev_reg.async_get_device_by_identifier((DOMAIN, identifier), entry_id)
+    return dev_reg.async_get_device(identifiers={(DOMAIN, identifier)})

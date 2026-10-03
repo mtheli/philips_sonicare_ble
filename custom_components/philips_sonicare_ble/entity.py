@@ -121,7 +121,6 @@ class PhilipsBrushHeadEntity(PhilipsSonicareEntity):
             manufacturer="Philips",
             translation_key="brush_head",
             translation_placeholders={"device_name": parent_name},
-            via_device=(DOMAIN, self._device_id),
         )
 
 
@@ -149,7 +148,6 @@ class PhilipsConnectionEntity(PhilipsSonicareEntity):
             manufacturer=manufacturer,
             translation_key="connection",
             translation_placeholders={"device_name": parent_name},
-            via_device=(DOMAIN, self._device_id),
         )
 
     @property
