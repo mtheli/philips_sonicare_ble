@@ -159,7 +159,7 @@ These sensors are only available while actively brushing and stream live data fr
 | **Brush Head Wear** | Sensor | Brush head wear level (`%`, computed from usage/lifetime limit). |
 | **Brush Head Usage** | Sensor | Accumulated brush head usage counter. |
 | **Brush Head Limit** | Sensor | Maximum brush head lifetime. |
-| **Brush Head Type** | Sensor | Brush head type (`Adaptive Clean`, `Adaptive White`, `Tongue Care`, `Adaptive Gums`, `Sensitive`). |
+| **Brush Head Type** | Sensor | Brush head family (`Clean (C)`, `White (W)`, `Gum Care (G)`, `All-in-One (A)`, `Sensitive (S)`, `TongueCare+`, `Non-RFID`). The head only reports its family, not the series, so a C1, C2 and C3 head all show as `Clean (C)`. |
 | **Brush Head Serial** | Sensor | Brush head serial number (from NFC tag). |
 | **Brush Head Date** | Sensor | Brush head manufacturing date. |
 | **Brush Head Ring ID** | Sensor | Color ring identifier (for family brush head tracking). |

@@ -171,7 +171,7 @@ def test_bare_handle_reports_no_sessions(hass) -> None:
 
 
 def test_bare_handle_type_zero_is_not_adaptive_clean(hass) -> None:
-    """The type char reads 0x00 on a bare handle — 0 is also Adaptive Clean."""
+    """The type char reads 0x00 on a bare handle — 0 is also the Clean family."""
     coordinator = make_coordinator(hass)
 
     new_data = coordinator._apply_parsed(

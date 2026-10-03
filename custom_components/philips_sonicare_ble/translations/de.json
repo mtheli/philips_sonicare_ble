@@ -278,12 +278,12 @@
       "brushhead_type": {
         "name": "Typ",
         "state": {
-          "adaptive_clean": "Adaptive Clean",
-          "adaptive_white": "Adaptive White",
-          "adaptive_gums": "Adaptive Gums",
-          "tongue_clean": "Tongue Clean",
-          "premium_all_in_one": "Premium All-in-One",
-          "sensitive": "Sensitive",
+          "adaptive_clean": "Clean (C)",
+          "adaptive_white": "White (W)",
+          "adaptive_gums": "Gum Care (G)",
+          "tongue_clean": "TongueCare+",
+          "premium_all_in_one": "All-in-One (A)",
+          "sensitive": "Sensitive (S)",
           "non_rfid": "Ohne RFID"
         }
       },

@@ -247,7 +247,7 @@ Bytes 4+:   Payload (depends on frame type)
 | Short ID | Properties | Format | Description |
 | :--- | :--- | :--- | :--- |
 | `0x4210` | Read | bytes | NFC tag version |
-| `0x4220` | Read | uint8 | Brush head type (0=unknown, 1=adaptive_clean, 2=adaptive_white, 3=tongue_care, 4=adaptive_gums, 5=sensitive) |
+| `0x4220` | Read | uint8 | Brush head family (0=Clean, 1=White, 2=Gums, 3=Tongue, 4=All-in-One, 5=Sensitive, 6=non-RFID); a bare handle also reads 0 |
 | `0x4230` | Read, Notify | UTF-8 string | Serial number |
 | `0x4240` | Read | UTF-8 string | Manufacturing date (e.g., "241211 72M") |
 | `0x4250` | Read | uint8 | Unknown |
