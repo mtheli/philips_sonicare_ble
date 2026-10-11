@@ -260,9 +260,10 @@ async def test_probe_wrapper_boxes_exceptions() -> None:
 # --- determinate progress bar ------------------------------------------------
 
 def test_bump_progress_noop_without_core_support() -> None:
-    # HA < 2025.5 has no async_update_progress — must not raise.
+    # HA < 2025.5 has no async_update_progress — must not raise. Newer cores
+    # do have it, so hide it to exercise the fallback on any core.
     flow = _flow()
-    assert not hasattr(flow, "async_update_progress")
+    flow.async_update_progress = None  # type: ignore[assignment]
     flow._bump_progress(0.5)
 
 

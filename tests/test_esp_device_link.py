@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import inspect
 
+import attr
 import pytest
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -121,9 +122,13 @@ class SplitRegistry(_RegistryDouble):
         super().__init__(hass)
         self._splits = splits
         # HA synthesizes this on the fly and never registers it; its id is the
-        # pre-migration device id, which is why it no longer resolves.
+        # pre-migration device id, which is why it no longer resolves. Cores
+        # with one config entry per device require it on every DeviceEntry.
+        extra = {}
+        if "config_entry_id" in attr.fields_dict(dr.DeviceEntry):
+            extra["config_entry_id"] = next(iter(splits))
         self._composite = dr.DeviceEntry(
-            id=COMPOSITE_ID, connections={MAC_CONNECTION}
+            id=COMPOSITE_ID, connections={MAC_CONNECTION}, **extra
         )
 
     def async_get_device(self, identifiers=None, connections=None):
