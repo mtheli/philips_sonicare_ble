@@ -6,6 +6,7 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.components.bluetooth import async_rediscover_address
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
@@ -475,11 +476,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if hass.services.has_service(DOMAIN, svc):
                 hass.services.async_remove(DOMAIN, svc)
 
-    # Allow re-discovery for direct BLE devices
-    if entry.data.get(CONF_TRANSPORT_TYPE) != TRANSPORT_ESP_BRIDGE:
-        from homeassistant.components.bluetooth import async_rediscover_address
-        async_rediscover_address(hass, entry.data["address"])
-
     _LOGGER.info("Unloading Philips Sonicare integration finished")
     return True
 
@@ -504,9 +500,26 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     Both branches are best-effort. If the ESP is offline or D-Bus is
     unreachable we log and return quietly — HA will delete the entry
     regardless of what this returns.
+
+    Afterwards the brush is offered for Bluetooth discovery again.
     """
     await async_remove_stored_data(hass, entry.entry_id)
 
+    try:
+        await _async_release_bond(hass, entry)
+    finally:
+        # HA only re-offers a removed entry's device when the entry carries a
+        # Bluetooth discovery key, which a brush added by hand and removed in
+        # the same run never gets. Runs here rather than in
+        # async_unload_entry: the entry is already gone, so the next
+        # advertisement opens a fresh discovery instead of aborting as
+        # already configured — and a reload no longer triggers it.
+        if address := entry.data.get(CONF_ADDRESS) or entry.unique_id:
+            async_rediscover_address(hass, address)
+
+
+async def _async_release_bond(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Drop the transport's BLE bond for a removed entry (best effort)."""
     transport = entry.data.get(CONF_TRANSPORT_TYPE)
 
     if transport == TRANSPORT_ESP_BRIDGE:
