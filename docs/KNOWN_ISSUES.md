@@ -3,6 +3,7 @@
 ## Contents
 
 - [ESP bridge loses pairings with ESP-IDF 5.5.6](#esp-bridge-loses-pairings-with-esp-idf-556) — ESPHome 2026.10.0
+- [Brushes with a rotating address stop reconnecting on newer ESP32 chips](#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips) — ESP32-S3, C3, C6
 - [Some USB dongles cannot complete SMP bonding](#some-usb-dongles-cannot-complete-smp-bonding)
 - [Budget BT adapters can't scan while a GATT connection is active](#budget-bt-adapters-cant-scan-while-a-gatt-connection-is-active)
 - [Notification subscription limit (default too low)](#notification-subscription-limit-default-too-low)
@@ -46,6 +47,32 @@ Remove the line again once an ESPHome release ships an ESP-IDF version with the 
 ### Bluetooth proxy
 
 A standard ESPHome `bluetooth_proxy` built with ESPHome 2026.10.0 has the same bug for any device it holds a pairing for. The integration cannot see the ESP-IDF version of a proxy, so there is no repair issue for that case. The same YAML pin applies.
+
+---
+
+## Brushes with a rotating address stop reconnecting on newer ESP32 chips
+
+**Known since:** 2026-09-12
+
+**Status:** ESPHome does not enable address resolution in the Bluetooth controller; [feature request esphome/feature-requests#3914](https://github.com/esphome/feature-requests/discussions/3914). Workaround: use a classic ESP32 for these brushes.
+
+Brushes that rotate their Bluetooth address (a resolvable private address), confirmed on the Series 7100 (HX742X), pair fine through a bridge on an ESP32-S3, but stop reconnecting afterwards. Every ESP32 variant except the original ESP32 is built the same way (ESP32-S3, ESP32-C3, ESP32-C6 and the other C and H chips), so the same applies there.
+
+### Symptoms
+
+- Pairing works, but the next reconnect ends in a loop of `status=133` in the bridge log, each attempt timing out after about 20 seconds.
+- The bridge keeps reporting the address from the pairing, while the brush already advertises under a new one.
+- Unpairing and pairing again helps for exactly one session.
+- The same brush reconnects reliably through a bridge on a classic ESP32, such as an M5Stack Atom Lite.
+
+### Cause
+
+On these chips the Bluetooth controller resolves rotating addresses itself, from a list of known devices, and ESP-IDF always uses that list there. ESPHome does not switch the controller's address resolution on (local privacy), so the bridge connects to the address from the pairing, which the brush no longer uses. On the classic ESP32 the host resolves the address and connects to the current one.
+
+### Workaround
+
+- **Use a classic ESP32** (ESP32-WROOM, ESP32-PICO, M5Stack Atom Lite and similar) for brushes with a rotating address.
+- **Or enable local privacy** with a local copy of ESPHome's `esp32_ble` component: copy `esphome/components/esp32_ble` from your ESPHome installation into a folder, add `esp_ble_gap_config_local_privacy(true);` in `ble.cpp` right after the call to `esp_ble_gap_register_callback`, and load the folder through `external_components`. Existing pairings then reconnect reliably. A pairing made while the bridge is running only reaches the controller's list after the next restart, so restart the bridge once after pairing. On ESPHome 2026.10.0, also pin ESP-IDF 5.5.5, see [above](#esp-bridge-loses-pairings-with-esp-idf-556).
 
 ---
 
