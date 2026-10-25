@@ -175,13 +175,14 @@ These sensors are only available while actively brushing and stream live data fr
 | **Model Number** | Sensor | Device model number (e.g., HX992B). |
 | **Firmware** | Sensor | Installed firmware version. |
 | **Last Seen** | Sensor | Timestamp of last successful data read. |
-| **RSSI** | Sensor | BLE signal strength in dBm (Direct BLE only). |
+| **BLE RSSI** | Sensor | BLE signal strength in dBm (Direct BLE only). |
 | **Adapter** | Sensor | Name/path of the BLE adapter currently carrying the link (e.g. `hci0`, ESP device name + bridge slot). |
 | **Adapter Type** | Sensor | Transport classification: *Direct Bluetooth* / *ESP Bridge* / *Bluetooth Proxy*. |
 | **Bridge Version** | Sensor | ESP bridge firmware version (ESP Bridge only). |
 | **Bridge Firmware** | Update | Passive notification when newer ESP bridge firmware is available, with cumulative release notes. Informational only — there's no install button; reflash via ESPHome (ESP Bridge only). |
-| **Bridge Last Boot** | Sensor | Timestamp the ESP bridge last booted — useful for detecting unattended reboots (ESP Bridge only). |
-| **ESP Bridge** | Binary | Whether the ESP bridge is reachable and sending heartbeats (ESP Bridge only). |
+| **ESP Last Boot** | Sensor | Timestamp the ESP bridge last booted — useful for detecting unattended reboots (ESP Bridge only). |
+| **ESP Connected** | Binary | Whether the ESP bridge is reachable and sending heartbeats (ESP Bridge only). |
+| **ESP Build** | Sensor | ESPHome and ESP-IDF version the bridge firmware was built with (ESP Bridge only). |
 | **BLE Connected** | Binary | Whether the GATT link to the toothbrush is currently up. |
 
 ---
