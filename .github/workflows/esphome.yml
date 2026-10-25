@@ -1,0 +1,53 @@
+name: ESPHome build
+
+on:
+  push:
+    paths: ["esphome/**", ".github/workflows/esphome.yml"]
+  pull_request:
+    paths: ["esphome/**", ".github/workflows/esphome.yml"]
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        esphome: ["2026.1.0", "2026.7.1", "latest"]
+        board: ["esp32dev", "esp32-s3-devkitc-1"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ESPHome
+        run: |
+          if [ "${{ matrix.esphome }}" = "latest" ]; then
+            pip install esphome
+          else
+            pip install "esphome==${{ matrix.esphome }}"
+          fi
+          esphome version
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            esphome/tests/.esphome
+          key: esphome-${{ matrix.esphome }}-${{ matrix.board }}-${{ hashFiles('esphome/components/**') }}
+          restore-keys: esphome-${{ matrix.esphome }}-${{ matrix.board }}-
+      - name: Compile
+        working-directory: esphome/tests
+        run: |
+          set -o pipefail
+          esphome -s board ${{ matrix.board }} compile ci-bridge.yaml 2>&1 | tee build.log
+      - name: No compiler warnings from the component
+        working-directory: esphome/tests
+        run: |
+          if grep -E "philips_sonicare/[^ ]+\.(cpp|h):[0-9]+:[0-9]+: warning" build.log; then
+            echo "::error::Compiler warnings in philips_sonicare (see above)"
+            exit 1
+          fi

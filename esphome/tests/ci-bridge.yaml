@@ -1,0 +1,44 @@
+# CI build test only, not a usable device config. Compiled by
+# .github/workflows/esphome.yml against several ESPHome versions.
+substitutions:
+  board: esp32dev
+
+esphome:
+  name: ci-sonicare-bridge
+
+esp32:
+  board: ${board}
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"
+      CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"
+
+logger:
+
+api:
+  custom_services: true
+  homeassistant_services: true
+
+wifi:
+  ssid: ci
+  password: ci-password
+
+esp32_ble:
+  io_capability: none
+  max_notifications: 20
+
+esp32_ble_tracker:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [philips_sonicare]
+
+# Two slots, so the multi-slot code paths are compiled too.
+philips_sonicare:
+  - id: slot_a
+    bridge_id: slot_a
+  - id: slot_b
+    bridge_id: slot_b

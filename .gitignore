@@ -28,3 +28,6 @@ scripts/*_live.json
 # to tests/fixtures/.
 sonicare_session_*.jsonl
 .pytest_cache/
+
+# Log from the ESPHome CI build test (esphome/tests/)
+esphome/tests/build.log

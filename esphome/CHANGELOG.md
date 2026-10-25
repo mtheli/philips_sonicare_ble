@@ -8,6 +8,11 @@
      an Unreleased block placed between two releases would be served as part of
      the release above it. -->
 
+## Unreleased
+
+- **No more deprecation warnings on ESPHome 2026.8 and later.** `ESPBTDevice::address_str()` is deprecated there and removed in ESPHome 2027.2.0; the bridge now formats the scanned address itself, with the same `AA:BB:CC:DD:EE:FF` text as before, so it keeps building on older ESPHome versions as well ([#41](https://github.com/mtheli/philips_sonicare_ble/issues/41)).
+- A CI build now compiles the component against several ESPHome versions for the classic ESP32 and the ESP32-S3 and fails on any compiler warning from the component.
+
 ## v1.14.0 — 2026-08-25
 
 - **CHANGE_IND_RESP now carries a two-byte body** (`FE FF 09 00 02 00 00`) instead of one (`FE FF 09 00 01 00`). Two bytes is the form handles are known to accept, verified across 250 indications on an HX742A; the short form was in use while an HX6600 kept ending the link (`reason=0x13`) about 100 ms after its first change indication, but that abort turned out to have a cause in the integration and the short form was never retested on its own ([#33](https://github.com/mtheli/philips_sonicare_ble/issues/33)).
