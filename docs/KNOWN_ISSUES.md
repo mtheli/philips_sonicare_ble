@@ -2,6 +2,7 @@
 
 ## Contents
 
+- [ESP bridge loses pairings with ESP-IDF 5.5.6](#esp-bridge-loses-pairings-with-esp-idf-556) — ESPHome 2026.10.0
 - [Notification subscription limit (default too low)](#notification-subscription-limit-default-too-low)
 - [Brushing Mode Select not available on BrushSync models](#brushing-mode-select-not-available-on-brushsync-models)
 - [Budget BT adapters can't scan while a GATT connection is active](#budget-bt-adapters-cant-scan-while-a-gatt-connection-is-active)
@@ -9,6 +10,42 @@
 - [Toothbrush not reachable on charger](#toothbrush-not-reachable-on-charger)
 - [Unnecessary pair() calls in other ESPHome projects](#unnecessary-pair-calls-in-other-esphome-projects)
 - ✅ [Bluedroid crash with bluetooth_proxy](#bluedroid-crash-with-bluetooth_proxy-fixed-in-esphome-202671) — **resolved**, fixed in ESPHome 2026.7.1
+
+## ESP bridge loses pairings with ESP-IDF 5.5.6
+
+**Status:** Bug in ESP-IDF 5.5.6 ([espressif/esp-idf#19286](https://github.com/espressif/esp-idf/issues/19286)), not fixed in any release yet. Workaround: build the bridge with ESP-IDF 5.5.5.
+
+ESPHome 2026.10.0 builds with ESP-IDF 5.5.6 by default. In that version, the Bluetooth stack drops the stored pairing from memory when a paired toothbrush reconnects, and deletes the device record when the connection ends. The key is still in flash, so everything works again for one session after each restart of the ESP32.
+
+### Symptoms
+
+- A paired toothbrush (for example ExpertClean, HX991M, DiamondClean Prestige, Series 7100) connects once after the bridge restarts, and after the first disconnect it does not reconnect anymore.
+- The bridge log shows `Deleting unpaired device` when the connection ends, and with local privacy enabled `opcode=0x2028, status=0c: Cmd Disallowed` during encryption.
+- Restarting the ESP32 makes it work again until the next disconnect.
+- Home Assistant shows a repair issue "Philips Sonicare: ESP bridge … loses pairings (ESP-IDF v5.5.6)". The bridge reports its ESP-IDF version, and the integration raises the issue whenever it is 5.5.6.
+
+Models that connect without pairing (DiamondClean Smart, Sonicare For Kids HX63xx) are not affected.
+
+### Fix
+
+Pin ESP-IDF 5.5.5 in the bridge's YAML, then rebuild and flash it:
+
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    version: 5.5.5
+```
+
+ESPHome prints a warning that this is not the recommended framework version; that is expected. The existing pairing stays valid. If the toothbrush already stopped reconnecting, restart the bridge once after flashing.
+
+Remove the line again once an ESPHome release ships an ESP-IDF version with the fix.
+
+### Bluetooth proxy
+
+A standard ESPHome `bluetooth_proxy` built with ESPHome 2026.10.0 has the same bug for any device it holds a pairing for. The integration cannot see the ESP-IDF version of a proxy, so there is no repair issue for that case. The same YAML pin applies.
+
+---
 
 ## Notification subscription limit (default too low)
 
