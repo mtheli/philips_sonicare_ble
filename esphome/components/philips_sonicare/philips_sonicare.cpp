@@ -17,6 +17,17 @@ static const espbt::ESPBTUUID CLASSIC_SERVICE_UUID =
 static const espbt::ESPBTUUID CONDOR_SERVICE_UUID =
     espbt::ESPBTUUID::from_raw("e50ba3c0-af04-4564-92ad-fef019489de6");
 
+// Same "AA:BB:CC:DD:EE:FF" text as ESPBTDevice::address_str(), which is
+// deprecated since ESPHome 2026.8 and removed in 2027.2. Its replacement
+// address_str_to() only exists from 2026.1, so format it here to keep older
+// ESPHome versions building.
+static void format_device_address(const espbt::ESPBTDevice &device, char (&out)[18]) {
+  const uint64_t addr = device.address_uint64();
+  snprintf(out, sizeof(out), "%02X:%02X:%02X:%02X:%02X:%02X",
+           (uint8_t) (addr >> 40), (uint8_t) (addr >> 32), (uint8_t) (addr >> 24),
+           (uint8_t) (addr >> 16), (uint8_t) (addr >> 8), (uint8_t) addr);
+}
+
 // ── PhilipsSonicare (Mode A wrapper, BLEClientNode) ──────────────────────────
 // Compiled only when the user has a ble_client: block in YAML (USE_BLE_CLIENT
 // is defined by ESPHome's loader). Mode B users skip this entire class.
@@ -263,7 +274,9 @@ bool PhilipsSonicareStandalone::parse_device(const espbt::ESPBTDevice &device) {
         if (!m.data.empty())
           mfr_hex += format_hex(m.data.data(), m.data.size());
       }
-      this->coord_->emit_scan_result(device.address_str(), addr_type,
+      char addr[18];
+      format_device_address(device, addr);
+      this->coord_->emit_scan_result(addr, addr_type,
                                        device.get_name(), mfr_hex,
                                        device.get_rssi(), matched_service);
     }
@@ -276,18 +289,20 @@ bool PhilipsSonicareStandalone::parse_device(const espbt::ESPBTDevice &device) {
   if (this->state() != espbt::ClientState::IDLE)
     return false;
 
+  char addr[18];
+  format_device_address(device, addr);
   const std::string &target = this->coord_->get_target_mac();
   if (!target.empty()) {
     // Targeted: ble_pair_mac flow. Match exactly this MAC, no UUID filter
     // (the brush may not advertise its service UUID in some adverts).
-    if (device.address_str() != target)
+    if (target != addr)
       return false;
     ESP_LOGI(this->log_tag_.c_str(), "Pair-mode targeted match: %s", target.c_str());
   } else {
     if (matched_service.empty())
       return false;
     ESP_LOGI(this->log_tag_.c_str(), "Found Sonicare via UUID at %s (pair-mode, %s)",
-             device.address_str().c_str(), matched_service.c_str());
+             addr, matched_service.c_str());
   }
 
   // Never let two slots bond the same brush — they'd share one controller
@@ -297,7 +312,7 @@ bool PhilipsSonicareStandalone::parse_device(const espbt::ESPBTDevice &device) {
     ESP_LOGW(this->log_tag_.c_str(),
              "Ignoring %s in pair-mode — another slot on this bridge is "
              "already bonded to it",
-             device.address_str().c_str());
+             addr);
     return false;
   }
 
