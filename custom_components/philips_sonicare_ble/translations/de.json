@@ -7,6 +7,10 @@
     "brushhead_counterfeit": {
       "title": "Möglicherweise gefälschter oder fehlender Bürstenkopf — {device}",
       "description": "**{device}** läuft seit 30 Sekunden, ohne dass eine gültige NFC-Seriennummer vom Bürstenkopf gelesen werden konnte.\n\nDas deutet meist auf einen gefälschten oder nicht originalen Bürstenkopf ohne NFC-Chip hin — oder darauf, dass gar kein Bürstenkopf aufgesteckt ist.\n\n**Lösung:** Setze einen originalen Philips-Sonicare-Bürstenkopf auf. Die Warnung verschwindet automatisch, sobald eine gültige Seriennummer gelesen wird.\n\nDu kannst diese Warnung in den Optionen der Integration deaktivieren."
+    },
+    "esp_bridge_idf_bond_loss": {
+      "title": "Philips Sonicare: ESP-Bridge {esp_device} verliert Kopplungen (ESP-IDF {idf_version})",
+      "description": "Die Integration **Philips Sonicare** hat festgestellt, dass ihre ESP-Bridge **{esp_device}** mit einer Firmware läuft, die mit ESP-IDF **{idf_version}** gebaut ist, dem Standard von ESPHome 2026.10.0. Diese ESP-IDF-Version hat einen Bluetooth-Fehler: Nach dem ersten Trennen vergisst die Bridge die Kopplung mit deiner Zahnbürste, bis der ESP neu startet. Gekoppelte Modelle verbinden sich dann nicht mehr.\n\n**Abhilfe:** ESP-IDF 5.5.5 in der YAML der Bridge festlegen, dann neu bauen und flashen:\n\n```yaml\nesp32:\n  framework:\n    type: esp-idf\n    version: 5.5.5\n```\n\nDiese Warnung verschwindet von selbst, sobald die Bridge mit einer Firmware läuft, die mit einer anderen ESP-IDF-Version gebaut ist."
     }
   },
   "config": {

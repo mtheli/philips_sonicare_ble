@@ -29,6 +29,17 @@ MIN_BRIDGE_VERSION = "1.4.0"
 # transport reads sequentially against those.
 BRIDGE_PIPELINED_READS_VERSION = "1.7.0"
 
+# ESP-IDF releases whose Bluetooth stack forgets a bond after the first
+# reconnect (espressif/esp-idf#19286): re-encrypting with the stored key clears
+# the key in memory, and the disconnect then deletes the device record. Only a
+# reboot of the ESP reloads it from flash. ESP-IDF 5.5.6 is the default of
+# ESPHome 2026.10.0. Bridges built with one of these raise a Repairs warning.
+IDF_BOND_LOSS_VERSIONS = ("5.5.6",)
+IDF_BOND_LOSS_ISSUE_URL = (
+    "https://github.com/mtheli/philips_sonicare_ble/blob/master/docs/KNOWN_ISSUES.md"
+    "#esp-bridge-loses-pairings-with-esp-idf-556"
+)
+
 # ── ESP bridge firmware update entity ────────────────────────────────────────
 # The latest available bridge firmware version is read straight from the repo
 # (same VERSION file the firmware bakes in at build time) so users are notified

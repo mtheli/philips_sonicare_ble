@@ -7,6 +7,10 @@
     "brushhead_counterfeit": {
       "title": "Possible counterfeit or missing brush head — {device}",
       "description": "**{device}** has been running for 30 seconds without reading a valid NFC serial from the brush head.\n\nThis usually means a counterfeit or non-genuine head without an NFC chip — or that no brush head is attached.\n\n**To resolve:** Attach a genuine Philips Sonicare brush head. The warning will clear automatically once a valid serial is read.\n\nYou can disable this warning in the integration options."
+    },
+    "esp_bridge_idf_bond_loss": {
+      "title": "Philips Sonicare: ESP bridge {esp_device} loses pairings (ESP-IDF {idf_version})",
+      "description": "The **Philips Sonicare** integration found that its ESP bridge **{esp_device}** runs firmware built with ESP-IDF **{idf_version}**, the default of ESPHome 2026.10.0. This ESP-IDF version has a Bluetooth bug: after the first disconnect, the bridge forgets the pairing with your toothbrush until the ESP restarts. Paired models then stop reconnecting.\n\n**To fix:** pin ESP-IDF 5.5.5 in the bridge's YAML, then rebuild and flash it:\n\n```yaml\nesp32:\n  framework:\n    type: esp-idf\n    version: 5.5.5\n```\n\nThis warning clears automatically once the bridge runs firmware built with a different ESP-IDF version."
     }
   },
   "config": {

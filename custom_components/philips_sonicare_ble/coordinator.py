@@ -88,6 +88,9 @@ from .const import (
     CONF_NOTIFY_THROTTLE,
     DEFAULT_NOTIFY_THROTTLE,
     CONF_WARN_COUNTERFEIT,
+    CONF_ESP_DEVICE_NAME,
+    IDF_BOND_LOSS_VERSIONS,
+    IDF_BOND_LOSS_ISSUE_URL,
     DEFAULT_WARN_COUNTERFEIT,
     COUNTERFEIT_DETECTION_DELAY,
 )
@@ -1290,6 +1293,12 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.info("Establishing live connection to %s...", self.address)
                     await self.transport.connect()
 
+                    # The bridge reports its build environment while the
+                    # transport waits for it, before the brush is connected —
+                    # check here so the warning shows even if it never is.
+                    if self._is_esp_bridge:
+                        self._check_bridge_idf()
+
                     # ESP bridge: wait for BLE device to actually connect
                     if self._is_esp_bridge and not self.transport.is_connected:
                         _LOGGER.debug(
@@ -1339,6 +1348,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if self._is_esp_bridge:
                         self._update_bridge_device_version()
                         self._check_bridge_version()
+                        self._check_bridge_idf()
                         if self.transport.needs_resubscribe:
                             self.transport.acknowledge_resubscribe()
 
@@ -1471,6 +1481,43 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         if bridge_device:
             dev_reg.async_update_device(bridge_device.id, sw_version=version)
+
+    def _check_bridge_idf(self) -> None:
+        """Create or clear a repair issue if the bridge runs an ESP-IDF that loses bonds."""
+        assert isinstance(self.transport, EspBridgeTransport)
+        idf = self.transport.idf_version
+        if not idf:
+            return
+        esp_name = self.entry.data.get(CONF_ESP_DEVICE_NAME) or self.address
+        # One issue per ESP device: every slot on it is affected the same way.
+        issue_id = f"esp_bridge_idf_bond_loss_{esp_name.lower()}"
+        from homeassistant.helpers import issue_registry as ir
+        # esp_get_idf_version() reports e.g. "v5.5.6" or "v5.5.6-dirty".
+        release = idf.lstrip("v").split("-")[0]
+        if release in IDF_BOND_LOSS_VERSIONS:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                learn_more_url=IDF_BOND_LOSS_ISSUE_URL,
+                translation_key="esp_bridge_idf_bond_loss",
+                translation_placeholders={
+                    "esp_device": esp_name,
+                    "idf_version": idf,
+                },
+            )
+            _LOGGER.warning(
+                "%s: ESP bridge %s is built with ESP-IDF %s, which loses "
+                "bonds after the first reconnect (esp-idf#19286) — rebuild "
+                "with `esp32: framework: version: 5.5.5`",
+                self.address,
+                esp_name,
+                idf,
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
     def _check_bridge_version(self) -> None:
         """Create or clear a HA repair issue if the ESP bridge firmware is outdated."""
