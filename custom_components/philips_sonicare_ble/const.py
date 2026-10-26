@@ -40,6 +40,15 @@ IDF_BOND_LOSS_ISSUE_URL = (
     "#esp-bridge-loses-pairings-with-esp-idf-556"
 )
 
+# Bridges on chips other than the original ESP32 resolve rotating addresses in
+# the controller and lose a brush with a rotating address after the first
+# session, unless the build moves resolution to the host. Bridge firmware
+# 1.14.2+ reports both facts in pair_complete (rpa, addr_res).
+ROTATING_ADDRESS_ISSUE_URL = (
+    "https://github.com/mtheli/philips_sonicare_ble/blob/master/docs/KNOWN_ISSUES.md"
+    "#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips"
+)
+
 # ── ESP bridge firmware update entity ────────────────────────────────────────
 # The latest available bridge firmware version is read straight from the repo
 # (same VERSION file the firmware bakes in at build time) so users are notified

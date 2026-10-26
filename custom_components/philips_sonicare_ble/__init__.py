@@ -505,6 +505,15 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """
     await async_remove_stored_data(hass, entry.entry_id)
 
+    # The rotating-address issue belongs to this entry's bond; with the entry
+    # gone, nothing would ever re-check and clear it.
+    if address := entry.data.get(CONF_ADDRESS):
+        from homeassistant.helpers import issue_registry as ir
+
+        ir.async_delete_issue(
+            hass, DOMAIN, f"esp_bridge_rotating_address_{address.lower()}"
+        )
+
     try:
         await _async_release_bond(hass, entry)
     finally:

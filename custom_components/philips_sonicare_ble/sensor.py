@@ -192,6 +192,7 @@ async def async_setup_entry(
     if entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE:
         entities.append(SonicareBridgeVersionSensor(coordinator, entry))
         entities.append(SonicareBridgeBuildSensor(coordinator, entry))
+        entities.append(SonicareBridgeChipSensor(coordinator, entry))
         entities.append(SonicareBridgeBootTimeSensor(coordinator, entry))
 
     async_add_entities(entities)
@@ -1379,6 +1380,51 @@ class SonicareBridgeBuildSensor(PhilipsConnectionEntity, SensorEntity):
         if idf := getattr(transport, "idf_version", None):
             attrs["idf_version"] = idf
         return attrs or None
+
+
+# ---------------------------------------------------------------------------
+# ESP Bridge Chip (on bridge sub-device)
+# ---------------------------------------------------------------------------
+class SonicareBridgeChipSensor(PhilipsConnectionEntity, SensorEntity):
+    """Chip of the bridge and where it resolves rotating addresses.
+
+    Chips other than the classic ESP32 resolve rotating addresses in the
+    Bluetooth controller unless the firmware is built with
+    -DCONFIG_BT_BLE_RPA_SUPPORTED=0 (see the rotating-address known issue).
+    Reported by bridge firmware >= 1.14.2; stays unknown on older firmware.
+    """
+
+    _attr_translation_key = "bridge_chip"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:chip"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_bridge_chip"
+
+    @property
+    def native_value(self) -> str | None:
+        chip = getattr(self.coordinator.transport, "chip", None)
+        if not chip:
+            return None
+        # "esp32s3" → "ESP32-S3", "esp32" stays "ESP32".
+        name = chip.upper()
+        if name.startswith("ESP32") and len(name) > 5:
+            name = f"ESP32-{name[5:]}"
+        return name
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str] | None:
+        addr_res = getattr(self.coordinator.transport, "addr_res", None)
+        if not addr_res:
+            return None
+        return {
+            "address_resolution": {
+                "host": "host",
+                "ctrl": "controller",
+                "ctrl_priv": "controller_privacy",
+            }.get(addr_res, addr_res)
+        }
 
 
 # ---------------------------------------------------------------------------

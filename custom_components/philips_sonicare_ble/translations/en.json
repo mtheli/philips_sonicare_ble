@@ -11,6 +11,10 @@
     "esp_bridge_idf_bond_loss": {
       "title": "Philips Sonicare: ESP bridge {esp_device} loses pairings (ESP-IDF {idf_version})",
       "description": "The **Philips Sonicare** integration found that its ESP bridge **{esp_device}** runs firmware built with ESP-IDF **{idf_version}**, the default of ESPHome 2026.10.0. This ESP-IDF version has a Bluetooth bug: after the first disconnect, the bridge forgets the pairing with your toothbrush until the ESP restarts. Paired models then stop reconnecting.\n\n**To fix:** pin ESP-IDF 5.5.5 in the bridge's YAML, then rebuild and flash it:\n\n```yaml\nesp32:\n  framework:\n    type: esp-idf\n    version: 5.5.5\n```\n\nThis warning clears automatically once the bridge runs firmware built with a different ESP-IDF version."
+    },
+    "esp_bridge_rotating_address": {
+      "title": "Philips Sonicare: {device} won't reconnect through ESP bridge {esp_device}",
+      "description": "The **Philips Sonicare** integration found that **{device}** is paired through the ESP bridge **{esp_device}** under a rotating Bluetooth address, and the bridge's chip resolves such addresses in the Bluetooth controller. The bridge then loses the toothbrush after each session, and reconnects end in `status=133` until it is set up again.\n\n**To fix:** add this to the bridge's YAML, then rebuild and flash it. The pairing stays valid:\n\n```yaml\nesphome:\n  build_flags:\n    - -DCONFIG_BT_BLE_RPA_SUPPORTED=0\n```\n\nThis warning clears automatically once the bridge runs firmware with this option."
     }
   },
   "config": {
@@ -109,6 +113,7 @@
       "esp_action_retry": "**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to try again.",
       "esp_action_switch_on": "**Switch on your Sonicare** (press the power button or pick it up from the charger) and **keep it switched on**, then click **Read capabilities** to finish setup.",
       "esp_status_paired": "Pairing successful — the bridge is now bonded to your toothbrush.",
+      "esp_status_paired_rpa_unsupported": "**Paired, but this bridge will lose the toothbrush after the first session.** The toothbrush changes its Bluetooth address, and the bridge's chip only follows such an address when the bridge is built with one extra option. Add `-DCONFIG_BT_BLE_RPA_SUPPORTED=0` under `esphome:` → `build_flags:` in the bridge's YAML, then rebuild and flash it. The pairing stays valid. [Details]({url})",
       "esp_status_read_error": "Something went wrong reading the toothbrush. Check the logs (Settings → System → Logs) and try again.",
       "esp_status_read_failed": "Couldn't read the toothbrush over the bridge. Make sure it's switched on and the bridge is online, then try again.",
       "not_a_sonicare": "Connected to the device, but no Philips Sonicare characteristics were found. Check that the address belongs to a Sonicare toothbrush.",
@@ -299,6 +304,9 @@
       },
       "bridge_build": {
         "name": "ESP Build"
+      },
+      "bridge_chip": {
+        "name": "ESP Chip"
       },
       "bridge_boot_time": {
         "name": "ESP Last Boot"

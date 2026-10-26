@@ -11,6 +11,10 @@
     "esp_bridge_idf_bond_loss": {
       "title": "Philips Sonicare: ESP-Bridge {esp_device} verliert Kopplungen (ESP-IDF {idf_version})",
       "description": "Die Integration **Philips Sonicare** hat festgestellt, dass ihre ESP-Bridge **{esp_device}** mit einer Firmware läuft, die mit ESP-IDF **{idf_version}** gebaut ist, dem Standard von ESPHome 2026.10.0. Diese ESP-IDF-Version hat einen Bluetooth-Fehler: Nach dem ersten Trennen vergisst die Bridge die Kopplung mit deiner Zahnbürste, bis der ESP neu startet. Gekoppelte Modelle verbinden sich dann nicht mehr.\n\n**Abhilfe:** ESP-IDF 5.5.5 in der YAML der Bridge festlegen, dann neu bauen und flashen:\n\n```yaml\nesp32:\n  framework:\n    type: esp-idf\n    version: 5.5.5\n```\n\nDiese Warnung verschwindet von selbst, sobald die Bridge mit einer Firmware läuft, die mit einer anderen ESP-IDF-Version gebaut ist."
+    },
+    "esp_bridge_rotating_address": {
+      "title": "Philips Sonicare: {device} verbindet sich nicht mehr über die ESP-Bridge {esp_device}",
+      "description": "Die Integration **Philips Sonicare** hat festgestellt, dass **{device}** über die ESP-Bridge **{esp_device}** unter einer wechselnden Bluetooth-Adresse gekoppelt ist und der Chip der Bridge solche Adressen im Bluetooth-Controller auflöst. Die Bridge verliert die Zahnbürste dann nach jeder Sitzung, und neue Verbindungsversuche enden in `status=133`, bis sie neu eingerichtet wird.\n\n**Abhilfe:** Ergänze das in der YAML der Bridge, baue sie dann neu und flashe sie. Die Kopplung bleibt gültig:\n\n```yaml\nesphome:\n  build_flags:\n    - -DCONFIG_BT_BLE_RPA_SUPPORTED=0\n```\n\nDiese Warnung verschwindet von selbst, sobald die Bridge mit dieser Option läuft."
     }
   },
   "config": {
@@ -109,6 +113,7 @@
       "esp_action_retry": "**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um es erneut zu versuchen.",
       "esp_action_switch_on": "**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen) und **lass sie eingeschaltet**, dann klicke auf **Fähigkeiten auslesen**, um die Einrichtung abzuschließen.",
       "esp_status_paired": "Pairing erfolgreich — die Bridge ist jetzt mit deiner Zahnbürste gebondet.",
+      "esp_status_paired_rpa_unsupported": "**Gekoppelt, aber diese Bridge verliert die Zahnbürste nach der ersten Sitzung.** Die Zahnbürste wechselt ihre Bluetooth-Adresse, und der Chip der Bridge folgt einer solchen Adresse nur, wenn die Bridge mit einer zusätzlichen Option gebaut ist. Ergänze `-DCONFIG_BT_BLE_RPA_SUPPORTED=0` unter `esphome:` → `build_flags:` in der YAML der Bridge, baue sie dann neu und flashe sie. Die Kopplung bleibt gültig. [Details]({url})",
       "esp_status_read_error": "Beim Lesen der Zahnbürste ist etwas schiefgelaufen. Sieh im Protokoll nach (Einstellungen → System → Protokolle) und versuche es erneut.",
       "esp_status_read_failed": "Die Zahnbürste konnte über die Bridge nicht gelesen werden. Stelle sicher, dass sie eingeschaltet und die Bridge online ist, und versuche es erneut.",
       "not_a_sonicare": "Mit dem Gerät verbunden, es wurden aber keine Philips-Sonicare-Charakteristiken gefunden. Prüfe, ob die Adresse wirklich zu einer Sonicare-Zahnbürste gehört.",
@@ -299,6 +304,9 @@
       },
       "bridge_build": {
         "name": "ESP-Build"
+      },
+      "bridge_chip": {
+        "name": "ESP-Chip"
       },
       "bridge_boot_time": {
         "name": "ESP letzter Start"

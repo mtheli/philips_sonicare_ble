@@ -183,6 +183,7 @@ These sensors are only available while actively brushing and stream live data fr
 | **ESP Last Boot** | Sensor | Timestamp the ESP bridge last booted — useful for detecting unattended reboots (ESP Bridge only). |
 | **ESP Connected** | Binary | Whether the ESP bridge is reachable and sending heartbeats (ESP Bridge only). |
 | **ESP Build** | Sensor | ESPHome and ESP-IDF version the bridge firmware was built with (ESP Bridge only). |
+| **ESP Chip** | Sensor | Chip of the ESP bridge (e.g. *ESP32-S3*); the `address_resolution` attribute shows whether the bridge can follow brushes with a rotating address — `host` can, `controller` cannot, see [known issue](docs/KNOWN_ISSUES.md#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips) (ESP Bridge only, bridge firmware 1.14.2 or later). |
 | **BLE Connected** | Binary | Whether the GATT link to the toothbrush is currently up. |
 
 ---

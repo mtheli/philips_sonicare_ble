@@ -91,6 +91,7 @@ from .const import (
     CONF_ESP_DEVICE_NAME,
     IDF_BOND_LOSS_VERSIONS,
     IDF_BOND_LOSS_ISSUE_URL,
+    ROTATING_ADDRESS_ISSUE_URL,
     DEFAULT_WARN_COUNTERFEIT,
     COUNTERFEIT_DETECTION_DELAY,
 )
@@ -171,6 +172,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._is_esp_bridge = (
             entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
         )
+        if isinstance(transport, EspBridgeTransport):
+            transport.set_build_info_callback(self._on_bridge_build_changed)
 
         # Protocol selection — Condor (framed, push-based, HX742X+) when
         # its transport service is in the discovered set, Classic (direct
@@ -1298,6 +1301,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # check here so the warning shows even if it never is.
                     if self._is_esp_bridge:
                         self._check_bridge_idf()
+                        self._check_bridge_address_resolution()
 
                     # ESP bridge: wait for BLE device to actually connect
                     if self._is_esp_bridge and not self.transport.is_connected:
@@ -1349,6 +1353,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._update_bridge_device_version()
                         self._check_bridge_version()
                         self._check_bridge_idf()
+                        self._check_bridge_address_resolution()
                         if self.transport.needs_resubscribe:
                             self.transport.acknowledge_resubscribe()
 
@@ -1481,6 +1486,62 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         if bridge_device:
             dev_reg.async_update_device(bridge_device.id, sw_version=version)
+
+    @callback
+    def _on_bridge_build_changed(self) -> None:
+        """Re-run the build-dependent checks and refresh the build sensor.
+
+        The bridge reports its build fields in info events, which after a
+        reflash often arrive only after the live setup already ran its
+        checks — without this the repair issues and the ESP Build sensor
+        would keep the previous firmware's values.
+        """
+        self._check_bridge_idf()
+        self._check_bridge_address_resolution()
+        self.async_update_listeners()
+
+    def _check_bridge_address_resolution(self) -> None:
+        """Create or clear a repair issue if the bridge cannot follow this brush.
+
+        A brush bonded under a resolvable private address (top bits 01) only
+        reconnects if something resolves its next address. Bridges that
+        report ``addr_res=ctrl`` leave that to a controller list which
+        ESPHome does not set up (docs/KNOWN_ISSUES.md).
+        """
+        assert isinstance(self.transport, EspBridgeTransport)
+        addr_res = self.transport.addr_res
+        if not addr_res:
+            return
+        issue_id = f"esp_bridge_rotating_address_{self.address.lower()}"
+        from homeassistant.helpers import issue_registry as ir
+        try:
+            rotating = int(self.address.split(":")[0], 16) & 0xC0 == 0x40
+        except ValueError:
+            rotating = False
+        if addr_res == "ctrl" and rotating:
+            esp_name = self.entry.data.get(CONF_ESP_DEVICE_NAME) or ""
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.ERROR,
+                learn_more_url=ROTATING_ADDRESS_ISSUE_URL,
+                translation_key="esp_bridge_rotating_address",
+                translation_placeholders={
+                    "device": self.entry.data.get("device_name") or self.address,
+                    "esp_device": esp_name,
+                },
+            )
+            _LOGGER.warning(
+                "%s: bonded under a rotating address, but ESP bridge %s "
+                "resolves addresses in the controller — it will not reconnect "
+                "until the bridge is built with -DCONFIG_BT_BLE_RPA_SUPPORTED=0",
+                self.address,
+                esp_name,
+            )
+        else:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
     def _check_bridge_idf(self) -> None:
         """Create or clear a repair issue if the bridge runs an ESP-IDF that loses bonds."""

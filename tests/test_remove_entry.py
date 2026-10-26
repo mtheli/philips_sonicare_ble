@@ -11,6 +11,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 import custom_components.philips_sonicare_ble as integration
 from custom_components.philips_sonicare_ble import dbus_pairing
 from custom_components.philips_sonicare_ble.const import (
@@ -21,6 +23,16 @@ from custom_components.philips_sonicare_ble.const import (
     TRANSPORT_ESP_BRIDGE,
 )
 from custom_components.philips_sonicare_ble.transport import UNPAIR_UNAVAILABLE
+
+
+@pytest.fixture(autouse=True)
+def _no_issue_registry(monkeypatch):
+    """async_remove_entry clears this entry's repair issue; the lightweight
+    hass double here has no issue registry."""
+    from homeassistant.helpers import issue_registry as ir
+
+    monkeypatch.setattr(ir, "async_delete_issue", lambda *a, **kw: None)
+
 
 ADDRESS = "24:E5:AA:BE:9C:1B"
 

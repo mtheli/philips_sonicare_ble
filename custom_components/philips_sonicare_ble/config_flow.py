@@ -43,6 +43,7 @@ from bleak.exc import BleakError
 from bleak_retry_connector import establish_connection as bleak_establish
 
 from .const import (
+    ROTATING_ADDRESS_ISSUE_URL,
     DOMAIN,
     CONF_SERVICES,
     CONF_TRANSPORT_TYPE,
@@ -484,6 +485,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # One-shot marker: wait_pair just bonded the bridge, so the next
         # esp_bridge_status render acknowledges the success.
         self._just_paired: bool = False
+        # Set with _just_paired when the bridge reported a bond under a
+        # rotating address on a chip that cannot follow it (addr_res=ctrl).
+        self._paired_rpa_unsupported: bool = False
         # Set once the user picked an action for a bonded-but-unconfigured
         # slot, so re-entering the health check doesn't re-show the menu.
         self._slot_action_chosen: bool = False
@@ -2469,12 +2473,20 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # the other won the race would resurface a stale notice on the
         # next render of this step.
         just_paired, self._just_paired = self._just_paired, False
+        rpa_unsupported = self._paired_rpa_unsupported
+        self._paired_rpa_unsupported = False
         read_error, self._esp_read_error = self._esp_read_error, ""
 
         text = await _async_text_blocks(self.hass)
         notice = ""
         alert_type = "success"
-        if just_paired:
+        if just_paired and rpa_unsupported:
+            alert_type = "warning"
+            notice = text.get("error.esp_status_paired_rpa_unsupported", "").replace(
+                "{url}", ROTATING_ADDRESS_ISSUE_URL
+            )
+            action = text.get("error.esp_action_switch_on", "")
+        elif just_paired:
             notice = text.get("error.esp_status_paired", "")
             action = text.get("error.esp_action_switch_on", "")
         elif read_error:
@@ -2961,6 +2973,17 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # existing ESP-bridge path.
         self._bridge_info = None
         self._just_paired = True
+        # Bridge firmware >= 1.14.2; older bridges omit both fields.
+        self._paired_rpa_unsupported = (
+            result.get("rpa") == "true" and result.get("addr_res") == "ctrl"
+        )
+        if self._paired_rpa_unsupported:
+            _LOGGER.warning(
+                "Toothbrush %s bonded under a rotating address on %s, which "
+                "resolves addresses in the controller; it will not reconnect "
+                "until the bridge is built with -DCONFIG_BT_BLE_RPA_SUPPORTED=0",
+                identity, self._esp_device_name,
+            )
         self._address = identity
         await self.async_set_unique_id(identity, raise_on_progress=False)
         self._abort_if_already_configured()
