@@ -309,7 +309,7 @@
         "name": "ESP-Chip"
       },
       "bridge_boot_time": {
-        "name": "ESP letzter Start"
+        "name": "ESP-Start"
       },
       "model_number": {
         "name": "Modellnummer"
@@ -383,14 +383,14 @@
         }
       },
       "esp_bridge_alive": {
-        "name": "ESP verbunden",
+        "name": "ESP-Verbindung",
         "state": {
           "off": "Getrennt",
           "on": "Verbunden"
         }
       },
       "ble_connected": {
-        "name": "BLE verbunden",
+        "name": "BLE-Verbindung",
         "state": {
           "off": "Getrennt",
           "on": "Verbunden"
