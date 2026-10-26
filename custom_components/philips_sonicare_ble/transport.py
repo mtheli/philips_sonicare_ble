@@ -600,7 +600,7 @@ class EspBridgeTransport(SonicareTransport):
         self._idf_version: str | None = None
         # Chip and where rotating peer addresses get resolved (firmware
         # >= 1.14.2): "host", "ctrl" or "ctrl_priv". See
-        # docs/KNOWN_ISSUES.md for why "ctrl" loses rotating brushes.
+        # esphome/KNOWN_ISSUES.md for why "ctrl" loses rotating brushes.
         self._chip: str | None = None
         self._addr_res: str | None = None
         # Called when any of the build fields above changes. The info event

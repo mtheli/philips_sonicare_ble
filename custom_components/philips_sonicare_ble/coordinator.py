@@ -1506,7 +1506,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         A brush bonded under a resolvable private address (top bits 01) only
         reconnects if something resolves its next address. Bridges that
         report ``addr_res=ctrl`` leave that to a controller list which
-        ESPHome does not set up (docs/KNOWN_ISSUES.md).
+        ESPHome does not set up (esphome/KNOWN_ISSUES.md).
         """
         assert isinstance(self.transport, EspBridgeTransport)
         addr_res = self.transport.addr_res

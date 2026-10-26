@@ -148,7 +148,7 @@ _warned_patched_build = False
 # repair issue once such a bridge reports in.
 _IDF_BOND_LOSS = (cv.Version(5, 5, 6),)
 _IDF_BOND_LOSS_URL = (
-    "https://github.com/mtheli/philips_sonicare_ble/blob/master/docs/KNOWN_ISSUES.md"
+    "https://github.com/mtheli/philips_sonicare_ble/blob/master/esphome/KNOWN_ISSUES.md"
     "#esp-bridge-loses-pairings-with-esp-idf-556"
 )
 _warned_idf_bond_loss = False
@@ -160,7 +160,7 @@ _warned_idf_bond_loss = False
 # bridge will serve is unknown at build time, so this is a hint, not an error;
 # the firmware logs an error once such a bond actually happens.
 _ROTATING_ADDRESS_URL = (
-    "https://github.com/mtheli/philips_sonicare_ble/blob/master/docs/KNOWN_ISSUES.md"
+    "https://github.com/mtheli/philips_sonicare_ble/blob/master/esphome/KNOWN_ISSUES.md"
     "#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips"
 )
 _HOST_RESOLUTION_FLAG = "-DCONFIG_BT_BLE_RPA_SUPPORTED=0"

@@ -36,7 +36,7 @@ BRIDGE_PIPELINED_READS_VERSION = "1.7.0"
 # ESPHome 2026.10.0. Bridges built with one of these raise a Repairs warning.
 IDF_BOND_LOSS_VERSIONS = ("5.5.6",)
 IDF_BOND_LOSS_ISSUE_URL = (
-    "https://github.com/mtheli/philips_sonicare_ble/blob/master/docs/KNOWN_ISSUES.md"
+    "https://github.com/mtheli/philips_sonicare_ble/blob/master/esphome/KNOWN_ISSUES.md"
     "#esp-bridge-loses-pairings-with-esp-idf-556"
 )
 
@@ -45,7 +45,7 @@ IDF_BOND_LOSS_ISSUE_URL = (
 # session, unless the build moves resolution to the host. Bridge firmware
 # 1.14.2+ reports both facts in pair_complete (rpa, addr_res).
 ROTATING_ADDRESS_ISSUE_URL = (
-    "https://github.com/mtheli/philips_sonicare_ble/blob/master/docs/KNOWN_ISSUES.md"
+    "https://github.com/mtheli/philips_sonicare_ble/blob/master/esphome/KNOWN_ISSUES.md"
     "#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips"
 )
 
