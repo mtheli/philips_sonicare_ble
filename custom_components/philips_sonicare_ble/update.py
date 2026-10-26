@@ -25,7 +25,6 @@ from homeassistant.components.update import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -41,7 +40,6 @@ from .const import (
 )
 from .coordinator import PhilipsSonicareCoordinator
 from .entity import PhilipsConnectionEntity
-from .helpers import async_get_own_device
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,21 +77,24 @@ class SonicareBridgeUpdate(PhilipsConnectionEntity, UpdateEntity):
         self._latest_version: str | None = None
 
     @property
-    def installed_version(self) -> str | None:
-        """Version running on the ESP bridge.
+    def available(self) -> bool:
+        """Only while the bridge is reachable.
 
-        Falls back to the last-known version persisted on the bridge
-        sub-device so a disconnected/sleeping bridge still shows its
-        firmware (and whether an update is pending) instead of "Unknown".
+        An unplugged bridge would otherwise keep comparing its last-known
+        version with the current release and report an update that may
+        have been installed long ago.
         """
-        live = self.coordinator.transport.bridge_version
-        if live:
-            return live
-        dev_reg = dr.async_get(self.hass)
-        device = async_get_own_device(
-            dev_reg, f"{self._device_id}_bridge", self.entry.entry_id
-        )
-        return device.sw_version if device else None
+        return self.coordinator.transport.is_bridge_alive
+
+    @property
+    def installed_version(self) -> str | None:
+        """Version the ESP bridge reported in this session.
+
+        Unknown until the bridge reports in. A last-known version from the
+        device registry would be stale right after a reflash and could
+        prompt an update that is already installed.
+        """
+        return self.coordinator.transport.bridge_version
 
     @property
     def latest_version(self) -> str | None:
