@@ -154,6 +154,47 @@ _IDF_BOND_LOSS_URL = (
 _warned_idf_bond_loss = False
 
 
+# Every chip but the original ESP32 resolves rotating peer addresses in the
+# controller, which ESPHome does not set up (no local privacy). Brushes with a
+# rotating address (Series 7100) then pair but never reconnect. Which brush the
+# bridge will serve is unknown at build time, so this is a hint, not an error;
+# the firmware logs an error once such a bond actually happens.
+_ROTATING_ADDRESS_URL = (
+    "https://github.com/mtheli/philips_sonicare_ble/blob/master/docs/KNOWN_ISSUES.md"
+    "#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips"
+)
+_HOST_RESOLUTION_FLAG = "-DCONFIG_BT_BLE_RPA_SUPPORTED=0"
+_warned_controller_resolution = False
+
+
+def _warn_controller_address_resolution(full):
+    global _warned_controller_resolution
+    if _warned_controller_resolution:
+        return
+    from esphome.components.esp32 import get_esp32_variant
+    from esphome.components.esp32.const import VARIANT_ESP32
+
+    variant = get_esp32_variant()
+    if variant == VARIANT_ESP32:
+        return
+    build_flags = (full.get("esphome") or {}).get("build_flags") or []
+    if _HOST_RESOLUTION_FLAG in [str(f).strip() for f in build_flags]:
+        return
+    _warned_controller_resolution = True
+    _LOGGER.warning(
+        "philips_sonicare: %s resolves rotating Bluetooth addresses in the "
+        "controller. Brushes with a rotating address (e.g. Series 7100) pair "
+        "but do not reconnect on this chip unless the build moves address "
+        "resolution to the host:\n\n"
+        "esphome:\n"
+        "  build_flags:\n"
+        "    - " + _HOST_RESOLUTION_FLAG + "\n\n"
+        "Details: %s",
+        variant,
+        _ROTATING_ADDRESS_URL,
+    )
+
+
 def _warn_idf_bond_loss():
     global _warned_idf_bond_loss
     if _warned_idf_bond_loss:
@@ -229,6 +270,7 @@ def _final_validate(config):
         return config
 
     _warn_idf_bond_loss()
+    _warn_controller_address_resolution(full)
 
     # The crashing code path is only compiled in when Bluedroid's NVS service
     # cache (CONFIG_BT_GATTC_CACHE_NVS_FLASH) is enabled. Two ways to get there:

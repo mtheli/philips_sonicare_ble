@@ -8,6 +8,12 @@
      an Unreleased block placed between two releases would be served as part of
      the release above it. -->
 
+## v1.14.2 — 2026-10-26
+
+- **The bridge reports its chip and how it resolves rotating addresses.** `ble_get_info` now carries `chip` (e.g. `esp32s3`) and `addr_res`: `host` on the original ESP32 or with the build option below, `ctrl` on newer chips, `ctrl_priv` when local privacy is on.
+- **An error is logged right after pairing a brush with a rotating address on a chip that cannot follow it.** On every chip but the original ESP32 the controller resolves rotating addresses, so such a bond does not reconnect. The message names the fix: `-DCONFIG_BT_BLE_RPA_SUPPORTED=0` under `esphome: build_flags` moves resolution to the host, and the pairing stays valid ([known issue](https://github.com/mtheli/philips_sonicare_ble/blob/master/docs/KNOWN_ISSUES.md#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips)). `pair_complete` carries `addr_res` and `rpa`, so Home Assistant can warn during setup.
+- **Builds for chips other than the original ESP32 print a hint** about brushes with a rotating address, with the build option and a link to the known issue. It is skipped when the build already sets the option.
+
 ## v1.14.1 — 2026-10-25
 
 - **Builds with ESP-IDF 5.5.6 print a warning.** ESP-IDF 5.5.6, the default of ESPHome 2026.10.0, forgets a pairing after the first reconnect ([espressif/esp-idf#19286](https://github.com/espressif/esp-idf/issues/19286)). The build still runs, but a framed warning names the YAML pin to 5.5.5 and links the known issue.

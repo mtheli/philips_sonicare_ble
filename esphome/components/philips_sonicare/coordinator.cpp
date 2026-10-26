@@ -4,6 +4,10 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/version.h"
 #include "esp_system.h"
+#include "sdkconfig.h"
+#include "soc/soc_caps.h"
+
+#include <cstring>
 
 namespace espbt = esphome::esp32_ble_tracker;
 
@@ -38,6 +42,39 @@ static espbt::ESPBTUUID parse_uuid(const std::string &uuid_str) {
 // as the source of truth instead of parent_->get_remote_bda() (unreliable
 // during teardown — zero when not connected, stale when disconnect already
 // in flight).
+// Whether Bluedroid hands address resolution to a resolving list in the
+// controller. It does on every chip but the original ESP32 (ESP-IDF 5.1+ hides
+// the Kconfig option there); -DCONFIG_BT_BLE_RPA_SUPPORTED=0 moves it back to
+// the host, as on the original ESP32.
+#if defined(CONFIG_BT_BLE_RPA_SUPPORTED)
+#define SONICARE_CONTROLLER_RPA_LIST CONFIG_BT_BLE_RPA_SUPPORTED
+#elif defined(SOC_BLE_DEVICE_PRIVACY_SUPPORTED) && SOC_BLE_DEVICE_PRIVACY_SUPPORTED
+#define SONICARE_CONTROLLER_RPA_LIST 1
+#else
+#define SONICARE_CONTROLLER_RPA_LIST 0
+#endif
+
+// "host": the host resolves rotating peer addresses and connects to the
+// current one. "ctrl": the controller resolves them, which it only does with
+// local privacy on — a brush bonded under a rotating address will not
+// reconnect (docs/KNOWN_ISSUES.md). "ctrl_priv": local privacy is on.
+static const char *address_resolution_mode() {
+#if SONICARE_CONTROLLER_RPA_LIST
+  esp_bd_addr_t own_addr;
+  uint8_t own_type = BLE_ADDR_TYPE_PUBLIC;
+  if (esp_ble_gap_get_local_used_addr(own_addr, &own_type) == ESP_OK &&
+      own_type != BLE_ADDR_TYPE_PUBLIC)
+    return "ctrl_priv";
+  return "ctrl";
+#else
+  return "host";
+#endif
+}
+
+static const char *const ROTATING_ADDRESS_ISSUE_URL =
+    "https://github.com/mtheli/philips_sonicare_ble/blob/master/docs/KNOWN_ISSUES.md"
+    "#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips";
+
 static bool parse_mac_to_bda(const std::string &mac, uint8_t out[6]) {
   if (mac.length() != 17)
     return false;
@@ -1328,6 +1365,26 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
                  auth.bd_addr[0], auth.bd_addr[1], auth.bd_addr[2],
                  auth.bd_addr[3], auth.bd_addr[4], auth.bd_addr[5],
                  auth.auth_mode);
+        // A bond under a resolvable private address (top bits 01) only
+        // reconnects if something follows the brush's next address.
+        const char *resolution = address_resolution_mode();
+        bool rotating = auth.addr_type == BLE_ADDR_TYPE_RANDOM &&
+                        (auth.bd_addr[0] & 0xC0) == 0x40;
+        if (rotating && strcmp(resolution, "ctrl") == 0) {
+          ESP_LOGE(this->log_tag_.c_str(),
+                   "Bonded under a rotating address on %s, which resolves "
+                   "addresses in the controller — this brush will not "
+                   "reconnect after this session. Add "
+                   "-DCONFIG_BT_BLE_RPA_SUPPORTED=0 under esphome: build_flags "
+                   "and reflash; the pairing stays valid. See %s",
+                   CONFIG_IDF_TARGET, ROTATING_ADDRESS_ISSUE_URL);
+        } else if (this->pair_mode_active_ &&
+                   strcmp(resolution, "ctrl_priv") == 0) {
+          ESP_LOGW(this->log_tag_.c_str(),
+                   "Local privacy is on: the controller only learns this new "
+                   "pairing at the next start, so restart the bridge once "
+                   "before the brush reconnects");
+        }
         this->auth_completed_ = true;
         this->rapid_disconnect_count_ = 0;
         this->auth_fail_count_ = 0;
@@ -1366,6 +1423,8 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
               {"identity_source", this->identity_source_},
               {"bonding", "bonded"},
               {"note", "post_auth_no_probe"},
+              {"addr_res", resolution},
+              {"rpa", rotating ? "true" : "false"},
           });
         }
         this->att_progress_();
@@ -2051,6 +2110,8 @@ std::map<std::string, std::string> SonicareCoordinator::collect_info_data() {
   // ship via ESP-IDF), so surface both for support/diagnostics.
   info["esphome_version"] = ESPHOME_VERSION;
   info["idf_version"] = esp_get_idf_version();
+  info["chip"] = CONFIG_IDF_TARGET;
+  info["addr_res"] = address_resolution_mode();
 
   ESP_LOGI(this->log_tag_.c_str(),
            "Info: v%s uptime=%ss heap=%s subs=%s name=%s model=%s",
