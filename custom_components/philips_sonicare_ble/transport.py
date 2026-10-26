@@ -965,6 +965,9 @@ class EspBridgeTransport(SonicareTransport):
             elapsed = time.monotonic() - self._last_heartbeat
             if elapsed > ESP_HEARTBEAT_TIMEOUT and self._esp_alive:
                 self._esp_alive = False
+                # Without heartbeats nothing reports the BLE link either; the
+                # next heartbeat sets it again from its ble_connected field.
+                self._device_connected = False
                 self._cancel_pending_reads()
                 if self._disconnect_cb:
                     self._disconnect_cb()
