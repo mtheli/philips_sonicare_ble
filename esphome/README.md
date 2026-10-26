@@ -64,6 +64,7 @@ multi-device setups) see [`SETUP.md`](SETUP.md).
 | [`esp32-generic.yaml`](esp32-generic.yaml) | Generic ESP32 dev-board config (`esp32dev`). Use as a starting point for other boards. Same proxy opt-in pattern. |
 | [`bluedroid_null_fix.py`](bluedroid_null_fix.py) | Compile-time patch — see next section. |
 | [`CHANGELOG.md`](CHANGELOG.md) | Version history for the external component. |
+| [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | Known problems with ESPHome, ESP-IDF and particular chips, with workarounds. |
 
 ## Per-slot defaults: `friendly_name` and `area`
 

@@ -403,6 +403,8 @@ full SDP on every wake.
 
 ## Troubleshooting
 
+Known problems with ESPHome, ESP-IDF and particular chips, with workarounds, are listed in the [ESP bridge known issues](KNOWN_ISSUES.md).
+
 ### ESP32 crashes/reboots when connecting
 
 On builds from ESPHome < 2026.7.1 with `bluetooth_proxy:` enabled, the ESP32
