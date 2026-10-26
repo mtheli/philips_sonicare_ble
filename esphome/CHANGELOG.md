@@ -8,6 +8,10 @@
      an Unreleased block placed between two releases would be served as part of
      the release above it. -->
 
+## Unreleased
+
+- **The error after pairing a brush with a rotating address links the new ESP bridge known issues page.** The known issues for the bridge, ESPHome and ESP-IDF moved to `esphome/KNOWN_ISSUES.md` ([section](https://github.com/mtheli/philips_sonicare_ble/blob/master/esphome/KNOWN_ISSUES.md#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips)); the old link still works. No behaviour change; ships with the next firmware version.
+
 ## v1.14.2 — 2026-10-26
 
 - **The bridge reports its chip and how it resolves rotating addresses.** `ble_get_info` now carries `chip` (e.g. `esp32s3`) and `addr_res`: `host` on the original ESP32 or with the build option below, `ctrl` on newer chips, `ctrl_priv` when local privacy is on.

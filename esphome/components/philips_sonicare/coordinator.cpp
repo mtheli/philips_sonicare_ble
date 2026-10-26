@@ -57,7 +57,7 @@ static espbt::ESPBTUUID parse_uuid(const std::string &uuid_str) {
 // "host": the host resolves rotating peer addresses and connects to the
 // current one. "ctrl": the controller resolves them, which it only does with
 // local privacy on — a brush bonded under a rotating address will not
-// reconnect (docs/KNOWN_ISSUES.md). "ctrl_priv": local privacy is on.
+// reconnect (esphome/KNOWN_ISSUES.md). "ctrl_priv": local privacy is on.
 static const char *address_resolution_mode() {
 #if SONICARE_CONTROLLER_RPA_LIST
   esp_bd_addr_t own_addr;
@@ -72,7 +72,7 @@ static const char *address_resolution_mode() {
 }
 
 static const char *const ROTATING_ADDRESS_ISSUE_URL =
-    "https://github.com/mtheli/philips_sonicare_ble/blob/master/docs/KNOWN_ISSUES.md"
+    "https://github.com/mtheli/philips_sonicare_ble/blob/master/esphome/KNOWN_ISSUES.md"
     "#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips";
 
 static bool parse_mac_to_bda(const std::string &mac, uint8_t out[6]) {
