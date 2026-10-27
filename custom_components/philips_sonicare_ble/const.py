@@ -752,6 +752,13 @@ TRANSPORT_ESP_BRIDGE = "esp_bridge"
 
 CONF_ESP_DEVICE_NAME = "esp_device_name"
 CONF_ESP_BRIDGE_ID = "esp_bridge_id"
+# ESP bridge entries keyed by the brush's identity (peer_identity) also keep
+# the address its bond is filed under. Events of a bridge that stops naming
+# the identity (older firmware, lost bond) still match through it.
+CONF_BOND_ADDRESS = "bond_address"
+# Identity reported for an entry still keyed by its bond address. The entry
+# switches to it at its next setup (see __init__._async_migrate_to_identity).
+CONF_PENDING_IDENTITY = "pending_identity"
 
 CONF_DEVICE_NAME = "device_name"
 CONF_AREA = "area"

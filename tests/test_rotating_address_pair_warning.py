@@ -50,6 +50,7 @@ async def _finish(result: dict) -> PhilipsSonicareConfigFlow:
     flow._pair_svc_name = "atom-s3r_ble_pair_mode_sonicare_1"
     flow.async_set_unique_id = AsyncMock()
     flow._abort_if_already_configured = MagicMock()
+    flow._abort_if_esp_entry_configured = MagicMock()
     flow._esp_bridge_health_check = AsyncMock(return_value={"type": "sentinel"})
     await flow.async_step_pair_finish()
     return flow

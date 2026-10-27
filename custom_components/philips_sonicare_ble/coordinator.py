@@ -89,6 +89,8 @@ from .const import (
     DEFAULT_NOTIFY_THROTTLE,
     CONF_WARN_COUNTERFEIT,
     CONF_ESP_DEVICE_NAME,
+    CONF_BOND_ADDRESS,
+    CONF_PENDING_IDENTITY,
     IDF_BOND_LOSS_VERSIONS,
     IDF_BOND_LOSS_ISSUE_URL,
     ROTATING_ADDRESS_ISSUE_URL,
@@ -174,6 +176,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         if isinstance(transport, EspBridgeTransport):
             transport.set_build_info_callback(self._on_bridge_build_changed)
+            transport.set_bond_address(entry.data.get(CONF_BOND_ADDRESS))
+            transport.set_identity_callback(self._on_bridge_identity)
 
         # Protocol selection — Condor (framed, push-based, HX742X+) when
         # its transport service is in the discovered set, Classic (direct
@@ -1500,6 +1504,34 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._check_bridge_address_resolution()
         self.async_update_listeners()
 
+    @callback
+    def _on_bridge_identity(self, identity: str, mac: str) -> None:
+        """Keep the entry's record of the brush's identity and bond current.
+
+        An entry keyed by the identity stores the bond address the bridge
+        uses now, so it still recognises the brush should the bridge stop
+        naming the identity (older firmware, lost bond). An entry still keyed
+        by its bond address remembers the identity and switches to it at its
+        next setup — not now, while its entities are registered.
+        """
+        data = self.entry.data
+        address = (data.get(CONF_ADDRESS) or "").upper()
+        updates: dict[str, str] = {}
+        if identity == address:
+            if mac != address and data.get(CONF_BOND_ADDRESS) != mac:
+                updates[CONF_BOND_ADDRESS] = mac
+        elif mac == address and data.get(CONF_PENDING_IDENTITY) != identity:
+            updates[CONF_PENDING_IDENTITY] = identity
+            _LOGGER.info(
+                "%s: the bridge reports the toothbrush identity %s; the entry "
+                "switches to it at its next start",
+                address, identity,
+            )
+        if updates:
+            self.hass.config_entries.async_update_entry(
+                self.entry, data={**data, **updates}
+            )
+
     def _check_bridge_address_resolution(self) -> None:
         """Create or clear a repair issue if the bridge cannot follow this brush.
 
@@ -1514,8 +1546,11 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         issue_id = f"esp_bridge_rotating_address_{self.address.lower()}"
         from homeassistant.helpers import issue_registry as ir
+        # The bond address, not the entry's: an entry keyed by the brush's
+        # identity never looks rotating.
+        bond = self.transport.bond_address or self.address
         try:
-            rotating = int(self.address.split(":")[0], 16) & 0xC0 == 0x40
+            rotating = int(bond.split(":")[0], 16) & 0xC0 == 0x40
         except ValueError:
             rotating = False
         if addr_res == "ctrl" and rotating:

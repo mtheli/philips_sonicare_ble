@@ -120,6 +120,7 @@ async def test_finish_success_runs_health_check() -> None:
     )
     flow.async_set_unique_id = AsyncMock()
     flow._abort_if_already_configured = MagicMock()
+    flow._abort_if_esp_entry_configured = MagicMock()
     flow._esp_bridge_health_check = AsyncMock(return_value={"type": "sentinel"})
     unsub = flow._pair_unsub
 

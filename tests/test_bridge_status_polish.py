@@ -169,6 +169,7 @@ async def test_read_finish_success_shows_capabilities(monkeypatch) -> None:
     flow._esp_caps_result = {"ok": True, "caps": {"model": "HX9911/09"}}
     flow.async_set_unique_id = AsyncMock()
     flow._abort_if_already_configured = MagicMock()
+    flow._abort_if_esp_entry_configured = MagicMock()
     flow.async_step_show_capabilities = AsyncMock(return_value={"type": "sentinel"})
 
     result = await flow.async_step_esp_read_finish()

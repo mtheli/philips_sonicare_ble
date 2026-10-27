@@ -29,7 +29,12 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from packaging.version import Version
 
-from .const import BRIDGE_PIPELINED_READS_VERSION, CHAR_SERVICE_MAP
+from .const import (
+    BRIDGE_FIELD_IDENTITY_ADDRESS,
+    BRIDGE_FIELD_PEER_IDENTITY,
+    BRIDGE_PIPELINED_READS_VERSION,
+    CHAR_SERVICE_MAP,
+)
 from .exceptions import TransportError
 
 _LOGGER = logging.getLogger(__name__)
@@ -244,6 +249,30 @@ def slot_changed_at(
     """When this slot last changed, or 0.0 if we never touched it."""
     changed = hass.data.get(DATA_CHANGED_SLOTS) or {}
     return changed.get((esp_device_name.lower(), bridge_id.lower()), 0.0)
+
+
+def _valid_address(raw: str | None) -> str:
+    address = (raw or "").upper()
+    return "" if address == "00:00:00:00:00:00" else address
+
+
+def bridge_bond_address(data: Mapping[str, Any]) -> str:
+    """The address a bridge slot's bond is filed under, or ""."""
+    return _valid_address(data.get(BRIDGE_FIELD_IDENTITY_ADDRESS)) or (
+        _valid_address(data.get("mac"))
+    )
+
+
+def bridge_identity(data: Mapping[str, Any]) -> str:
+    """The identity of a bridge slot's brush, or "".
+
+    peer_identity on bridges from firmware 1.15.0; older bridges only know
+    the bond address, which is the identity for a brush with a fixed
+    address and all they can offer for one with a rotating address.
+    """
+    return _valid_address(data.get(BRIDGE_FIELD_PEER_IDENTITY)) or (
+        bridge_bond_address(data)
+    )
 
 
 async def async_unpair_bridge_slot(
@@ -593,6 +622,11 @@ class EspBridgeTransport(SonicareTransport):
         self._last_read_errors: dict[str, str] = {}
         self._notify_callbacks: dict[str, Callable[[str, bytes], None]] = {}
         self._detected_mac: str | None = address if ":" in address else None
+        # For an entry keyed by the brush's identity: the address the bridge
+        # files its bond under, kept up to date from events matched through
+        # peer_identity (see _is_other_brush).
+        self._bond_address: str | None = None
+        self._identity_cb: Callable[[str, str], None] | None = None
         self._bridge_version: str | None = None
         # Build environment reported by the bridge (info events, firmware
         # >= 1.10.0): which ESPHome/ESP-IDF the running firmware was built
@@ -689,23 +723,56 @@ class EspBridgeTransport(SonicareTransport):
     def detected_mac(self) -> str | None:
         return self._detected_mac
 
+    @property
+    def bond_address(self) -> str | None:
+        """The address the bridge files this brush's bond under."""
+        return self._bond_address or self._detected_mac
+
+    def set_bond_address(self, address: str | None) -> None:
+        self._bond_address = address.upper() if address else None
+
+    def set_identity_callback(self, cb: Callable[[str, str], None]) -> None:
+        """Register a callback for (peer_identity, mac) of our brush's status events."""
+        self._identity_cb = cb
+
     def _is_other_brush(self, data: Mapping[str, Any]) -> bool:
         """True when a bridge event names a brush other than ours.
 
-        An event matches by ``mac`` or by ``peer_identity``. Bridges from
-        firmware 1.15.0 add the latter when the brush's identity differs from
-        the address its bond is filed under, which for a brush with a
-        rotating address changes with every new pairing. Events without a
-        mac, or before we know ours, pass as before.
+        An event matches by ``mac`` — our address or our bond address — or by
+        ``peer_identity``. Bridges from firmware 1.15.0 add the latter when
+        the brush's identity differs from the address its bond is filed
+        under, which for a brush with a rotating address changes with every
+        new pairing. Events without a mac, or before we know ours, pass as
+        before.
         """
         mac = data.get("mac", "")
         if not mac or not self._detected_mac:
             return False
         ours = self._detected_mac.upper()
-        return (
-            mac.upper() != ours
-            and data.get("peer_identity", "").upper() != ours
-        )
+        mac = mac.upper()
+        if mac == ours or (self._bond_address and mac == self._bond_address):
+            return False
+        return data.get("peer_identity", "").upper() != ours
+
+    def _note_identity(self, data: Mapping[str, Any]) -> None:
+        """Follow our brush's bond address and report its identity.
+
+        Called for status events that passed _is_other_brush. A new bond
+        address shows up when the brush was paired again; the identity lets
+        an entry still keyed by its bond address switch over.
+        """
+        identity = (data.get("peer_identity") or "").upper()
+        mac = (data.get("mac") or "").upper()
+        if not identity or not mac or mac == "00:00:00:00:00:00":
+            return
+        if (
+            self._detected_mac
+            and identity == self._detected_mac.upper()
+            and mac != identity
+        ):
+            self._bond_address = mac
+        if self._identity_cb is not None:
+            self._identity_cb(identity, mac)
 
     @property
     def bridge_version(self) -> str | None:
@@ -853,6 +920,7 @@ class EspBridgeTransport(SonicareTransport):
             mac = event.data.get("mac", "")
             if self._is_other_brush(event.data):
                 return
+            self._note_identity(event.data)
 
             status = event.data.get("status", "")
             version = event.data.get("version")

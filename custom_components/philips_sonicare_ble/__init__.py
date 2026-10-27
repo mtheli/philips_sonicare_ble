@@ -25,6 +25,8 @@ from .const import (
     TRANSPORT_ESP_BRIDGE,
     CONF_ESP_DEVICE_NAME,
     CONF_ESP_BRIDGE_ID,
+    CONF_BOND_ADDRESS,
+    CONF_PENDING_IDENTITY,
     CONF_PIPELINED_READS,
     DEFAULT_PIPELINED_READS,
     CHAR_SERVICE_MAP,
@@ -257,8 +259,110 @@ def _async_migrate_drop_condor_classic_sensors(
             )
 
 
+@callback
+def _async_migrate_to_identity(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Re-key an ESP bridge entry from its bond address to the brush's identity.
+
+    The coordinator records the identity as pending once a bridge (firmware
+    1.15.0+) reports one that differs from the entry's address, which is the
+    bond address of a brush with a rotating address. Here, before any
+    platform registers its entities, the entities, devices and the entry move
+    to the identity: entity_ids stay, so history, names and areas carry over.
+    Everything is checked first; on any collision nothing changes.
+    """
+    identity = entry.data.get(CONF_PENDING_IDENTITY)
+    old = entry.data.get(CONF_ADDRESS)
+    if not identity:
+        return
+    data = dict(entry.data)
+    data.pop(CONF_PENDING_IDENTITY)
+    if not old or identity.upper() == old.upper():
+        hass.config_entries.async_update_entry(entry, data=data)
+        return
+
+    def _rekey(value: str) -> str | None:
+        if value == old:
+            return identity
+        if value.startswith(f"{old}_"):
+            return identity + value[len(old):]
+        return None
+
+    def _give_up(reason: str) -> None:
+        # Drop the pending identity, or every setup would try again; the
+        # entry keeps working on its bond address.
+        _LOGGER.warning(
+            "%s: not switching to the toothbrush identity %s: %s",
+            old, identity, reason,
+        )
+        hass.config_entries.async_update_entry(entry, data=data)
+
+    for other in hass.config_entries.async_entries(DOMAIN):
+        if other.entry_id != entry.entry_id and other.unique_id == identity:
+            _give_up(f"entry '{other.title}' already uses it")
+            return
+
+    ent_reg = er.async_get(hass)
+    entity_moves: list[tuple[str, str]] = []
+    for ent in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        new_uid = _rekey(ent.unique_id)
+        if new_uid is None:
+            continue
+        if ent_reg.async_get_entity_id(ent.domain, DOMAIN, new_uid):
+            _give_up(f"an entity with unique_id {new_uid} exists")
+            return
+        entity_moves.append((ent.entity_id, new_uid))
+
+    dev_reg = dr.async_get(hass)
+    device_moves: list[tuple[str, set, set]] = []
+    for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
+        identifiers = {
+            (domain, _rekey(value) or value) if domain == DOMAIN else (domain, value)
+            for domain, value in device.identifiers
+        }
+        connections = {
+            (kind, identity)
+            if kind == dr.CONNECTION_BLUETOOTH and value.upper() == old.upper()
+            else (kind, value)
+            for kind, value in device.connections
+        }
+        if identifiers == device.identifiers and connections == device.connections:
+            continue
+        for identifier in identifiers - device.identifiers:
+            taken = async_get_own_device(dev_reg, identifier[1], entry.entry_id)
+            if taken is not None and taken.id != device.id:
+                _give_up(f"a device with identifier {identifier[1]} exists")
+                return
+        device_moves.append((device.id, identifiers, connections))
+
+    for entity_id, new_uid in entity_moves:
+        ent_reg.async_update_entity(entity_id, new_unique_id=new_uid)
+    for device_id, identifiers, connections in device_moves:
+        dev_reg.async_update_device(
+            device_id, new_identifiers=identifiers, new_connections=connections
+        )
+
+    from homeassistant.helpers import issue_registry as ir
+
+    # Both repair issues are keyed by the address; their checks re-create
+    # them under the identity if they still apply.
+    ir.async_delete_issue(
+        hass, DOMAIN, f"esp_bridge_rotating_address_{old.lower()}"
+    )
+    ir.async_delete_issue(hass, DOMAIN, f"brushhead_counterfeit_{old}")
+
+    data[CONF_ADDRESS] = identity
+    data.setdefault(CONF_BOND_ADDRESS, old)
+    hass.config_entries.async_update_entry(entry, unique_id=identity, data=data)
+    _LOGGER.info(
+        "%s: switched to the toothbrush identity %s (%d entities, %d devices)",
+        old, identity, len(entity_moves), len(device_moves),
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Philips Sonicare from a config entry."""
+    if entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE:
+        _async_migrate_to_identity(hass, entry)
     address = entry.data.get("address", "")
     transport_type = entry.data.get(CONF_TRANSPORT_TYPE)
 

@@ -37,10 +37,12 @@ def calls(monkeypatch):
     return seen
 
 
-def _coordinator(address, addr_res, idf="v5.5.5"):
+def _coordinator(address, addr_res, idf="v5.5.5", bond=None):
     transport = EspBridgeTransport.__new__(EspBridgeTransport)
     transport._idf_version = idf
     transport._addr_res = addr_res
+    transport._detected_mac = address
+    transport._bond_address = bond
     coord = PhilipsSonicareCoordinator.__new__(PhilipsSonicareCoordinator)
     coord.hass = None
     coord.transport = transport
@@ -152,3 +154,14 @@ def test_chip_sensor_unknown_on_old_firmware() -> None:
     sensor = _chip_sensor()
     assert sensor.native_value is None
     assert sensor.extra_state_attributes is None
+
+
+def test_identity_entry_judges_by_bond_address(calls) -> None:
+    """An entry keyed by the identity looks static; its bond address does not."""
+    coord = _coordinator(
+        "24:E5:AA:92:32:F9", "ctrl", bond="76:99:0A:0D:D3:32"
+    )
+    coord._check_bridge_address_resolution()
+    assert [issue_id for issue_id, _ in calls["create"]] == [
+        "esp_bridge_rotating_address_24:e5:aa:92:32:f9"
+    ]

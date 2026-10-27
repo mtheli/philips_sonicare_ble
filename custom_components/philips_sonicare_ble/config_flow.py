@@ -51,6 +51,8 @@ from .const import (
     CONF_TRANSPORT_TYPE,
     CONF_ESP_DEVICE_NAME,
     CONF_ESP_BRIDGE_ID,
+    CONF_BOND_ADDRESS,
+    CONF_PENDING_IDENTITY,
     CONF_DEVICE_NAME,
     CONF_AREA,
     CONF_NOTIFY_THROTTLE,
@@ -89,6 +91,8 @@ from .helpers import esphome_service_id, is_bond_gated_profile
 from .transport import (
     EspBridgeTransport,
     async_unpair_bridge_slot,
+    bridge_bond_address,
+    bridge_identity,
     describe_available_paths,
     describe_connection_path,
     is_local_bluez_connection,
@@ -472,6 +476,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._transport_type: str = TRANSPORT_BLEAK
         self._esp_device_name: str | None = None
         self._esp_bridge_id: str = ""
+        # Address the bridge files the bond under; differs from _address
+        # (the identity) for a brush with a rotating address.
+        self._bond_address: str = ""
         self._esp_bridge_ids: list[str] = []
         self._bridge_info: dict[str, str] | None = None
         self._probed_bridges: dict[
@@ -603,6 +610,81 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     reason,
                     description_placeholders={"transport": transport_label},
                 )
+
+    def _abort_if_esp_entry_configured(self, just_paired: bool = False) -> None:
+        """Abort for a brush that already has an entry.
+
+        ESP bridge entries are keyed by the brush's identity, so pairing it
+        again finds its entry even under a new bond address — also an entry
+        set up before bridge firmware 1.15.0, which only knows the identity
+        as pending. On the same slot the entry keeps working as it is. A
+        brush is not set up on a second slot: its entry stays where it is,
+        and a pairing just made on this slot is undone so the two slots don't
+        compete for the brush.
+        """
+        identity = self.unique_id
+        for entry in self._async_current_entries():
+            if (
+                entry.data.get(CONF_TRANSPORT_TYPE) != TRANSPORT_ESP_BRIDGE
+                or entry.disabled_by is not None
+                or identity
+                not in (entry.unique_id, entry.data.get(CONF_PENDING_IDENTITY))
+            ):
+                continue
+            old_esp = entry.data.get(CONF_ESP_DEVICE_NAME, "")
+            old_slot = entry.data.get(CONF_ESP_BRIDGE_ID, "")
+            if (old_esp.lower(), old_slot.lower()) == (
+                self._esp_device_name.lower(), (self._esp_bridge_id or "").lower()
+            ):
+                if self._bond_address:
+                    self.hass.config_entries.async_update_entry(
+                        entry,
+                        data={**entry.data, CONF_BOND_ADDRESS: self._bond_address},
+                    )
+                if entry.unique_id != identity:
+                    # Still keyed by its old bond address, which the bridge no
+                    # longer uses: the reload switches it to the identity.
+                    self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                raise AbortFlow(
+                    "esp_bridge_repaired",
+                    description_placeholders={"target": self._target_label()},
+                )
+            _LOGGER.warning(
+                "Toothbrush %s is already set up on %s (slot %s); not setting "
+                "it up on %s (slot %s)%s",
+                identity, old_esp, old_slot or "default",
+                self._esp_device_name, self._esp_bridge_id or "default",
+                " — undoing the pairing" if just_paired else "",
+            )
+            if just_paired:
+                self.hass.async_create_task(
+                    self._async_undo_pairing(
+                        self._esp_device_name, self._esp_bridge_id or ""
+                    ),
+                    "philips_sonicare_ble undo pairing",
+                )
+            raise AbortFlow(
+                "esp_bridge_elsewhere_undone" if just_paired
+                else "esp_bridge_elsewhere",
+                description_placeholders={
+                    "old_target": f"{old_esp} / {old_slot or 'default'}",
+                    "target": self._target_label(),
+                },
+            )
+        self._abort_if_already_configured()
+
+    def _target_label(self) -> str:
+        return f"{self._esp_device_name} / {self._esp_bridge_id or 'default'}"
+
+    async def _async_undo_pairing(self, esp: str, slot: str) -> None:
+        """Unpair a slot that was just paired with an already set-up brush."""
+        result = await async_unpair_bridge_slot(self.hass, esp, slot)
+        if result != UNPAIR_OK:
+            _LOGGER.warning(
+                "Could not undo the pairing on %s (slot %s): %s — reset the "
+                "slot from the integration's setup dialog",
+                esp, slot or "default", result,
+            )
 
     # ------------------------------------------------------------------
     # Capabilities fetch (direct BLE)
@@ -1602,13 +1684,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     "esphome", svc_name, {}, blocking=True
                 )
                 info = await asyncio.wait_for(info_future, timeout=3.0)
-                # identity_address is the slot's bond address (deprecated
-                # name, see const.py) and equals mac once paired; an
-                # unpaired slot reports it empty and mac as 00:00:….
-                identity = info.get(BRIDGE_FIELD_IDENTITY_ADDRESS, "").upper()
-                mac = info.get("mac", "").upper()
-                known = {m for m in (identity, mac)
-                         if m and m != "00:00:00:00:00:00"}
+                # Entries are keyed by the brush's identity or, set up
+                # before bridge firmware 1.15.0, by its bond address.
+                known = {
+                    m for m in (bridge_identity(info), bridge_bond_address(info))
+                    if m
+                }
                 if not known or not known.intersection(configured_macs):
                     unconfigured = True
                     break
@@ -2215,9 +2296,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 has_available = True
                 continue
 
-            mac = info.get("mac", "")
-            has_mac = bool(mac) and mac != "00:00:00:00:00:00"
-            is_configured = has_mac and mac.upper() in configured_macs
+            # Keyed by identity, or by bond address for entries from
+            # before bridge firmware 1.15.0.
+            is_configured = bool(
+                {bridge_identity(info), bridge_bond_address(info)} - {""}
+                & configured_macs
+            )
             label = self._format_bridge_label(did, info)
 
             if is_configured:
@@ -2574,24 +2658,22 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         capabilities = result["caps"]
 
-        # The slot's bond address (identity_address, deprecated name — see
-        # const.py) is set for every paired slot; the probe's sonicare_mac
-        # only backs it up for bridges that leave it empty.
-        def _valid_addr(raw: str) -> str:
-            cleaned = (raw or "").upper()
-            return cleaned if cleaned and cleaned != "00:00:00:00:00:00" else ""
-
-        identity = _valid_addr(
-            (self._bridge_info or {}).get(BRIDGE_FIELD_IDENTITY_ADDRESS, "")
-        )
-        sonicare_mac = capabilities.get("sonicare_mac", "")
-        canonical_addr = identity or _valid_addr(sonicare_mac)
+        # The entry is keyed by the brush's identity, which stays the same
+        # across new pairings (bridge firmware 1.15.0; older bridges report
+        # the bond address). The probe's sonicare_mac only backs it up for
+        # bridges that report neither.
+        info = self._bridge_info or {}
+        sonicare_mac = (capabilities.get("sonicare_mac") or "").upper()
+        if sonicare_mac == "00:00:00:00:00:00":
+            sonicare_mac = ""
+        canonical_addr = bridge_identity(info) or sonicare_mac
+        self._bond_address = bridge_bond_address(info) or sonicare_mac
 
         if canonical_addr:
             await self.async_set_unique_id(canonical_addr, raise_on_progress=False)
         else:
             await self.async_set_unique_id(f"esp_{self._esp_device_name}")
-        self._abort_if_already_configured()
+        self._abort_if_esp_entry_configured()
 
         # Add pairing status from bridge info
         paired_str = (self._bridge_info or {}).get("paired", "")
@@ -2968,7 +3050,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # keeps the generic wording.
         if error_key == "pair_timeout" and result.get("scanner_passive") == "true":
             error_key = "pair_timeout_passive_scanner"
-        identity = result.get(BRIDGE_FIELD_IDENTITY_ADDRESS, "").upper()
+        identity = bridge_identity(result)
         if not error_key and not identity:
             _LOGGER.error("pair_complete received without identity_address")
             error_key = "unknown"
@@ -3008,8 +3090,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 identity, self._esp_device_name,
             )
         self._address = identity
+        self._bond_address = bridge_bond_address(result)
         await self.async_set_unique_id(identity, raise_on_progress=False)
-        self._abort_if_already_configured()
+        self._abort_if_esp_entry_configured(just_paired=True)
         return await self._esp_bridge_health_check()
 
     async def async_step_reset_bridge(
@@ -3166,6 +3249,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     entry_data[CONF_ESP_BRIDGE_ID] = self._esp_bridge_id
                 if self._address:
                     entry_data[CONF_ADDRESS] = self._address
+                    if self._bond_address and self._bond_address != self._address:
+                        entry_data[CONF_BOND_ADDRESS] = self._bond_address
             else:
                 entry_data[CONF_ADDRESS] = self._address
                 entry_data[CONF_TRANSPORT_TYPE] = TRANSPORT_BLEAK

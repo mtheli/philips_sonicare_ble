@@ -17,9 +17,13 @@ NEW_BOND = "50:DC:06:58:51:F8"
 IDENTITY = "24:E5:AA:92:32:F9"
 
 
-def _transport(address: str | None) -> EspBridgeTransport:
+def _transport(
+    address: str | None, bond: str | None = None
+) -> EspBridgeTransport:
     transport = EspBridgeTransport.__new__(EspBridgeTransport)
     transport._detected_mac = address
+    transport._bond_address = bond
+    transport._identity_cb = None
     return transport
 
 
