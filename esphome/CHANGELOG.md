@@ -10,7 +10,7 @@
 
 ## Unreleased
 
-## v1.15.0 — unreleased
+## v1.15.0 — 2026-10-27
 
 - **The bridge reports the identity a brush handed over during pairing.** `ble_get_info` and `pair_complete` carry a new field `peer_identity`. A bond is filed under the address the brush used while pairing; for a brush with a rotating address that is one of its private addresses and changes with every new pairing, while `peer_identity` stays the same. It comes from the bond the bridge already stores, so existing pairings report it too. Brushes with a fixed address, and brushes without a bond, report the same value as `identity_address`. `mac` and `identity_address` keep their meaning.
 - **Every event about the brush names its identity when it differs from `mac`.** Data, status (heartbeat and `ready` included) and service-list events add `peer_identity` for a brush with a rotating address, so HA can recognise it after a new pairing without asking the bridge first. Brushes with a fixed address don't get the field; a missing field means the identity is `mac`.
