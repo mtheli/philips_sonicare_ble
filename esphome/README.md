@@ -253,3 +253,12 @@ in `custom_components/philips_sonicare_ble/const.py`). On version mismatch
 Home Assistant shows a Repairs notification asking you to reflash. Always
 flash a matching pair — the ref in your YAML's `external_components:`
 should point at the same tag/commit as the integration version.
+
+## Brush identity (integration 0.31.0 and later)
+
+From bridge firmware 1.15.0 the bridge reports the identity a brush handed over during pairing, also for pairings made with older firmware. Integration 0.31.0 keys the entries of brushes with a rotating address by that identity instead of the address the bond is filed under, so the entry keeps working when the brush is paired again under a new address.
+
+- **Existing entries switch on their own.** The integration stores the identity when the brush sends its first event after the update and switches the entry at its next start. So wake the brush once, then restart Home Assistant or reload the entry. Entity IDs and history stay.
+- **Pairing the same brush again** on its slot keeps the entry. On another slot or another ESP the setup stops and undoes the new pairing, because the brush already has an entry.
+- **Bridge firmware older than 1.15.0** keeps working with a switched entry through the stored bond address.
+- **Going back to an integration older than 0.31.0** after the switch leaves the entry without data. Remove the entry and set the brush up again.

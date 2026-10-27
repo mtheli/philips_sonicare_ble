@@ -46,12 +46,16 @@ for direct Bluetooth access from the HA host.
 | Board | Tested | Status |
 | :--- | :---: | :--- |
 | [M5Stack Atom Lite](https://docs.m5stack.com/en/core/ATOM%20Lite) (ESP32-PICO) | :white_check_mark: | Maintainer (up to 3 brushes); Community ([#13](https://github.com/mtheli/philips_sonicare_ble/issues/13), [#27](https://github.com/mtheli/philips_sonicare_ble/issues/27) — HX742X with rotating address) |
-| [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R) (ESP32-S3) | :white_check_mark: | Maintainer |
+| [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R) (ESP32-S3) | :white_check_mark: | Maintainer — HX742X with rotating address, with the build option¹ |
 | [M5Stack AtomS3](https://docs.m5stack.com/en/core/AtomS3) (ESP32-S3) | :white_check_mark: | Community ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)) |
-| Generic ESP32 dev board (ESP32-WROOM/PICO) | :white_check_mark: | Community — two brushes on one bridge ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)); DOIT ESP32 DevKit v1, `esp32doit-devkit-v1` ([#24](https://github.com/mtheli/philips_sonicare_ble/issues/24)); `esp32dev` ([#1](https://github.com/mtheli/philips_sonicare_ble/issues/1)) |
+| [LilyGO T-Dongle-S3](https://lilygo.cc/products/t-dongle-s3) (ESP32-S3) | :white_check_mark: | Community — HX742X with rotating address, with the build option¹ ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
+| SB Components Micro-S3 (ESP32-S3) | :white_check_mark: | Community — two HX742X with rotating address on one bridge, with the build option¹ ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
+| Generic ESP32 dev board (ESP32-WROOM/PICO) | :white_check_mark: | Community — two brushes on one bridge ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)); DOIT ESP32 DevKit v1, `esp32doit-devkit-v1` ([#24](https://github.com/mtheli/philips_sonicare_ble/issues/24)); `esp32dev` ([#1](https://github.com/mtheli/philips_sonicare_ble/issues/1)); AZDelivery ESP32 NodeMCU ([#32](https://github.com/mtheli/philips_sonicare_ble/issues/32)); ESP32-WROOM-32 and a classic dev board, both with brushes that rotate their address ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
 | Heemol ESP32 Mini (classic ESP32, mini form factor) | :white_check_mark: | Community ([#20](https://github.com/mtheli/philips_sonicare_ble/issues/20)) |
-| ESP32-S3 DevKitC-1 | :grey_question: | Should work — same SoC as the confirmed AtomS3/AtomS3R |
-| ESP32-C3 / ESP32-C6 | :grey_question: | Untested — BLE stack should be compatible |
+| ESP32-S3 DevKitC-1 | :grey_question: | Should work — same SoC as the confirmed S3 boards. Untested with the build option¹ — on an ESP32-S3-N16R8 two HX6600 paired but did not reconnect without it ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
+| ESP32-C3 / ESP32-C6 | :grey_question: | Untested with the build option¹ — on an ESP32-C3 SuperMini a HX742X paired but did not reconnect without it ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
+
+¹ `-DCONFIG_BT_BLE_RPA_SUPPORTED=0` under `esphome: build_flags`. Every chip but the original ESP32 needs it for brushes with a rotating address (Series 7100, Sonicare For Kids HX6600), see the [known issue](KNOWN_ISSUES.md#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips). Brushes with a fixed address work without it.
 
 ## Prerequisites
 

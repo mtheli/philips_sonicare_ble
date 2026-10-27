@@ -68,7 +68,7 @@ See [Configuration](#configuration) for setup instructions.
 | **DiamondClean Prestige** | | | |
 | [HX999X](https://www.usa.philips.com/c-p/HX9990_11/sonicare-9900-prestige-power-toothbrush-with-senseiq) | :white_check_mark: | :white_check_mark: | Maintainer, Community ([forum](https://community.home-assistant.io/t/philips-sonicare-ble-toothbrush-integration-with-30-sensors/999515/5)) |
 | **Series 7100** | | | |
-| [HX742X](https://www.usa.philips.com/c-p/HX7423_43/sonicare-7100) | :white_check_mark: | :white_check_mark: | Maintainer, Community ([#4](https://github.com/mtheli/philips_sonicare_ble/issues/4), [#13](https://github.com/mtheli/philips_sonicare_ble/issues/13), [#27](https://github.com/mtheli/philips_sonicare_ble/issues/27)) |
+| [HX742X](https://www.usa.philips.com/c-p/HX7423_43/sonicare-7100) | :white_check_mark: | :white_check_mark: | Maintainer, Community ([#4](https://github.com/mtheli/philips_sonicare_ble/issues/4), [#13](https://github.com/mtheli/philips_sonicare_ble/issues/13), [#27](https://github.com/mtheli/philips_sonicare_ble/issues/27), [#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
 
 Any BLE-enabled Philips Sonicare toothbrush using either the standard protocol or the newer Condor protocol (Series 7100 HX742X, Sonicare For Kids HX6600) should work (Sonicare For Kids, ExpertClean, DiamondClean Smart, DiamondClean 9000, DiamondClean Prestige, Series 7100, and more). The integration auto-discovers compatible devices via BLE and selects the right protocol automatically. If you have a different model — happy to hear your test results!
 
@@ -299,6 +299,9 @@ For the complete setup guide, see **[ESP32 Bridge Setup Guide](esphome/SETUP.md)
 
 > [!TIP]
 > Each ESP bridge slot accepts optional `friendly_name:` and `area:` fields that pre-fill the HA setup form and auto-assign the brush to an HA area on first install — convenient for multi-brush setups. See [Per-slot defaults](esphome/README.md#per-slot-defaults-friendly_name-and-area).
+
+> [!NOTE]
+> From integration 0.31.0 with bridge firmware 1.15.0, entries of brushes with a rotating address (Series 7100) are keyed by the brush's identity, so pairing the brush again keeps its entry. Existing entries switch after the brush has sent one event and Home Assistant restarts or the entry reloads. See [Brush identity](esphome/README.md#brush-identity-integration-0310-and-later).
 
 ### Option C: Bluetooth Proxy
 

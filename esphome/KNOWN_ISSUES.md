@@ -58,7 +58,7 @@ A standard ESPHome `bluetooth_proxy` built with ESPHome 2026.10.0 has the same b
 
 **Status:** Behaviour of ESP-IDF on every chip but the original ESP32. Workaround: one build option in the bridge's YAML, see below.
 
-Brushes that rotate their Bluetooth address (a resolvable private address), confirmed on the Series 7100 (HX742X), pair fine through a bridge on an ESP32-S3, but stop reconnecting afterwards. Every ESP32 variant except the original ESP32 is built the same way (ESP32-S3, ESP32-C3, ESP32-C6 and the other C and H chips), so the same applies there.
+Brushes that rotate their Bluetooth address (a resolvable private address), confirmed on the Series 7100 (HX742X) and the Sonicare For Kids HX6600, pair fine through a bridge on an ESP32-S3, but stop reconnecting afterwards. Every ESP32 variant except the original ESP32 is built the same way (ESP32-S3, ESP32-C3, ESP32-C6 and the other C and H chips), so the same applies there.
 
 ### Symptoms
 
@@ -85,6 +85,10 @@ esphome:
 Then rebuild and flash the bridge. An existing pairing stays valid, and new pairings work without a restart. Other devices on the same bridge are not affected, because the bridge keeps its own address. On ESPHome 2026.10.0, also pin ESP-IDF 5.5.5, see [above](#esp-bridge-loses-pairings-with-esp-idf-556).
 
 A bridge on a classic ESP32 (ESP32-WROOM, ESP32-PICO, M5Stack Atom Lite and similar) needs no change.
+
+### Pairing the brush again
+
+Each new pairing files the bond under a different address of the same brush. Up to integration 0.30.x the Home Assistant entry was keyed by that address, so after a new pairing it ignored the events of its own slot and showed no data. From integration 0.31.0 with bridge firmware 1.15.0 the entry is keyed by the identity the brush hands over during pairing, which stays the same, so a new pairing on the same slot keeps the entry working. See [Brush identity](README.md#brush-identity-integration-0310-and-later) for how existing entries switch.
 
 ---
 
