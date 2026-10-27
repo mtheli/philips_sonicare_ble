@@ -75,7 +75,7 @@ class SonicareCoordinator {
   // Mode + bound MAC are reported in collect_info_data / heartbeat so HA can
   // detect whether this Bridge supports the new pair-mode flow.
   void set_mode(const std::string &mode) { this->mode_ = mode; }
-  void set_identity_address(const std::string &mac) { this->identity_address_ = mac; }
+  void set_bond_address(const std::string &mac) { this->bond_address_ = mac; }
   // Source of the bound identity — "yaml" (Mode A or Mode B with YAML MAC),
   // "nvs" (Mode B auto-discovery, persisted), or "none" (Mode B unpaired).
   // HA's reconfigure flow uses this to detect whether the bridge can be
@@ -147,6 +147,10 @@ class SonicareCoordinator {
                              const std::string &hex_data);
   void list_services();  // enumerate GATT services + characteristics → HA event
   std::map<std::string, std::string> collect_info_data();
+  // Adds peer_identity to an event about this slot's brush when it differs
+  // from the event's mac. Brushes with a fixed address leave it out, so HA
+  // reads a missing field as "same as mac". Fields already set stay.
+  void add_peer_identity(std::map<std::string, std::string> &data) const;
 
   // ── State queries (from Bridge) ───────────────────────────────────────────
   bool is_connected() const { return connected_; }
@@ -174,11 +178,19 @@ class SonicareCoordinator {
   std::function<void()> save_identity_cb_;
 
   // Mode B exposes its uuid_scan/identity state via these strings; Mode A
-  // sets mode_=external and identity_address_=YAML-MAC at setup. collect_info_data
+  // sets mode_=external and bond_address_=YAML-MAC at setup. collect_info_data
   // forwards them so HA can decide pair_capable.
   std::string mode_;       // MODE_EXTERNAL or MODE_STANDALONE
-  std::string identity_address_;  // empty if no identity persisted
+  // The address the bond is filed under — for a brush with a rotating address
+  // one of its private addresses, new with every pairing. Persisted (NVS or
+  // YAML), slot target, and key for bond lookup and removal. Empty when the
+  // slot is unpaired. Reported to HA as identity_address, a name kept for
+  // older integrations; the real identity is peer_identity_.
+  std::string bond_address_;
   std::string identity_source_;   // IDENTITY_SOURCE_YAML / NVS / NONE
+  // The identity the brush handed over during pairing, read from its bond.
+  // Empty when the bond carries no usable identity.
+  std::string peer_identity_;
 
   // Pair-mode (Mode B only): UUID-scan only happens while this is true.
   bool pair_mode_active_{false};
@@ -346,6 +358,7 @@ class SonicareCoordinator {
   // forced into encryption). Refreshed on OPEN_EVT, on AUTH_CMPL
   // success, and after unpair().
   bool peer_is_bonded_{false};
+  bool bond_identity_loaded_{false};  // see on_loop()
 
   // Auth tracking
   bool auth_completed_{false};
@@ -363,10 +376,17 @@ class SonicareCoordinator {
   // Helpers
   void resubscribe_all_();
   void apply_smp_params_();
-  // Re-checks the ESP-IDF bond NVS for an entry matching identity_address_
+  // Re-checks the ESP-IDF bond NVS for an entry matching bond_address_
   // and caches the result in peer_is_bonded_. Safe to call when
-  // identity_address_ is empty (will set peer_is_bonded_ = false).
+  // bond_address_ is empty (will set peer_is_bonded_ = false).
   void refresh_bond_status_();
+  // Takes peer_identity_ from a bond list entry of this brush.
+  void update_peer_identity_(const esp_ble_bond_dev_t &bond);
+  // peer_identity_, or bond_address_ when the bond has no identity of
+  // its own (fixed-address brushes, open-GATT brushes without a bond).
+  const std::string &peer_identity_or_bond_() const {
+    return this->peer_identity_.empty() ? this->bond_address_ : this->peer_identity_;
+  }
   uint16_t find_cccd_handle_(uint16_t char_handle);
   // CCCD payload for a characteristic: notify, indicate, or both.
   uint16_t cccd_value_for_(uint16_t char_handle) const;

@@ -317,7 +317,7 @@ Since 1.4.2 the throttle does not apply to the three Condor transport chars
 
 ### `ble_get_info`
 
-*Available since 1.2.0. Extended with `mode`, `pair_capable`, `pair_mode_active`, `identity_address` in 1.3.0. `identity_source` added in 1.4.0.*
+*Available since 1.2.0. Extended with `mode`, `pair_capable`, `pair_mode_active`, `identity_address` in 1.3.0. `identity_source` added in 1.4.0. `peer_identity` added in 1.15.0.*
 
 Snapshot of bridge + brush state. **Primary capability-detection call** for HA
 during config flow.
@@ -335,7 +335,8 @@ during config flow.
 | `mode` | `"external"` \| `"standalone"` | |
 | `pair_capable` | `"true"` \| `"false"` | True only when standalone + no MAC + not currently connected |
 | `pair_mode_active` | `"true"` \| `"false"` | Currently in pair-mode window |
-| `identity_address` | string | Persistent BLE identity (post-bond). Empty if no identity persisted. Same value as in `pair_complete`. |
+| `identity_address` | string | **Deprecated name** — the address the bond is filed under, not the brush's identity. For a brush with a rotating address it is one of its private addresses and changes with every new pairing. Equals `mac` once paired; empty when the slot is unpaired. Kept for older integrations; use `peer_identity`. |
+| `peer_identity` | string | *Since 1.15.0.* The identity the brush handed over during pairing, read from the bond. Stays the same across new pairings. Falls back to `identity_address` for brushes with a fixed address and for brushes without a bond. Always present. |
 | `identity_source` | `"yaml"` \| `"nvs"` \| `"none"` | Where the identity comes from — see [Identity sources](#identity-sources) below. |
 | `ble_connected` | `"true"` \| `"false"` | |
 | `paired` | `"true"` \| `"false"` | True if BD addr appears in `esp_ble_get_bond_device_list` |
@@ -409,7 +410,7 @@ Arm or cancel the UUID-scan + auto-pair window.
 | `status` | When | Extra fields |
 |---|---|---|
 | `pair_mode_started` | Pair-mode armed | `timeout_s` |
-| `pair_complete` | Pairing succeeded — identity persisted | `identity_address`, `identity_source` (always `"nvs"` post-pair), `bonding` (`"bonded"` \| `"open_gatt"`), `model` (if read), `ble_name` (if read) |
+| `pair_complete` | Pairing succeeded — identity persisted | `identity_address` (deprecated name, see [`ble_get_info`](#ble_get_info)), `peer_identity` (since 1.15.0), `identity_source` (always `"nvs"` post-pair), `bonding` (`"bonded"` \| `"open_gatt"`), `model` (if read), `ble_name` (if read) |
 | `pair_timeout` | Window expired without successful pairing | — |
 | `pair_mode_stopped` | Cancelled via `enabled=false` | — |
 
@@ -505,6 +506,7 @@ GATT-side traffic — notifications, read results, and read errors.
 | Field        | When set                            | Example                                  |
 |--------------|-------------------------------------|------------------------------------------|
 | `mac`        | Always (the brush MAC)              | `AA:BB:CC:DD:EE:FF`                      |
+| `peer_identity` | Since 1.15.0, only when the brush's identity differs from `mac` (rotating address) | `24:E5:AA:92:32:F9` |
 | `uuid`       | Characteristic UUID                 | `477ea600-a260-11e4-ae37-0002a5d54010`   |
 | `payload`    | Hex-encoded bytes (notify or read)  | `02`                                     |
 | `error`      | Read failure reason (mutually exclusive with `payload`) | `auth_required` |
@@ -536,6 +538,13 @@ on the originating service in [Services](#services).
 
 Common fields on every `_ble_status` event: `bridge_id` (always),
 `mac` (when relevant), `version` + `uptime_s` (on `heartbeat`, `ready`, `info`).
+
+Since 1.15.0 every event about the slot's brush — data, status, services —
+also carries `peer_identity` when the brush's identity differs from `mac`.
+A missing field means the identity is `mac`: brushes with a fixed address
+never carry it, and neither do bridges before 1.15.0. `info` and
+`pair_complete` always carry it. Match a brush by
+`peer_identity or mac` to follow it across new pairings.
 The per-service tables in [Services](#services) list the additional fields each
 status carries.
 

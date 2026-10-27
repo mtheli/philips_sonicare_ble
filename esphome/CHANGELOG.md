@@ -12,6 +12,12 @@
 
 - **The error after pairing a brush with a rotating address links the new ESP bridge known issues page.** The known issues for the bridge, ESPHome and ESP-IDF moved to `esphome/KNOWN_ISSUES.md` ([section](https://github.com/mtheli/philips_sonicare_ble/blob/master/esphome/KNOWN_ISSUES.md#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips)); the old link still works. No behaviour change; ships with the next firmware version.
 
+## v1.15.0 — unreleased
+
+- **The bridge reports the identity a brush handed over during pairing.** `ble_get_info` and `pair_complete` carry a new field `peer_identity`. A bond is filed under the address the brush used while pairing; for a brush with a rotating address that is one of its private addresses and changes with every new pairing, while `peer_identity` stays the same. It comes from the bond the bridge already stores, so existing pairings report it too. Brushes with a fixed address, and brushes without a bond, report the same value as `identity_address`. `mac` and `identity_address` keep their meaning.
+- **Every event about the brush names its identity when it differs from `mac`.** Data, status (heartbeat and `ready` included) and service-list events add `peer_identity` for a brush with a rotating address, so HA can recognise it after a new pairing without asking the bridge first. Brushes with a fixed address don't get the field; a missing field means the identity is `mac`.
+- **`identity_address` is deprecated as a name.** It has always held the address the bond is filed under, not the brush's identity. The field stays for older integrations; new code reads `peer_identity`.
+
 ## v1.14.2 — 2026-10-26
 
 - **The bridge reports its chip and how it resolves rotating addresses.** `ble_get_info` now carries `chip` (e.g. `esp32s3`) and `addr_res`: `host` on the original ESP32 or with the build option below, `ctrl` on newer chips, `ctrl_priv` when local privacy is on.

@@ -4,6 +4,7 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/version.h"
 #include "esp_system.h"
+#include "esp_bt_main.h"
 #include "sdkconfig.h"
 #include "soc/soc_caps.h"
 
@@ -38,7 +39,7 @@ static espbt::ESPBTUUID parse_uuid(const std::string &uuid_str) {
 }
 
 // Parse "AA:BB:CC:DD:EE:FF" into a 6-byte BDA. Returns true on success.
-// File-scope helper so unpair() can use the persistent identity_address_ string
+// File-scope helper so unpair() can use the persistent bond_address_ string
 // as the source of truth instead of parent_->get_remote_bda() (unreliable
 // during teardown — zero when not connected, stale when disconnect already
 // in flight).
@@ -165,23 +166,27 @@ void SonicareCoordinator::apply_smp_params_() {
 }
 
 void SonicareCoordinator::refresh_bond_status_() {
-  // Look up identity_address_ in the ESP-IDF bond NVS. The bond list is
+  // Look up bond_address_ in the ESP-IDF bond NVS. The bond list is
   // GLOBAL across all BLE clients on this chip; we must filter to bonds
   // whose bd_addr matches *our* identity, otherwise a sibling brush's
   // bond would falsely flip peer_is_bonded_ to true.
   this->peer_is_bonded_ = false;
-  if (this->identity_address_.empty())
+  if (this->bond_address_.empty()) {
+    this->peer_identity_.clear();
     return;
+  }
   uint8_t our_bda[6] = {0};
-  if (!parse_mac_to_bda(this->identity_address_, our_bda)) {
+  if (!parse_mac_to_bda(this->bond_address_, our_bda)) {
     ESP_LOGW(this->log_tag_.c_str(),
              "Cannot parse identity '%s' for bond lookup",
-             this->identity_address_.c_str());
+             this->bond_address_.c_str());
     return;
   }
   int total = esp_ble_get_bond_device_num();
-  if (total <= 0)
+  if (total <= 0) {
+    this->peer_identity_.clear();
     return;
+  }
   auto *list = (esp_ble_bond_dev_t *) malloc(sizeof(esp_ble_bond_dev_t) * total);
   if (list == nullptr)
     return;
@@ -190,17 +195,69 @@ void SonicareCoordinator::refresh_bond_status_() {
     for (int i = 0; i < total; i++) {
       if (memcmp(list[i].bd_addr, our_bda, 6) == 0) {
         this->peer_is_bonded_ = true;
+        this->update_peer_identity_(list[i]);
         break;
       }
     }
   }
   free(list);
-  ESP_LOGD(this->log_tag_.c_str(), "Bond status for %s: %s",
-           this->identity_address_.c_str(),
-           this->peer_is_bonded_ ? "bonded" : "not bonded");
+  if (!this->peer_is_bonded_)
+    this->peer_identity_.clear();
+  ESP_LOGD(this->log_tag_.c_str(), "Bond status for %s: %s (identity %s)",
+           this->bond_address_.c_str(),
+           this->peer_is_bonded_ ? "bonded" : "not bonded",
+           this->peer_identity_or_bond_().c_str());
+}
+
+void SonicareCoordinator::update_peer_identity_(const esp_ble_bond_dev_t &bond) {
+  // The identity a brush distributes during pairing is its public or static
+  // random address. Bluedroid keeps it next to the bond, which is filed under
+  // whatever address the brush used at that moment. A zero address, or one
+  // that is itself a resolvable private address (top bits 01), is no stable
+  // identity — fall back to the bond address then.
+  const auto &pid = bond.bond_key.pid_key;
+  static const uint8_t ZERO[6] = {0};
+  bool usable = (bond.bond_key.key_mask & ESP_BLE_ID_KEY_MASK) &&
+                memcmp(pid.static_addr, ZERO, 6) != 0 &&
+                (pid.addr_type == BLE_ADDR_TYPE_PUBLIC ||
+                 (pid.static_addr[0] & 0xC0) == 0xC0);
+  if (!usable) {
+    this->peer_identity_.clear();
+    return;
+  }
+  char identity[18];
+  snprintf(identity, sizeof(identity), "%02X:%02X:%02X:%02X:%02X:%02X",
+           pid.static_addr[0], pid.static_addr[1], pid.static_addr[2],
+           pid.static_addr[3], pid.static_addr[4], pid.static_addr[5]);
+  if (this->peer_identity_ != identity) {
+    this->peer_identity_ = identity;
+    if (this->peer_identity_ != this->bond_address_)
+      ESP_LOGI(this->log_tag_.c_str(), "Bond identity %s (bond address %s)",
+               identity, this->bond_address_.c_str());
+  }
+}
+
+void SonicareCoordinator::add_peer_identity(
+    std::map<std::string, std::string> &data) const {
+  if (this->peer_identity_.empty() || this->peer_identity_ == this->bond_address_)
+    return;
+  // Only events about this slot's brush — ble_unpair_mac replies name
+  // whatever bond they removed in mac.
+  auto mac = data.find("mac");
+  if (mac == data.end() || mac->second != this->bond_address_)
+    return;
+  data.emplace("peer_identity", this->peer_identity_);
 }
 
 void SonicareCoordinator::on_loop(uint32_t now_ms) {
+  // Right after boot nothing has looked the bond up yet. Do it once the
+  // stack is up, so heartbeats before the brush first connects already
+  // name its identity.
+  if (!this->bond_identity_loaded_ && !this->bond_address_.empty() &&
+      esp_bluedroid_get_status() == ESP_BLUEDROID_STATUS_ENABLED) {
+    this->bond_identity_loaded_ = true;
+    this->refresh_bond_status_();
+  }
   // ATT watchdog: an in-flight operation whose completion event never
   // arrives (Bluedroid response loss, SMP handshake that never completes,
   // …) would otherwise hold the ATT slot forever — and since the
@@ -294,7 +351,7 @@ void SonicareCoordinator::on_loop(uint32_t now_ms) {
     // Emit pair_complete anyway so HA can finish the config flow — marked
     // post_auth_no_probe so HA knows model/ble_name aren't filled and may
     // need a follow-up ble_get_info.
-    if (had_auth && !this->identity_address_.empty()) {
+    if (had_auth && !this->bond_address_.empty()) {
       ESP_LOGW(this->log_tag_.c_str(), "Pair-mode timed out after AUTH_CMPL — emitting pair_complete anyway");
       // Mode-B auto-discovery just persisted an identity → flip to "nvs".
       // YAML-pinned identities never pass through "none", so the guard is
@@ -303,7 +360,8 @@ void SonicareCoordinator::on_loop(uint32_t now_ms) {
         this->identity_source_ = IDENTITY_SOURCE_NVS;
       }
       this->emit_status_("pair_complete", {
-          {"identity_address", this->identity_address_},
+          {"identity_address", this->bond_address_},
+          {"peer_identity", this->peer_identity_or_bond_()},
           {"identity_source", this->identity_source_},
           {"bonding", "bonded"},
           {"note", "post_auth_no_probe"},
@@ -476,12 +534,12 @@ void SonicareCoordinator::set_pair_mac(const std::string &mac,
 }
 
 void SonicareCoordinator::unpair() {
-  std::string previous_mac = this->identity_address_;
+  std::string previous_mac = this->bond_address_;
   ESP_LOGW(this->log_tag_.c_str(),
            "Unpair requested — removing bond and clearing identity (was: %s)",
            previous_mac.empty() ? "<none>" : previous_mac.c_str());
 
-  // Parse identity_address_ once — used for both the targeted remove and the
+  // Parse bond_address_ once — used for both the targeted remove and the
   // safety-net sweep. The ESP NVS bond list is GLOBAL across all BLE clients
   // on this chip (other philips_sonicare bridges, philips_shaver, etc.), so
   // every bond touch MUST filter to bonds that match THIS brush's identity.
@@ -514,7 +572,7 @@ void SonicareCoordinator::unpair() {
   }
 
   // Step 3: safety-net sweep — ONLY entries whose BDA matches our identity.
-  // Catches edge cases where identity_address_ was stored in a slightly
+  // Catches edge cases where bond_address_ was stored in a slightly
   // different format than what the bond list returns. Other bonds on the
   // same ESP must stay intact.
   if (bda_valid) {
@@ -547,7 +605,8 @@ void SonicareCoordinator::unpair() {
   // Worker wipes NVS-persisted identity + resets uuid_scan_mode_.
   if (this->unpair_cb_)
     this->unpair_cb_();
-  this->identity_address_.clear();
+  this->bond_address_.clear();
+  this->peer_identity_.clear();
   this->peer_is_bonded_ = false;
   // NVS-backed identity is gone → bridge is now unpaired. YAML-pinned
   // identity stays "yaml" because the YAML config will re-apply at the
@@ -986,7 +1045,7 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
             snprintf(identity_str, sizeof(identity_str),
                      "%02X:%02X:%02X:%02X:%02X:%02X",
                      bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
-            this->identity_address_ = identity_str;
+            this->bond_address_ = identity_str;
             this->pair_mode_active_ = false;
             this->pair_mode_until_ms_ = 0;
             this->target_mac_.clear();
@@ -1002,8 +1061,12 @@ void SonicareCoordinator::on_gattc_event(esp_gattc_cb_event_t event,
             if (this->identity_source_ == IDENTITY_SOURCE_NONE) {
               this->identity_source_ = IDENTITY_SOURCE_NVS;
             }
+            // Open-GATT brushes have no bond and keep their bond-address
+            // fallback; a bonded one gets the identity from its bond.
+            this->refresh_bond_status_();
             std::map<std::string, std::string> extra = {
-                {"identity_address", this->identity_address_},
+                {"identity_address", this->bond_address_},
+                {"peer_identity", this->peer_identity_or_bond_()},
                 {"identity_source", this->identity_source_},
                 {"bonding", is_bonded ? "bonded" : "open_gatt"},
             };
@@ -1389,7 +1452,7 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
         this->rapid_disconnect_count_ = 0;
         this->auth_fail_count_ = 0;
         // Fresh bond just landed in NVS — re-read so subsequent writes use
-        // AUTH_REQ_NO_MITM. identity_address_ may still be empty on a brand-
+        // AUTH_REQ_NO_MITM. bond_address_ may still be empty on a brand-
         // new pair (set a few lines below); the second refresh after assignment
         // handles that case.
         this->refresh_bond_status_();
@@ -1405,8 +1468,8 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
                    "%02X:%02X:%02X:%02X:%02X:%02X",
                    auth.bd_addr[0], auth.bd_addr[1], auth.bd_addr[2],
                    auth.bd_addr[3], auth.bd_addr[4], auth.bd_addr[5]);
-          this->identity_address_ = identity_str;
-          // Re-check now that identity_address_ is populated — the earlier
+          this->bond_address_ = identity_str;
+          // Re-check now that bond_address_ is populated — the earlier
           // refresh ran before assignment (fresh-pair case had no identity yet).
           this->refresh_bond_status_();
           this->pair_mode_active_ = false;
@@ -1419,7 +1482,8 @@ void SonicareCoordinator::on_gap_event(esp_gap_ble_cb_event_t event,
             this->identity_source_ = IDENTITY_SOURCE_NVS;
           }
           this->emit_status_("pair_complete", {
-              {"identity_address", this->identity_address_},
+              {"identity_address", this->bond_address_},
+              {"peer_identity", this->peer_identity_or_bond_()},
               {"identity_source", this->identity_source_},
               {"bonding", "bonded"},
               {"note", "post_auth_no_probe"},
@@ -2069,6 +2133,8 @@ std::map<std::string, std::string> SonicareCoordinator::collect_info_data() {
       for (int i = 0; i < bond_count; i++) {
         if (memcmp(bonded[i].bd_addr, our_bda, 6) == 0) {
           is_paired = true;
+          // Right after boot no connection has looked the identity up yet.
+          this->update_peer_identity_(bonded[i]);
           break;
         }
       }
@@ -2079,7 +2145,7 @@ std::map<std::string, std::string> SonicareCoordinator::collect_info_data() {
   // pair_capable = standalone mode AND no persisted identity AND not connected.
   // External (Mode A) bridges have a fixed MAC in YAML and never use pair-mode.
   bool pair_capable = (this->mode_ == MODE_STANDALONE) &&
-                      this->identity_address_.empty() &&
+                      this->bond_address_.empty() &&
                       !this->connected_;
 
   std::map<std::string, std::string> info = {
@@ -2091,7 +2157,8 @@ std::map<std::string, std::string> SonicareCoordinator::collect_info_data() {
       {"subscriptions", std::string(subs_str)},
       {"notify_throttle_ms", std::string(throttle_str)},
       {"mode", this->mode_.empty() ? std::string(MODE_EXTERNAL) : this->mode_},
-      {"identity_address", this->identity_address_},
+      {"identity_address", this->bond_address_},
+      {"peer_identity", this->peer_identity_or_bond_()},
       {"identity_source",
        this->identity_source_.empty() ? std::string(IDENTITY_SOURCE_NONE)
                                        : this->identity_source_},

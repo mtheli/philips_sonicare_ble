@@ -167,6 +167,10 @@ void SonicareBridge::fire_event(const std::string &event_type,
   // still gets emitted as "" — listeners just don't filter on it.
   std::map<std::string, std::string> enriched = data;
   enriched["bridge_id"] = this->bridge_id_;
+  // Every event about the brush also names its identity when that differs
+  // from mac, so HA can follow it across a new pairing.
+  if (this->coord_ != nullptr)
+    this->coord_->add_peer_identity(enriched);
   this->fire_homeassistant_event(event_type, enriched);
 }
 

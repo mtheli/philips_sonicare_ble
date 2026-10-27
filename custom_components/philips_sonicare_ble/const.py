@@ -29,6 +29,15 @@ MIN_BRIDGE_VERSION = "1.4.0"
 # transport reads sequentially against those.
 BRIDGE_PIPELINED_READS_VERSION = "1.7.0"
 
+# Bridge event fields naming the brush. identity_address is deprecated: it
+# holds the address the bond is filed under, which for a brush with a rotating
+# address is a private one and changes with every new pairing. The identity the
+# brush keeps is in peer_identity (bridge firmware 1.15.0). Read identity_address
+# only as a fallback for older bridges; drop it once MIN_BRIDGE_VERSION reaches
+# 1.15.0.
+BRIDGE_FIELD_IDENTITY_ADDRESS = "identity_address"  # deprecated
+BRIDGE_FIELD_PEER_IDENTITY = "peer_identity"
+
 # ESP-IDF releases whose Bluetooth stack forgets a bond after the first
 # reconnect (espressif/esp-idf#19286): re-encrypting with the stored key clears
 # the key in memory, and the disconnect then deletes the device record. Only a

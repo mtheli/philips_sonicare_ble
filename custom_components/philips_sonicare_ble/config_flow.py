@@ -43,6 +43,8 @@ from bleak.exc import BleakError
 from bleak_retry_connector import establish_connection as bleak_establish
 
 from .const import (
+    BRIDGE_FIELD_IDENTITY_ADDRESS,
+    BRIDGE_FIELD_PEER_IDENTITY,
     ROTATING_ADDRESS_ISSUE_URL,
     DOMAIN,
     CONF_SERVICES,
@@ -103,6 +105,21 @@ _LOGGER = logging.getLogger(__name__)
 def _is_hassio(hass) -> bool:
     """Check if Home Assistant is running on HAOS / Supervised."""
     return "hassio" in hass.config.components
+
+
+def _identity_row(text: dict[str, str], identity: str, mac: str) -> str:
+    """Extra table row with the identity the brush handed over at pairing.
+
+    Only shown when it differs from the address in the MAC row — for a brush
+    with a fixed address both are the same. The row continues the table, so
+    its line break comes from here: hassfest rejects leading whitespace in
+    the translation itself.
+    """
+    identity = (identity or "").upper()
+    if not identity or identity == (mac or "").upper():
+        return ""
+    row = text.get("error.identity_row", "")
+    return f"\n{row.replace('{identity}', identity)}" if row else ""
 
 
 def _alert(alert_type: str, text: str) -> str:
@@ -1585,10 +1602,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     "esphome", svc_name, {}, blocking=True
                 )
                 info = await asyncio.wait_for(info_future, timeout=3.0)
-                # Prefer identity_address (persisted in NVS, used as
-                # ConfigEntry.unique_id) over mac (= live remote_bda which
-                # is 00:00:… while the brush is disconnected).
-                identity = info.get("identity_address", "").upper()
+                # identity_address is the slot's bond address (deprecated
+                # name, see const.py) and equals mac once paired; an
+                # unpaired slot reports it empty and mac as 00:00:….
+                identity = info.get(BRIDGE_FIELD_IDENTITY_ADDRESS, "").upper()
                 mac = info.get("mac", "").upper()
                 known = {m for m in (identity, mac)
                          if m and m != "00:00:00:00:00:00"}
@@ -2332,7 +2349,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "mode": info.get("mode", "external"),
                 "pair_capable": info.get("pair_capable", "false"),
                 "pair_mode_active": info.get("pair_mode_active", "false"),
-                "identity_address": info.get("identity_address", ""),
+                BRIDGE_FIELD_IDENTITY_ADDRESS: info.get(BRIDGE_FIELD_IDENTITY_ADDRESS, ""),
+                BRIDGE_FIELD_PEER_IDENTITY: info.get(BRIDGE_FIELD_PEER_IDENTITY, ""),
                 "friendly_name": info.get("friendly_name", ""),
                 "area": info.get("area", ""),
             }
@@ -2365,7 +2383,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "mode": raw.get("mode", "external"),
                 "pair_capable": raw.get("pair_capable", "false"),
                 "pair_mode_active": raw.get("pair_mode_active", "false"),
-                "identity_address": raw.get("identity_address", ""),
+                BRIDGE_FIELD_IDENTITY_ADDRESS: raw.get(BRIDGE_FIELD_IDENTITY_ADDRESS, ""),
+                # Bridge firmware >= 1.15.0; older bridges omit it.
+                BRIDGE_FIELD_PEER_IDENTITY: raw.get(BRIDGE_FIELD_PEER_IDENTITY, ""),
                 # YAML-supplied per-slot defaults (empty on older bridges →
                 # HA falls back to the MAC-suffix default name and no area).
                 "friendly_name": raw.get("friendly_name", ""),
@@ -2512,6 +2532,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "alert": _alert(alert_type, notice),
                 "action": action,
                 **status_values,
+                "identity_row": _identity_row(
+                    text, info.get(BRIDGE_FIELD_PEER_IDENTITY, ""), _mac
+                ),
             },
         )
 
@@ -2551,15 +2574,15 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         capabilities = result["caps"]
 
-        # Prefer the NVS-persisted identity over the live remote_bda. Equal
-        # for static-address brushes, but only identity stays valid when the
-        # brush is idle and only identity is RPA-stable on Condor.
+        # The slot's bond address (identity_address, deprecated name — see
+        # const.py) is set for every paired slot; the probe's sonicare_mac
+        # only backs it up for bridges that leave it empty.
         def _valid_addr(raw: str) -> str:
             cleaned = (raw or "").upper()
             return cleaned if cleaned and cleaned != "00:00:00:00:00:00" else ""
 
         identity = _valid_addr(
-            (self._bridge_info or {}).get("identity_address", "")
+            (self._bridge_info or {}).get(BRIDGE_FIELD_IDENTITY_ADDRESS, "")
         )
         sonicare_mac = capabilities.get("sonicare_mac", "")
         canonical_addr = identity or _valid_addr(sonicare_mac)
@@ -2945,7 +2968,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # keeps the generic wording.
         if error_key == "pair_timeout" and result.get("scanner_passive") == "true":
             error_key = "pair_timeout_passive_scanner"
-        identity = result.get("identity_address", "").upper()
+        identity = result.get(BRIDGE_FIELD_IDENTITY_ADDRESS, "").upper()
         if not error_key and not identity:
             _LOGGER.error("pair_complete received without identity_address")
             error_key = "unknown"
@@ -3082,7 +3105,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         placeholders = self._pair_target_placeholders()
         placeholders["identity_address"] = (
-            (self._bridge_info or {}).get("identity_address", "")
+            (self._bridge_info or {}).get(BRIDGE_FIELD_IDENTITY_ADDRESS, "")
         )
         placeholders["alert"] = _alert("error", notice)
         return placeholders
@@ -3183,6 +3206,13 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     via_proxy=bool(self._probe_via_proxy),
                 ),
                 **self._get_device_info_values(self._fetched_data, self._address),
+                "identity_row": _identity_row(
+                    text,
+                    (self._bridge_info or {}).get(BRIDGE_FIELD_PEER_IDENTITY, "")
+                    if self._transport_type == TRANSPORT_ESP_BRIDGE
+                    else "",
+                    self._address or "",
+                ),
                 "services": services_text,
             },
         )

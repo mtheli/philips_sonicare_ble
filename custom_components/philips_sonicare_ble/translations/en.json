@@ -66,7 +66,7 @@
       },
       "esp_bridge_status": {
         "title": "Connection via ESP32 Bridge",
-        "description": "{alert}Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n| **BLE** | {ble_state} |\n|---|---|\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔐 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n{action}",
+        "description": "{alert}Setting up toothbrush via **ESP32 Bridge** ({target}).\n\n| **BLE** | {ble_state} |\n|---|---|\n| **Security** | {security} |\n| **Toothbrush MAC** | `{mac}` |{identity_row}\n| **Bridge version** | {version} |\n\n✅ connected · ❌ disconnected · 🔐 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n{action}",
         "submit": "Read capabilities"
       },
       "request_pair": {
@@ -81,7 +81,7 @@
       },
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",
-        "description": "{alert_open}Connected via {transport}{detail}.{alert_close}\n\n**Device Information**\n\n| **Model** | {model} |\n|---|---|\n| **Serial** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Battery** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE security** | {ble_security} |\n\n🔐 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Detected Services**\n\n{services}\n\n❌ entries are not available on this model.{condor_note}",
+        "description": "{alert_open}Connected via {transport}{detail}.{alert_close}\n\n**Device Information**\n\n| **Model** | {model} |\n|---|---|\n| **Serial** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Battery** | {battery} |\n| **MAC** | `{mac}` |{identity_row}\n| **BLE security** | {ble_security} |\n\n🔐 bonded (encrypted) · 🔓 unpaired (no encryption)\n\n**Detected Services**\n\n{services}\n\n❌ entries are not available on this model.{condor_note}",
         "submit": "Set up",
         "data": {
           "device_name": "Name"
@@ -104,6 +104,7 @@
     "error": {
       "cannot_connect": "Could not connect to the toothbrush. Make sure it is awake (press button or place on charger) and in range.",
       "caps_condor_note": "On this handle the Classic feature services are replaced by the Condor protocol.",
+      "identity_row": "| **Identity** | `{identity}` |",
       "confirm_alert_asleep": "The toothbrush is asleep — wake it (press the power button or lift it off the charger), then click Submit again.",
       "confirm_alert_failed": "Could not read the toothbrush. Make sure it is awake and in range, then click Submit to try again.",
       "confirm_warn_proxy": "This connection will go through the Bluetooth proxy {proxy_name}{proxy_rssi}.{nl}Depending on the toothbrush model, pairing and live updates over a standard Bluetooth proxy can be unreliable.{nl}For reliable pairing and live updates use a local Bluetooth adapter or the ESP32 bridge.",

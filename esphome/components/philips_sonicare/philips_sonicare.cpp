@@ -54,7 +54,7 @@ void PhilipsSonicare::setup() {
     char mac[18];
     snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
              bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
-    this->coord_->set_identity_address(mac);
+    this->coord_->set_bond_address(mac);
   }
 }
 
@@ -131,7 +131,7 @@ void PhilipsSonicareStandalone::setup() {
       snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
                (uint8_t)(a >> 40), (uint8_t)(a >> 32), (uint8_t)(a >> 24),
                (uint8_t)(a >> 16), (uint8_t)(a >> 8), (uint8_t)(a));
-      this->coord_->set_identity_address(mac);
+      this->coord_->set_bond_address(mac);
     }
     // Bond removed by Coordinator::unpair() — react based on identity source:
     //

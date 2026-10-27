@@ -10,8 +10,9 @@ import abc
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
-from typing import Callable
+from typing import Any, Callable
 
 from bleak import BleakClient
 from bleak_retry_connector import establish_connection as bleak_establish
@@ -688,6 +689,24 @@ class EspBridgeTransport(SonicareTransport):
     def detected_mac(self) -> str | None:
         return self._detected_mac
 
+    def _is_other_brush(self, data: Mapping[str, Any]) -> bool:
+        """True when a bridge event names a brush other than ours.
+
+        An event matches by ``mac`` or by ``peer_identity``. Bridges from
+        firmware 1.15.0 add the latter when the brush's identity differs from
+        the address its bond is filed under, which for a brush with a
+        rotating address changes with every new pairing. Events without a
+        mac, or before we know ours, pass as before.
+        """
+        mac = data.get("mac", "")
+        if not mac or not self._detected_mac:
+            return False
+        ours = self._detected_mac.upper()
+        return (
+            mac.upper() != ours
+            and data.get("peer_identity", "").upper() != ours
+        )
+
     @property
     def bridge_version(self) -> str | None:
         return self._bridge_version
@@ -782,7 +801,7 @@ class EspBridgeTransport(SonicareTransport):
         def _handle_event(event: Event) -> None:
             data = event.data
             mac = data.get("mac", "")
-            if mac and self._detected_mac and mac.upper() != self._detected_mac.upper():
+            if self._is_other_brush(data):
                 return
 
             uuid = data.get("uuid", "")
@@ -832,7 +851,7 @@ class EspBridgeTransport(SonicareTransport):
         @callback
         def _handle_status_event(event: Event) -> None:
             mac = event.data.get("mac", "")
-            if mac and self._detected_mac and mac.upper() != self._detected_mac.upper():
+            if self._is_other_brush(event.data):
                 return
 
             status = event.data.get("status", "")
@@ -1288,12 +1307,7 @@ class EspBridgeTransport(SonicareTransport):
         def _handler(event: Event) -> None:
             nonlocal expected_count
             data = event.data
-            mac = data.get("mac", "")
-            if (
-                mac
-                and self._detected_mac
-                and mac.upper() != self._detected_mac.upper()
-            ):
+            if self._is_other_brush(data):
                 return
             try:
                 count = int(data.get("service_count", "0"))

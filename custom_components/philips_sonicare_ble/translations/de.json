@@ -66,7 +66,7 @@
       },
       "esp_bridge_status": {
         "title": "Verbindung über ESP32 Bridge",
-        "description": "{alert}Einrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| **BLE** | {ble_state} |\n|---|---|\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |\n| **Bridge-Version** | {version} |\n\n✅ verbunden · ❌ getrennt · 🔐 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n{action}",
+        "description": "{alert}Einrichtung der Zahnbürste über die **ESP32 Bridge** ({target}).\n\n| **BLE** | {ble_state} |\n|---|---|\n| **Sicherheit** | {security} |\n| **MAC der Zahnbürste** | `{mac}` |{identity_row}\n| **Bridge-Version** | {version} |\n\n✅ verbunden · ❌ getrennt · 🔐 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n{action}",
         "submit": "Fähigkeiten auslesen"
       },
       "request_pair": {
@@ -81,7 +81,7 @@
       },
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",
-        "description": "{alert_open}Verbunden über {transport}{detail}.{alert_close}\n\n**Geräteinformationen**\n\n| **Modell** | {model} |\n|---|---|\n| **Seriennummer** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Akku** | {battery} |\n| **MAC** | `{mac}` |\n| **BLE-Sicherheit** | {ble_security} |\n\n🔐 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Erkannte Dienste**\n\n{services}\n\n❌ bedeutet: auf diesem Modell nicht verfügbar.{condor_note}",
+        "description": "{alert_open}Verbunden über {transport}{detail}.{alert_close}\n\n**Geräteinformationen**\n\n| **Modell** | {model} |\n|---|---|\n| **Seriennummer** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Akku** | {battery} |\n| **MAC** | `{mac}` |{identity_row}\n| **BLE-Sicherheit** | {ble_security} |\n\n🔐 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Erkannte Dienste**\n\n{services}\n\n❌ bedeutet: auf diesem Modell nicht verfügbar.{condor_note}",
         "submit": "Einrichten",
         "data": {
           "device_name": "Name"
@@ -104,6 +104,7 @@
     "error": {
       "cannot_connect": "Verbindung zur Zahnbürste nicht möglich. Stelle sicher, dass sie wach (Knopf drücken oder auf die Ladestation stellen) und in Reichweite ist.",
       "caps_condor_note": "Bei diesem Handstück werden die Classic-Funktionsdienste durch das Condor-Protokoll ersetzt.",
+      "identity_row": "| **Identität** | `{identity}` |",
       "confirm_alert_asleep": "Die Zahnbürste schläft — wecke sie (Power-Knopf drücken oder von der Ladestation nehmen) und klicke dann erneut auf Senden.",
       "confirm_alert_failed": "Die Zahnbürste konnte nicht gelesen werden. Stelle sicher, dass sie wach und in Reichweite ist, und klicke dann erneut auf Senden.",
       "confirm_warn_proxy": "Diese Verbindung läuft über den Bluetooth-Proxy {proxy_name}{proxy_rssi}.{nl}Je nach Zahnbürsten-Modell können Pairing und Live-Updates über einen gewöhnlichen Bluetooth-Proxy unzuverlässig sein.{nl}Für zuverlässiges Pairing und Live-Updates nutze einen lokalen Bluetooth-Adapter oder die ESP32-Bridge.",
