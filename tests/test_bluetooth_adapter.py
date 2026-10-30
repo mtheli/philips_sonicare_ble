@@ -237,6 +237,40 @@ async def test_direct_ble_starts_with_menu(monkeypatch, scanners) -> None:
     assert result["menu_options"] == ["settings", "adapter"]
 
 
+@pytest.fixture
+def single_adapter(monkeypatch):
+    hci0 = _local("hci0 (00:0A:CD:46:B2:2D)", "00:0A:CD:46:B2:2D")
+    monkeypatch.setattr(
+        transport, "async_current_scanners", MagicMock(return_value=[hci0]),
+    )
+    monkeypatch.setattr(
+        transport, "async_scanner_devices_by_address", MagicMock(return_value=[]),
+    )
+
+
+async def test_direct_ble_single_adapter_skips_menu(monkeypatch, single_adapter) -> None:
+    # Seen on a Pi with only its onboard adapter: the menu offered a move
+    # with nowhere to move to.
+    flow = _options_flow(monkeypatch, TRANSPORT_BLEAK)
+
+    result = await flow.async_step_init()
+
+    assert result["step_id"] == "settings"
+
+
+async def test_direct_ble_single_adapter_keeps_menu_when_fixed(
+    monkeypatch, single_adapter,
+) -> None:
+    # Fixed to an adapter: the menu stays, so "auto" can be chosen again.
+    flow = _options_flow(
+        monkeypatch, TRANSPORT_BLEAK, {CONF_BLUETOOTH_ADAPTER: "00:0A:CD:46:B2:2D"},
+    )
+
+    result = await flow.async_step_init()
+
+    assert result["type"] == "menu"
+
+
 async def test_esp_bridge_skips_menu(monkeypatch, scanners) -> None:
     flow = _options_flow(monkeypatch, TRANSPORT_ESP_BRIDGE)
 
@@ -844,3 +878,63 @@ def test_adapter_sensor_fixed_offline_adapter_shows_mac(monkeypatch) -> None:
     monkeypatch.setattr(sensor_mod, "_scanner_name_by_source", lambda hass, source: None)
     sensor = _adapter_sensor({CONF_BLUETOOTH_ADAPTER: "98:88:E0:0E:DA:D2"}, None)
     assert sensor.native_value == "98:88:E0:0E:DA:D2"
+
+
+BOND = "4A:05:D2:8D:F9:FF"
+
+
+def _connect_lookups(monkeypatch, scanner_addresses):
+    """Last service info for ADDRESS; scanners list ``scanner_addresses``."""
+    identity_device = SimpleNamespace(address=ADDRESS)
+    monkeypatch.setattr(
+        transport, "async_last_service_info",
+        lambda _hass, address: (
+            SimpleNamespace(device=identity_device) if address == ADDRESS else None
+        ),
+    )
+    devices = {
+        address: SimpleNamespace(ble_device=SimpleNamespace(address=address))
+        for address in scanner_addresses
+    }
+    monkeypatch.setattr(
+        transport, "async_scanner_devices_by_address",
+        lambda _hass, address, connectable: (
+            [devices[address]] if address in devices else []
+        ),
+    )
+    return identity_device, devices
+
+
+def test_connect_device_uses_bond_address_until_scanner_lists_identity(
+    monkeypatch,
+) -> None:
+    # Seen live on HAOS: after pairing in place, bleak's scanner keeps the
+    # brush under the address it was paired from, and every connect to the
+    # identity failed with "no scanner currently has it".
+    _identity, devices = _connect_lookups(monkeypatch, [BOND])
+    bt = transport.BleakTransport(SimpleNamespace(), ADDRESS, bond_address=BOND.lower())
+
+    assert bt._connect_device() is devices[BOND].ble_device
+
+
+def test_connect_device_prefers_identity_once_listed(monkeypatch) -> None:
+    identity, _devices = _connect_lookups(monkeypatch, [ADDRESS, BOND])
+    bt = transport.BleakTransport(SimpleNamespace(), ADDRESS, bond_address=BOND)
+
+    assert bt._connect_device() is identity
+
+
+def test_connect_device_without_bond_address(monkeypatch) -> None:
+    identity, _devices = _connect_lookups(monkeypatch, [BOND])
+
+    assert transport.BleakTransport(SimpleNamespace(), ADDRESS)._connect_device() is identity
+    # A bond address equal to the identity is no bond address.
+    bt = transport.BleakTransport(SimpleNamespace(), ADDRESS, bond_address=ADDRESS)
+    assert bt._connect_device() is identity
+
+
+def test_connect_device_not_in_range(monkeypatch) -> None:
+    monkeypatch.setattr(transport, "async_last_service_info", lambda _hass, _a: None)
+    bt = transport.BleakTransport(SimpleNamespace(), ADDRESS, bond_address=BOND)
+
+    assert bt._connect_device() is None

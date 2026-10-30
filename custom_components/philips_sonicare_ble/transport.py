@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from bleak import BleakClient
+from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from bleak_retry_connector import establish_connection as bleak_establish
 from habluetooth.usage import HaBleakClientWithServiceCache
@@ -666,9 +667,17 @@ class BleakTransport(SonicareTransport):
         hass: HomeAssistant,
         address: str,
         bluetooth_adapter: Callable[[], str | None] | None = None,
+        bond_address: str | None = None,
     ) -> None:
         self._hass = hass
         self._address = address
+        # The address the brush was paired under, when it differs from
+        # the identity the entry is keyed on.
+        self._bond_address = (
+            bond_address.upper()
+            if bond_address and bond_address.upper() != address.upper()
+            else None
+        )
         # Read on every connect, like the bridge's pipelined-reads switch.
         self._bluetooth_adapter = bluetooth_adapter or (lambda: None)
         self._client: BleakClient | None = None
@@ -703,13 +712,43 @@ class BleakTransport(SonicareTransport):
             return None
         return int(rssi)
 
+    def _connect_device(self) -> BLEDevice | None:
+        """BLEDevice to connect with, or None when the brush is not in range.
+
+        After pairing in place, BlueZ keeps the device object it found
+        the brush under and only changes its address to the identity.
+        Bleak's scanner keeps listing that object under the old address
+        until the scanner restarts, so no scanner offers the identity
+        and every connect fails before reaching the radio. Connecting
+        through the scanner's entry for the bond address reaches the
+        same object.
+        """
+        service_info = async_last_service_info(self._hass, self._address)
+        if not service_info:
+            return None
+        if self._bond_address is None or async_scanner_devices_by_address(
+            self._hass, self._address, connectable=True
+        ):
+            return service_info.device
+        for scanner_device in async_scanner_devices_by_address(
+            self._hass, self._bond_address, connectable=True
+        ):
+            _LOGGER.debug(
+                "%s: no scanner lists the identity yet; connecting through "
+                "the bond address %s",
+                self._address,
+                self._bond_address,
+            )
+            return scanner_device.ble_device
+        return service_info.device
+
     async def connect(self) -> None:
         if self.is_connected:
             # A second establish would orphan the live client, whose
             # disconnect callback could later clear the new one.
             return
-        service_info = async_last_service_info(self._hass, self._address)
-        if not service_info:
+        device = self._connect_device()
+        if device is None:
             raise TransportError(f"Device {self._address} not in range")
 
         def _on_disconnect(_client):
@@ -722,14 +761,14 @@ class BleakTransport(SonicareTransport):
 
         self._client = await bleak_establish(
             fixed_scanner_client_class(self._bluetooth_adapter()),
-            service_info.device,
+            device,
             "philips_sonicare",
             disconnected_callback=_on_disconnect,
             timeout=30.0,
         )
         self._connected_scanner = getattr(self._client, "_connected_scanner", None)
         self._connection_path = describe_connection_path(
-            self._hass, self._client, service_info.device
+            self._hass, self._client, device
         )
         _LOGGER.info("%s: connected via %s", self._address, self._connection_path)
 
@@ -757,8 +796,8 @@ class BleakTransport(SonicareTransport):
 
     async def read_chars(self, char_uuids: list[str]) -> dict[str, bytes | None]:
         results: dict[str, bytes | None] = {u: None for u in char_uuids}
-        service_info = async_last_service_info(self._hass, self._address)
-        if not service_info:
+        device = self._connect_device()
+        if device is None:
             _LOGGER.debug("Device %s not in range", self._address)
             return results
 
@@ -766,7 +805,7 @@ class BleakTransport(SonicareTransport):
         try:
             client = await bleak_establish(
                 fixed_scanner_client_class(self._bluetooth_adapter()),
-                service_info.device, "philips_sonicare", timeout=30.0,
+                device, "philips_sonicare", timeout=30.0,
             )
             if not client or not client.is_connected:
                 return results

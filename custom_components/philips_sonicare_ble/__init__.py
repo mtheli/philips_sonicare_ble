@@ -384,6 +384,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass,
             address,
             bluetooth_adapter=lambda: entry.options.get(CONF_BLUETOOTH_ADAPTER),
+            bond_address=entry.data.get(CONF_BOND_ADDRESS),
         )
 
     coordinator = PhilipsSonicareCoordinator(hass, entry, transport)

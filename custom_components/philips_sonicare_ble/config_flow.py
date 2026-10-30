@@ -4151,13 +4151,31 @@ class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
         Switching the adapter is an action with its own steps (pairing,
         removing old bonds), not one more option — so it gets its own
         entry. An ESP bridge entry has no adapter and goes straight to
-        the settings.
+        the settings, and so does an entry with a single adapter to
+        choose from — unless it is already fixed to one, so the way back
+        to automatic choice stays open.
         """
-        if self._is_esp():
+        if self._is_esp() or not self._adapter_choice_available():
             return await self.async_step_settings(user_input)
         return self.async_show_menu(
             step_id="init", menu_options=["settings", "adapter"]
         )
+
+    def _adapter_choice_available(self) -> bool:
+        """Whether moving the brush to another adapter is possible at all.
+
+        Same rule as the adapter field during setup: "auto" plus a single
+        connectable scanner leaves nothing to choose.
+        """
+        current = self.config_entry.options.get(
+            CONF_BLUETOOTH_ADAPTER, BLUETOOTH_ADAPTER_AUTO
+        )
+        if current != BLUETOOTH_ADAPTER_AUTO:
+            return True
+        options = _bluetooth_adapter_options(
+            self.hass, self.config_entry.data.get(CONF_ADDRESS) or "", current
+        )
+        return len(options) >= 3
 
     async def async_step_settings(
         self, user_input: dict[str, Any] | None = None
