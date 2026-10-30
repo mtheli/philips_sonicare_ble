@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -213,6 +214,15 @@ def _brush_label(hass, info: Any) -> str:
     if previous:
         parts.insert(0, previous)
     return " · ".join(parts)
+
+
+_MAC_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$")
+
+
+def _valid_identity(raw: object) -> str:
+    """An upper-case BLE address, or "" for anything else."""
+    value = raw.upper() if isinstance(raw, str) else ""
+    return value if _MAC_RE.match(value) and value != "00:00:00:00:00:00" else ""
 
 
 def _identity_row(text: dict[str, str], identity: str, mac: str) -> str:
@@ -699,6 +709,21 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             except Exception:  # noqa: BLE001 — flow may have just finished
                 pass
 
+    async def _adopt_identity(self, identity: str | None) -> None:
+        """Key the entry on the identity a direct-BLE pairing revealed.
+
+        Same pattern as the bridge: the address is the identity, the
+        address the brush was found under is kept as bond_address. A brush
+        that already has an entry under its identity aborts here.
+        """
+        identity = _valid_identity(identity)
+        if not identity or identity == (self._address or "").upper():
+            return
+        self._bond_address = self._address or ""
+        self._address = identity
+        await self.async_set_unique_id(identity, raise_on_progress=False)
+        self._abort_if_already_configured()
+
     def _abort_if_already_configured(self) -> None:
         """Abort with detailed message if this unique_id is already configured."""
         for entry in self._async_current_entries():
@@ -1024,6 +1049,17 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                         raise NotPairedException(
                             "Condor brush requires bonding"
                         ) from err
+
+            # Pairing hands BlueZ the brush's identity key; from then on it
+            # files the device under the identity, and bleak's client
+            # follows (Device1.Address). The rotating address it was found
+            # under is unreachable afterwards — the entry must use this.
+            identity = _valid_identity(getattr(client, "address", None))
+            if identity and identity != address.upper():
+                _LOGGER.info(
+                    "%s: toothbrush identity is %s", address, identity
+                )
+                result["identity"] = identity
 
             # Battery is on the standard 0x180F service. Condor brushes
             # don't expose it (battery comes via Condor port-property at
@@ -2186,6 +2222,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             elif has_device_info and self._has_sonicare_services(data):
                 self._fetched_data = data
                 self._transport_type = TRANSPORT_BLEAK
+                await self._adopt_identity(data.get("identity"))
                 _LOGGER.info(
                     "Read capabilities over direct BLE from %s: model %s, "
                     "firmware %s, %s Sonicare service(s)",
@@ -3456,6 +3493,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 entry_data[CONF_ADDRESS] = self._address
                 entry_data[CONF_TRANSPORT_TYPE] = TRANSPORT_BLEAK
+                if self._bond_address and self._bond_address != self._address:
+                    entry_data[CONF_BOND_ADDRESS] = self._bond_address
 
             entry_options: dict[str, Any] = {}
             if (

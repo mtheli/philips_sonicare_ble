@@ -632,6 +632,62 @@ def test_fixed_scanner_out_of_range_fails_naming_other_paths(
     assert ha_choice.calls == []
 
 
+def test_fixed_scanner_invalid_rssi_does_not_receive(monkeypatch, ha_choice) -> None:
+    # Live 2026-10-30: "connecting through fixed adapter hci1 (-127 dBm);
+    # other paths: hci0 (-74 dBm)" — the -127 entry is a BlueZ leftover.
+    cls, client = _client(HCI0)
+    monkeypatch.setattr(
+        cls, "_async_get_backend_for_ble_device",
+        MagicMock(side_effect=AssertionError("must not be asked")),
+    )
+    manager = _manager(_path("hci0", HCI0, -127), _path("bath-proxy", BATH, -74))
+
+    with pytest.raises(transport.BleakError) as err:
+        client._async_get_best_available_backend_and_device(manager)
+
+    assert str(err.value) == (
+        f"Bluetooth adapter {HCI0} does not receive {ADDRESS}; received by: "
+        "bath-proxy (-74 dBm)"
+    )
+    assert ha_choice.calls == []
+
+
+async def test_transport_connect_skips_when_connected(monkeypatch) -> None:
+    # A second establish would orphan the live client (double
+    # "connected via" seen live after a quick retry).
+    establish = AsyncMock()
+    monkeypatch.setattr(transport, "bleak_establish", establish)
+    bt = transport.BleakTransport(SimpleNamespace(), ADDRESS)
+    live = SimpleNamespace(is_connected=True)
+    bt._client = live
+
+    await bt.connect()
+
+    establish.assert_not_called()
+    assert bt._client is live
+
+
+def test_register_advertisements_only_for_that_adapter(monkeypatch) -> None:
+    import habluetooth
+
+    registered = {}
+    monkeypatch.setattr(
+        habluetooth, "get_manager",
+        lambda: SimpleNamespace(
+            async_register_advertisement_callback=(
+                lambda cb, address: registered.setdefault(address, cb) and None
+            )
+        ),
+    )
+    seen = []
+    transport.register_advertisements(ADDRESS, HCI0.lower(), seen.append)
+
+    registered[ADDRESS](SimpleNamespace(source=BATH))
+    hit = SimpleNamespace(source=HCI0)
+    registered[ADDRESS](hit)
+    assert seen == [hit]
+
+
 def test_fixed_scanner_unknown_falls_back_to_source(monkeypatch, ha_choice) -> None:
     _cls, client = _client(HCI0)
 
@@ -680,7 +736,8 @@ async def test_transport_connects_with_fixed_class(monkeypatch) -> None:
 
     async def fake_establish(cls, device, name, **kwargs):
         used.append(cls)
-        return SimpleNamespace(is_connected=True, _connected_scanner=None)
+        # Not connected, so the second connect() is not skipped.
+        return SimpleNamespace(is_connected=False, _connected_scanner=None)
 
     monkeypatch.setattr(transport, "bleak_establish", fake_establish)
     monkeypatch.setattr(

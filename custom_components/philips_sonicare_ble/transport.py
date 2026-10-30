@@ -201,16 +201,16 @@ def describe_available_paths(
     return paths
 
 
-def watch_advertisements(
-    address: str, source: str
-) -> tuple[asyncio.Event, Callable[[], None]]:
-    """Set an event on the next advertisement of ``address`` via ``source``.
+def register_advertisements(
+    address: str, source: str, cb: Callable[[Any], None]
+) -> Callable[[], None]:
+    """Call ``cb`` for every packet of ``address`` received via ``source``.
 
-    Returns (event, cancel). Uses habluetooth's per-address callback,
+    Returns the cancel callable. Uses habluetooth's per-address callback,
     which fires for every packet and every scanner — local adapters
-    included, which keep no per-device timestamps of their own. Raises
-    LookupError when this core has no such callback; callers then go
-    ahead without waiting.
+    included, which keep no per-device timestamps of their own, and
+    packets the manager discards in favour of a stronger scanner. Raises
+    LookupError when this core has no such callback.
     """
     try:
         from habluetooth import get_manager
@@ -218,14 +218,27 @@ def watch_advertisements(
         register = get_manager().async_register_advertisement_callback
     except Exception as err:  # noqa: BLE001 — older habluetooth
         raise LookupError(str(err) or type(err).__name__) from err
-    event = asyncio.Event()
     wanted = source.upper()
 
     def _on_advertisement(service_info) -> None:
         if str(getattr(service_info, "source", "")).upper() == wanted:
-            event.set()
+            cb(service_info)
 
-    return event, register(_on_advertisement, address.upper())
+    return register(_on_advertisement, address.upper())
+
+
+def watch_advertisements(
+    address: str, source: str
+) -> tuple[asyncio.Event, Callable[[], None]]:
+    """Set an event on the next advertisement of ``address`` via ``source``.
+
+    Returns (event, cancel). Raises LookupError like
+    ``register_advertisements``; callers then go ahead without waiting.
+    """
+    event = asyncio.Event()
+    return event, register_advertisements(
+        address, source, lambda _service_info: event.set()
+    )
 
 
 def scanner_rssi(hass: HomeAssistant, address: str, source: str) -> int | None:
@@ -290,6 +303,12 @@ def _scanner_device_label(item) -> str:
     return f"{name} ({rssi} dBm)"
 
 
+def _is_invalid_rssi(item) -> bool:
+    """True for the -127 sentinel BlueZ leaves after invalidating RSSI."""
+    rssi = getattr(getattr(item, "advertisement", None), "rssi", None)
+    return isinstance(rssi, int) and rssi <= -127
+
+
 class _FixedScannerHaBleakClient(HaBleakClientWithServiceCache):
     """HA BLE client that connects only through one fixed scanner.
 
@@ -316,13 +335,16 @@ class _FixedScannerHaBleakClient(HaBleakClientWithServiceCache):
                 (
                     item for item in all_devices
                     if getattr(item.scanner, "source", None) == self._fixed_source
+                    # A -127 entry is a BlueZ RSSI-invalidation leftover,
+                    # not a packet: the adapter does not receive the brush.
+                    and not _is_invalid_rssi(item)
                 ),
                 None,
             )
             others = ", ".join(
                 _scanner_device_label(item)
                 for item in all_devices
-                if item is not fixed
+                if item is not fixed and not _is_invalid_rssi(item)
             ) or "none"
             if fixed is not None:
                 backend = backend_for_device(
@@ -682,6 +704,10 @@ class BleakTransport(SonicareTransport):
         return int(rssi)
 
     async def connect(self) -> None:
+        if self.is_connected:
+            # A second establish would orphan the live client, whose
+            # disconnect callback could later clear the new one.
+            return
         service_info = async_last_service_info(self._hass, self._address)
         if not service_info:
             raise TransportError(f"Device {self._address} not in range")

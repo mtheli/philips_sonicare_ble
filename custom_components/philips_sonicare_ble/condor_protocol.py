@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 import struct
+import time
 from typing import Any
 
 from .condor_adapter import map_port_props, map_sensor_frame
@@ -90,6 +91,14 @@ DEFAULT_SUBSCRIBE_PORTS: tuple[tuple[str, str], ...] = (
 _DEFAULT_PACKET_SIZE = 20
 _HANDSHAKE_TIMEOUT = 5.0
 _RESPONSE_TIMEOUT = 5.0
+# Some hosts hand every notification to the program many times although the
+# brush sent it once (issue #45: ~60 copies within microseconds). A copy is
+# the same bytes on the same characteristic as the delivery before it; a
+# new TX packet cannot look like that because its sequence number moves on.
+# A copy later than this is taken as the brush sending the packet again
+# (its ack went missing) and acked once more — but never reassembled twice.
+_COPY_WINDOW = 0.1
+_monotonic = time.monotonic
 
 
 class CondorProtocol(SonicareProtocol):
@@ -121,6 +130,12 @@ class CondorProtocol(SonicareProtocol):
         # full request/response cycle (only one in flight at a time).
         self._send_lock = asyncio.Lock()
         self._response_lock = asyncio.Lock()
+
+        # Last delivery per characteristic: (bytes, monotonic time), and
+        # how many copies of earlier deliveries were dropped this session.
+        self._last_delivery: dict[str, tuple[bytes, float]] = {}
+        self._copies_dropped = 0
+        self._resends = 0
 
         # Ports currently under Subscribe. Tracked so stop_live_updates can
         # clean up symmetrically regardless of which set was requested.
@@ -209,6 +224,15 @@ class CondorProtocol(SonicareProtocol):
         self._server_cfg_data = b""
         self._server_cfg_event.clear()
         self._handshake_ack_event.clear()
+        if self._copies_dropped or self._resends:
+            _LOGGER.debug(
+                "Condor: dropped %d host copies and %d resent packets of "
+                "notifications this session",
+                self._copies_dropped, self._resends,
+            )
+        self._last_delivery = {}
+        self._copies_dropped = 0
+        self._resends = 0
 
     async def disconnect(self) -> None:
         """Tear down protocol-level subscriptions. The BLE link itself is
@@ -238,7 +262,38 @@ class CondorProtocol(SonicareProtocol):
 
     # --- Notification callbacks -------------------------------------------
 
-    def _on_server_cfg(self, _uuid: str, data: bytes) -> None:
+    def _repeat_age(self, uuid: str, data: bytes) -> float | None:
+        """Seconds since the identical previous delivery, None if new.
+
+        Records this delivery either way.
+        """
+        now = _monotonic()
+        last = self._last_delivery.get(uuid)
+        self._last_delivery[uuid] = (bytes(data), now)
+        if last is None or last[0] != data:
+            return None
+        age = now - last[1]
+        if age >= _COPY_WINDOW:
+            # The brush sent it again, most likely because an ack was lost.
+            self._resends += 1
+            _LOGGER.debug(
+                "Condor: packet resent after %.0f ms on %s", age * 1000, uuid
+            )
+            return age
+        self._copies_dropped += 1
+        if self._copies_dropped == 1:
+            _LOGGER.info(
+                "Condor: notification delivered again after %.3f ms on %s — "
+                "the host repeats notifications; dropping the copies",
+                age * 1000, uuid,
+            )
+        return age
+
+    def _on_server_cfg(self, uuid: str, data: bytes) -> None:
+        # A late copy of the 1-byte version reply must not answer the
+        # 6-byte channel-config request that follows it.
+        if self._repeat_age(uuid, data) is not None:
+            return
         self._server_cfg_data = bytes(data)
         self._server_cfg_event.set()
 
@@ -248,11 +303,19 @@ class CondorProtocol(SonicareProtocol):
         if not self._handshake_ack_event.is_set():
             self._handshake_ack_event.set()
 
-    def _on_tx(self, _uuid: str, data: bytes) -> None:
+    def _on_tx(self, uuid: str, data: bytes) -> None:
         if len(data) < 1:
             return
         seq = data[0] & _MASK_SEQ
         payload = bytes(data[1:])
+
+        age = self._repeat_age(uuid, data)
+        if age is not None:
+            # Already reassembled. Ack only a resend — acking every copy
+            # floods TX_ACK and the brush disconnects.
+            if age >= _COPY_WINDOW and not self._transport.auto_tx_ack:
+                asyncio.get_running_loop().create_task(self._send_tx_ack(seq))
+            return
 
         # Every incoming data packet must be acked on TX_ACK — otherwise
         # the device's send window fills up and notifications stall, and

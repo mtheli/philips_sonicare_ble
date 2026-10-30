@@ -25,7 +25,12 @@ try:
 except ImportError:
     HAS_DBUS_FAST = False
 
-from .transport import BleakTransport, EspBridgeTransport, SonicareTransport
+from .transport import (
+    BleakTransport,
+    EspBridgeTransport,
+    SonicareTransport,
+    register_advertisements,
+)
 from .exceptions import TransportError
 from .condor_adapter import resolve_brushing_mode
 from .helpers import async_get_own_device
@@ -494,7 +499,12 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         service_uuids, or name). For devices like the Sonicare that send
         static data, _clear_adv_history re-arms it before each ADV wait (or the
         D-Bus RSSI listener provides the fallback on HA < 2026.5).
+
+        With a fixed adapter, the wake comes from that adapter's packets
+        only — see _start_fixed_adapter_callback.
         """
+        if self._start_fixed_adapter_callback():
+            return
 
         @callback
         def _advertisement_callback(service_info, change):
@@ -528,6 +538,47 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             BluetoothCallbackMatcher(address=self.address),
             BluetoothScanningMode.ACTIVE,
         )
+
+    def _start_fixed_adapter_callback(self) -> bool:
+        """Wake only on packets the fixed adapter itself receives.
+
+        HA's callback delivers one advertisement per change, from whichever
+        scanner the manager prefers — with hci1 fixed, a packet heard by a
+        stronger hci0 would start a connect through an adapter that does
+        not hear the brush. habluetooth's per-packet callback reports every
+        scanner, so the wake can be limited to the fixed one. It is not
+        deduplicated either, so no history clearing is needed. Returns
+        False (fall back to HA's callback) without a fixed adapter or on a
+        core without the per-packet callback.
+        """
+        fixed = self.entry.options.get(CONF_BLUETOOTH_ADAPTER)
+        if not fixed or fixed == BLUETOOTH_ADAPTER_AUTO:
+            return False
+
+        @callback
+        def _on_fixed_adapter_packet(service_info) -> None:
+            if service_info.rssi is not None and service_info.rssi <= -127:
+                return
+            if self._wake_event.is_set() and self._adv_wake:
+                return  # wake already pending; packets come several a second
+            if not self.transport.is_connected:
+                _LOGGER.info(
+                    "Wake via ADV on %s: %s | RSSI: %s dBm",
+                    fixed, service_info.address, service_info.rssi,
+                )
+            self._handle_wake()
+
+        try:
+            self._unsub_adv_debug = register_advertisements(
+                self.address, fixed, _on_fixed_adapter_packet
+            )
+        except LookupError as err:
+            _LOGGER.debug(
+                "%s: no per-packet advertisement callback (%s) — waking on "
+                "any adapter", self.address, err,
+            )
+            return False
+        return True
 
     async def _start_dbus_rssi_listener(self) -> None:
         """Listen for BlueZ D-Bus RSSI changes to detect device advertisements.
