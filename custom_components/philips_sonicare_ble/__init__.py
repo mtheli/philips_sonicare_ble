@@ -28,6 +28,7 @@ from .const import (
     CONF_BOND_ADDRESS,
     CONF_PENDING_IDENTITY,
     CONF_PIPELINED_READS,
+    CONF_BLUETOOTH_ADAPTER,
     DEFAULT_PIPELINED_READS,
     CHAR_SERVICE_MAP,
     SVC_CONDOR,
@@ -379,7 +380,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ),
         )
     else:
-        transport = BleakTransport(hass, address)
+        transport = BleakTransport(
+            hass,
+            address,
+            bluetooth_adapter=lambda: entry.options.get(CONF_BLUETOOTH_ADAPTER),
+        )
 
     coordinator = PhilipsSonicareCoordinator(hass, entry, transport)
 
@@ -674,6 +679,8 @@ async def _async_release_bond(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
         return
     try:
+        # No adapter given: drop the bond on every local adapter — after
+        # a change of the Bluetooth adapter option there can be several.
         await async_remove_device(address)
     except Exception as err:  # noqa: BLE001 — removal must not fail
         _LOGGER.warning(

@@ -28,11 +28,17 @@ def _flow() -> PhilipsSonicareConfigFlow:
     return flow
 
 
-def _patch_paths(monkeypatch, paths) -> None:
+def _patch_paths(monkeypatch, paths, connectable=()) -> None:
     monkeypatch.setattr(
         "custom_components.philips_sonicare_ble.config_flow."
         "describe_available_paths",
         MagicMock(return_value=paths),
+    )
+    # The adapter field lists every connectable scanner, hearing or not.
+    monkeypatch.setattr(
+        "custom_components.philips_sonicare_ble.config_flow."
+        "describe_connectable_scanners",
+        MagicMock(return_value=list(connectable)),
     )
 
 
@@ -82,6 +88,27 @@ def test_proxy_preferred_with_local_fallback_hint(monkeypatch) -> None:
     assert variant == "proxy_local"
     assert values["local_name"] == "<b>hci0</b>"
     assert values["local_rssi"] == " (-82 dBm)"
+
+
+def test_proxy_with_silent_local_adapter_points_to_field(monkeypatch) -> None:
+    # hci0 does not hear the brush right now, but it is a connectable
+    # scanner and therefore offered in the adapter field below.
+    _patch_paths(
+        monkeypatch,
+        [{"name": "atom-s3r", "rssi": -56, "is_local": False}],
+        connectable=[
+            {"name": "atom-s3r", "source": "98:88:E0:0E:DA:D2",
+             "rssi": -56, "is_local": False},
+            {"name": "hci0 (00:0A:CD:46:B2:2D)", "source": "00:0A:CD:46:B2:2D",
+             "rssi": None, "is_local": True},
+        ],
+    )
+    via, variant, values = _flow()._transport_lines()
+    assert via == " via **Bluetooth proxy** (atom-s3r, -56 dBm)"
+    assert variant == "proxy_choose"
+    assert values["local_name"] == "<b>hci0</b>"
+    # It does not hear the brush, so there is no signal to show.
+    assert values["local_rssi"] == ""
 
 
 def test_local_strongest_wins_over_weaker_proxy(monkeypatch) -> None:
@@ -149,6 +176,39 @@ async def test_picker_labels_strip_local_adapter_mac(monkeypatch) -> None:
     options = result["data_schema"].schema["address"].config["options"]
     assert "via hci0" in options[0]["label"]
     assert "(proxy)" not in options[0]["label"]
+
+
+async def test_picker_hides_brush_no_longer_received(monkeypatch) -> None:
+    import time as time_mod
+
+    flow = _flow()
+    flow._address = None
+
+    now = time_mod.monotonic()
+    awake = SimpleNamespace(
+        name="Philips Sonicare", address=ADDRESS, time=now - 7, rssi=-76,
+    )
+    # BlueZ leaves its -127 "no longer received" marker in the cache.
+    asleep = SimpleNamespace(
+        name="Philips Sonicare", address="24:E5:AA:92:32:F9",
+        time=now - 106, rssi=-127,
+    )
+    monkeypatch.setattr(
+        "custom_components.philips_sonicare_ble.config_flow."
+        "async_discovered_service_info",
+        lambda hass: [awake, asleep],
+    )
+    _patch_paths(monkeypatch, [
+        {"name": "hci0 (00:0A:CD:46:B2:2D)", "rssi": -76, "is_local": True},
+    ])
+
+    result = await flow.async_step_user_bleak()
+
+    options = result["data_schema"].schema["address"].config["options"]
+    values = [o["value"] for o in options]
+    assert ADDRESS in values
+    assert "24:E5:AA:92:32:F9" not in values
+    assert not any("-127" in o["label"] for o in options)
 
 
 def test_capabilities_label_distinguishes_proxy() -> None:

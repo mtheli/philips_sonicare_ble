@@ -30,6 +30,8 @@ from .exceptions import TransportError
 from .condor_adapter import resolve_brushing_mode
 from .helpers import async_get_own_device
 from .const import (
+    BLUETOOTH_ADAPTER_AUTO,
+    CONF_BLUETOOTH_ADAPTER,
     DOMAIN,
     SVC_CONDOR,
     SVC_BRUSHHEAD,
@@ -548,20 +550,45 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.warning("D-Bus not available for RSSI wake detection: %s", err)
             return
 
-        # Find the device path dynamically (supports hci0, hci1, etc.)
-        from .dbus_pairing import _find_device_path
-        device_path = await _find_device_path(self._dbus_bus, self.address)
-        if not device_path:
+        # One device object per adapter: listen on all of them, or only on
+        # the fixed adapter's — an RSSI wake from an adapter the entry
+        # never connects through would only start a doomed connect.
+        from .dbus_pairing import _device_paths_on_adapters, _find_device_paths
+        fixed = self.entry.options.get(CONF_BLUETOOTH_ADAPTER)
+        if fixed == BLUETOOTH_ADAPTER_AUTO:
+            fixed = None
+        try:
+            # Constructed paths cover adapters that have not heard the brush
+            # yet; the ones found by Address cover an object whose path still
+            # carries an older (rotating) address.
+            device_paths = set(await _device_paths_on_adapters(
+                self._dbus_bus, self.address, fixed
+            )) | set(await _find_device_paths(
+                self._dbus_bus, self.address, fixed
+            ))
+        except Exception as err:  # noqa: BLE001 — wake signal is optional
+            _LOGGER.debug("D-Bus RSSI listener: adapter lookup failed: %s", err)
+            device_paths = set()
+        if not device_paths and fixed is None:
+            # No adapter registered yet (e.g. during adapter recovery):
+            # listen where the default adapter will put the device.
             mac_path = self.address.upper().replace(":", "_")
-            device_path = f"/org/bluez/hci0/dev_{mac_path}"
-            _LOGGER.debug("Device not in BlueZ ObjectManager, using default path: %s", device_path)
+            device_paths = {f"/org/bluez/hci0/dev_{mac_path}"}
+            _LOGGER.debug(
+                "No BlueZ adapter found, using default path: %s", device_paths
+            )
+        if not device_paths:
+            _LOGGER.debug(
+                "No local adapter to listen on — D-Bus RSSI listener disabled"
+            )
+            return
 
         def _on_message(msg: Message) -> None:
             if msg.message_type != MessageType.SIGNAL:
                 return
             if msg.member != "PropertiesChanged":
                 return
-            if msg.path != device_path:
+            if msg.path not in device_paths:
                 return
             body = msg.body
             if len(body) >= 2 and "RSSI" in body[1]:
@@ -574,23 +601,24 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._dbus_bus.add_message_handler(_on_message)
 
-        await self._dbus_bus.call(Message(
-            destination="org.freedesktop.DBus",
-            path="/org/freedesktop/DBus",
-            interface="org.freedesktop.DBus",
-            member="AddMatch",
-            signature="s",
-            body=[
-                f"type='signal',"
-                f"interface='org.freedesktop.DBus.Properties',"
-                f"member='PropertiesChanged',"
-                f"path='{device_path}'"
-            ],
-        ))
+        for device_path in sorted(device_paths):
+            await self._dbus_bus.call(Message(
+                destination="org.freedesktop.DBus",
+                path="/org/freedesktop/DBus",
+                interface="org.freedesktop.DBus",
+                member="AddMatch",
+                signature="s",
+                body=[
+                    f"type='signal',"
+                    f"interface='org.freedesktop.DBus.Properties',"
+                    f"member='PropertiesChanged',"
+                    f"path='{device_path}'"
+                ],
+            ))
 
         _LOGGER.info(
             "D-Bus RSSI listener active for %s (%s)",
-            self.address, device_path,
+            self.address, ", ".join(sorted(device_paths)),
         )
 
     # ------------------------------------------------------------------

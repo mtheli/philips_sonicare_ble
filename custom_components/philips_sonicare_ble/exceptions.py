@@ -39,3 +39,7 @@ class NotPairedException(PhilipsSonicareException):
 
 class DeviceAsleepException(PhilipsSonicareException):
     """No recent connectable advertisement — the brush is asleep/unreachable."""
+
+
+class AdapterNotReceivingException(PhilipsSonicareException):
+    """The fixed Bluetooth adapter does not receive the brush."""

@@ -15,7 +15,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from bleak import BleakClient
+from bleak.exc import BleakError
 from bleak_retry_connector import establish_connection as bleak_establish
+from habluetooth.usage import HaBleakClientWithServiceCache
 
 from homeassistant.components.bluetooth import (
     HaScanner,
@@ -23,6 +25,11 @@ from homeassistant.components.bluetooth import (
     async_scanner_by_source,
     async_scanner_devices_by_address,
 )
+
+try:
+    from homeassistant.components.bluetooth import async_current_scanners
+except ImportError:  # pragma: no cover — older cores + the pinned CI
+    async_current_scanners = None
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_track_time_interval
@@ -34,6 +41,7 @@ from .const import (
     BRIDGE_FIELD_PEER_IDENTITY,
     BRIDGE_PIPELINED_READS_VERSION,
     CHAR_SERVICE_MAP,
+    BLUETOOTH_ADAPTER_AUTO,
 )
 from .exceptions import TransportError
 
@@ -180,6 +188,7 @@ def describe_available_paths(
             )
             paths.append({
                 "name": name,
+                "source": getattr(scanner, "source", None),
                 "rssi": rssi,
                 "is_local": isinstance(scanner, HaScanner),
             })
@@ -190,6 +199,207 @@ def describe_available_paths(
         reverse=True,
     )
     return paths
+
+
+def watch_advertisements(
+    address: str, source: str
+) -> tuple[asyncio.Event, Callable[[], None]]:
+    """Set an event on the next advertisement of ``address`` via ``source``.
+
+    Returns (event, cancel). Uses habluetooth's per-address callback,
+    which fires for every packet and every scanner — local adapters
+    included, which keep no per-device timestamps of their own. Raises
+    LookupError when this core has no such callback; callers then go
+    ahead without waiting.
+    """
+    try:
+        from habluetooth import get_manager
+
+        register = get_manager().async_register_advertisement_callback
+    except Exception as err:  # noqa: BLE001 — older habluetooth
+        raise LookupError(str(err) or type(err).__name__) from err
+    event = asyncio.Event()
+    wanted = source.upper()
+
+    def _on_advertisement(service_info) -> None:
+        if str(getattr(service_info, "source", "")).upper() == wanted:
+            event.set()
+
+    return event, register(_on_advertisement, address.upper())
+
+
+def scanner_rssi(hass: HomeAssistant, address: str, source: str) -> int | None:
+    """RSSI at which scanner ``source`` receives ``address`` now, if at all."""
+    for path in describe_available_paths(hass, address):
+        if str(path["source"] or "").upper() == source.upper():
+            rssi = path["rssi"]
+            return rssi if isinstance(rssi, int) else None
+    return None
+
+
+def describe_connectable_scanners(
+    hass: HomeAssistant, address: str
+) -> list[dict[str, object]]:
+    """Every connectable scanner, for picking a fixed one.
+
+    The brush sleeps most of the time, so a list of only the scanners
+    hearing it right now would usually be empty. Scanners that do hear it
+    come first, strongest first, with their RSSI; the rest follow by name
+    with ``rssi`` None. Each entry: ``{"name", "source", "rssi",
+    "is_local"}``.
+    """
+    heard = {
+        p["source"]: p["rssi"]
+        for p in describe_available_paths(hass, address)
+        if p["source"]
+    }
+    if async_current_scanners is None:
+        # Cores without the scanner list: offer what hears the brush now.
+        return [
+            p for p in describe_available_paths(hass, address) if p["source"]
+        ]
+    scanners: list[dict[str, object]] = []
+    try:
+        for scanner in async_current_scanners(hass):
+            source = getattr(scanner, "source", None)
+            if not source or not getattr(scanner, "connectable", False):
+                continue
+            scanners.append({
+                "name": getattr(scanner, "name", None) or source,
+                "source": source,
+                "rssi": heard.get(source),
+                "is_local": isinstance(scanner, HaScanner),
+            })
+    except Exception:  # noqa: BLE001 — options list only, never break the flow
+        return []
+    scanners.sort(
+        key=lambda s: (
+            s["rssi"] is None,
+            -s["rssi"] if isinstance(s["rssi"], int) else 0,
+            str(s["name"]).lower(),
+        )
+    )
+    return scanners
+
+
+def _scanner_device_label(item) -> str:
+    """Return 'scanner (rssi dBm)' for a debug line, never raising."""
+    scanner = getattr(item, "scanner", None)
+    name = getattr(scanner, "name", None) or getattr(scanner, "source", "?")
+    rssi = getattr(getattr(item, "advertisement", None), "rssi", None)
+    return f"{name} ({rssi} dBm)"
+
+
+class _FixedScannerHaBleakClient(HaBleakClientWithServiceCache):
+    """HA BLE client that connects only through one fixed scanner.
+
+    Subclasses set ``_fixed_source``. When that scanner does not receive
+    the brush or has no free slot, the connect fails — the message names
+    the adapters that do receive it, so the log says why.
+    """
+
+    _fixed_source: str = ""
+
+    def _async_get_best_available_backend_and_device(self, manager):
+        """Return the fixed scanner's backend or raise BleakError.
+
+        These are private habluetooth hooks; if they change, the normal
+        selector runs with a warning rather than the brush going dark.
+        """
+        try:
+            address = self._HaBleakClientWrapper__address  # noqa: SLF001
+            backend_for_device = getattr(
+                self, "_async_get_backend_for_ble_device"
+            )
+            all_devices = manager.async_scanner_devices_by_address(address, True)
+            fixed = next(
+                (
+                    item for item in all_devices
+                    if getattr(item.scanner, "source", None) == self._fixed_source
+                ),
+                None,
+            )
+            others = ", ".join(
+                _scanner_device_label(item)
+                for item in all_devices
+                if item is not fixed
+            ) or "none"
+            if fixed is not None:
+                backend = backend_for_device(
+                    manager, fixed.scanner, fixed.ble_device
+                )
+                if backend is not None:
+                    _LOGGER.debug(
+                        "%s: connecting through fixed adapter %s; "
+                        "other paths: %s",
+                        address, _scanner_device_label(fixed), others,
+                    )
+                    return backend
+                raise BleakError(
+                    f"Bluetooth adapter {_scanner_device_label(fixed)} has no "
+                    f"free connection slot for {address}"
+                )
+            lookup = getattr(manager, "async_scanner_by_source", None)
+            fixed_scanner = lookup(self._fixed_source) if lookup else None
+            raise BleakError(
+                f"Bluetooth adapter "
+                f"{getattr(fixed_scanner, 'name', None) or self._fixed_source}"
+                f" does not receive "
+                f"{address}; received by: {others}"
+            )
+        except (AttributeError, TypeError):
+            _LOGGER.warning(
+                "habluetooth private backend-selection API changed; "
+                "ignoring the fixed Bluetooth adapter",
+                exc_info=True,
+            )
+        return super()._async_get_best_available_backend_and_device(manager)
+
+
+_FIXED_CLIENT_CLASSES: dict[str, type] = {}
+
+
+def fixed_scanner_client_class(source: str | None) -> type:
+    """Client class for ``establish_connection`` bound to a fixed scanner.
+
+    ``None``/"auto" (or a habluetooth without the hooks) returns the plain
+    ``BleakClient``, i.e. exactly the behaviour without the option. One
+    subclass per source is cached so repeated connects reuse it.
+    """
+    if not source or source == BLUETOOTH_ADAPTER_AUTO:
+        return BleakClient
+    required_hooks = (
+        "_async_get_best_available_backend_and_device",
+        "_async_get_backend_for_ble_device",
+    )
+    if not all(
+        hasattr(HaBleakClientWithServiceCache, hook) for hook in required_hooks
+    ):
+        return BleakClient
+    cls = _FIXED_CLIENT_CLASSES.get(source)
+    if cls is None:
+        cls = type(
+            "FixedScannerHaBleakClient",
+            (_FixedScannerHaBleakClient,),
+            {"_fixed_source": source},
+        )
+        _FIXED_CLIENT_CLASSES[source] = cls
+    return cls
+
+
+def local_adapter_source(client: BleakClient) -> str | None:
+    """MAC of the local adapter that carries ``client``, or None.
+
+    None for a proxy-carried connection or when habluetooth does not say
+    which scanner connected. The adapter MAC is what BlueZ keys a bond
+    on (via the adapter object) and what the Bluetooth adapter option
+    stores.
+    """
+    if not is_local_bluez_connection(client):
+        return None
+    scanner = getattr(client, "_connected_scanner", None)
+    source = getattr(scanner, "source", None)
+    return str(source) if source else None
 
 
 def is_local_bluez_connection(client: BleakClient) -> bool:
@@ -429,9 +639,16 @@ class SonicareTransport(abc.ABC):
 class BleakTransport(SonicareTransport):
     """Direct BLE transport using bleak."""
 
-    def __init__(self, hass: HomeAssistant, address: str) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        address: str,
+        bluetooth_adapter: Callable[[], str | None] | None = None,
+    ) -> None:
         self._hass = hass
         self._address = address
+        # Read on every connect, like the bridge's pipelined-reads switch.
+        self._bluetooth_adapter = bluetooth_adapter or (lambda: None)
         self._client: BleakClient | None = None
         self._disconnect_cb: Callable[[], None] | None = None
         self._last_read_errors: dict[str, str] = {}
@@ -478,7 +695,7 @@ class BleakTransport(SonicareTransport):
                 self._disconnect_cb()
 
         self._client = await bleak_establish(
-            BleakClient,
+            fixed_scanner_client_class(self._bluetooth_adapter()),
             service_info.device,
             "philips_sonicare",
             disconnected_callback=_on_disconnect,
@@ -522,7 +739,8 @@ class BleakTransport(SonicareTransport):
         client: BleakClient | None = None
         try:
             client = await bleak_establish(
-                BleakClient, service_info.device, "philips_sonicare", timeout=30.0
+                fixed_scanner_client_class(self._bluetooth_adapter()),
+                service_info.device, "philips_sonicare", timeout=30.0,
             )
             if not client or not client.is_connected:
                 return results
