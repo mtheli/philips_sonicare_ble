@@ -681,10 +681,13 @@ async def _cleanup_disconnected_client(client: BleakClient) -> None:
     shorter than that, or it cancels ``disconnect()`` before it reaches
     the bus-closing step, leaking the bus instead of closing it.
     """
+    address = getattr(client, "address", "?")
     try:
         await client.disconnect()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Bus cleanup for %s raised (ignored): %s", address, err)
+    else:
+        _LOGGER.debug("Bus cleanup for %s done", address)
 
 
 class BleakTransport(SonicareTransport):
