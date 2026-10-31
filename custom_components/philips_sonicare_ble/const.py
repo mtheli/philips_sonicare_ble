@@ -782,5 +782,10 @@ DEFAULT_SENSOR_GYROSCOPE = False
 
 CONF_WARN_COUNTERFEIT = "warn_counterfeit_brushhead"
 DEFAULT_WARN_COUNTERFEIT = True
+
+# Direct BLE only: source of the one scanner connects go through; the connect
+# fails when it does not receive the brush. "auto" leaves the choice to HA.
+CONF_BLUETOOTH_ADAPTER = "bluetooth_adapter"
+BLUETOOTH_ADAPTER_AUTO = "auto"
 # Seconds of active brushing before a missing/invalid serial raises an alert
 COUNTERFEIT_DETECTION_DELAY = 30

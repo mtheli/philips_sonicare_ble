@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -27,6 +29,7 @@ except ImportError:  # pragma: no cover — older cores + the pinned CI
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import Event, callback
 from homeassistant.data_entry_flow import AbortFlow, FlowResult
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import http as ha_http
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from homeassistant.helpers.translation import async_get_translations
@@ -61,6 +64,8 @@ from .const import (
     CONF_SENSOR_TEMPERATURE,
     CONF_SENSOR_GYROSCOPE,
     CONF_WARN_COUNTERFEIT,
+    CONF_BLUETOOTH_ADAPTER,
+    BLUETOOTH_ADAPTER_AUTO,
     TRANSPORT_BLEAK,
     TRANSPORT_ESP_BRIDGE,
     DEFAULT_NOTIFY_THROTTLE,
@@ -94,14 +99,24 @@ from .transport import (
     bridge_bond_address,
     bridge_identity,
     describe_available_paths,
+    describe_connectable_scanners,
     describe_connection_path,
+    fixed_scanner_client_class,
+    scanner_rssi,
+    watch_advertisements,
     is_local_bluez_connection,
+    local_adapter_source,
     slot_changed_at,
     UNPAIR_OK,
     UNPAIR_FAILED,
     UNPAIR_UNAVAILABLE,
 )
-from .exceptions import DeviceAsleepException, NotPairedException, TransportError
+from .exceptions import (
+    AdapterNotReceivingException,
+    DeviceAsleepException,
+    NotPairedException,
+    TransportError,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -109,6 +124,105 @@ _LOGGER = logging.getLogger(__name__)
 def _is_hassio(hass) -> bool:
     """Check if Home Assistant is running on HAOS / Supervised."""
     return "hassio" in hass.config.components
+
+
+def _bluetooth_adapter_options(
+    hass, address: str, current: str
+) -> list[SelectOptionDict]:
+    """Automatic first, then every connectable scanner.
+
+    A saved scanner that is offline right now stays in the list, so
+    opening the options does not silently reset the choice.
+    """
+    options = [
+        SelectOptionDict(
+            value=BLUETOOTH_ADAPTER_AUTO, label="Chosen by Home Assistant"
+        )
+    ]
+    for scanner in describe_connectable_scanners(hass, address):
+        # Name the kind of path, in the same untranslated product names the
+        # dialog text uses — "hci0" alone does not say it is the local one.
+        kind = "Direct Bluetooth" if scanner["is_local"] else "Bluetooth proxy"
+        label = f"{scanner['name']} — {kind}"
+        if isinstance(scanner["rssi"], int):
+            label = f"{label}, {scanner['rssi']} dBm"
+        options.append(
+            SelectOptionDict(value=str(scanner["source"]), label=label)
+        )
+    if current != BLUETOOTH_ADAPTER_AUTO and current not in {
+        o["value"] for o in options
+    }:
+        options.append(SelectOptionDict(value=current, label=current))
+    return options
+
+
+def _brush_family(info: Any) -> str:
+    """Name a discovered brush by what its advertisement gives away.
+
+    Every adult brush advertises as "Philips Sonicare", so two of them are
+    told apart only by MAC. Kids models name themselves; the service UUID
+    in the scan response separates Condor from Classic. A scanner that
+    only listened passively has no scan response — then the name stays.
+    """
+    name = getattr(info, "name", None) or ""
+    if "kids" in name.lower():
+        return "Sonicare for Kids"
+    uuids = {u.lower() for u in (getattr(info, "service_uuids", None) or ())}
+    if SVC_CONDOR.lower() in uuids:
+        return "Sonicare (Condor)"
+    if SVC_SONICARE.lower() in uuids:
+        return "Sonicare (Classic)"
+    return name or "Philips Sonicare"
+
+
+def _previous_device_name(hass, address: str) -> str | None:
+    """The user's own name for a brush that was set up here before.
+
+    Removing an entry keeps the device in the registry's deleted list for
+    a while, with the name the user gave it — enough to recognise the
+    brush when it shows up again. Never breaks discovery.
+    """
+    try:
+        deleted = dr.async_get(hass).deleted_devices
+        for device in deleted.values():
+            name = getattr(device, "name_by_user", None)
+            if name and any(
+                kind == dr.CONNECTION_BLUETOOTH
+                and value.upper() == address.upper()
+                for kind, value in device.connections
+            ):
+                return name
+    except Exception:  # noqa: BLE001 — label only
+        return None
+    return None
+
+
+def _via_label(paths: list[dict]) -> str:
+    """'via hci0' / 'via atom-lite (proxy)' for the strongest path, or ''."""
+    if not paths:
+        return ""
+    best = paths[0]
+    # Local scanner names carry the adapter MAC in parentheses; strip it.
+    via = str(best["name"]).split(" (")[0]
+    return f"via {via}" + ("" if best["is_local"] else " (proxy)")
+
+
+def _brush_label(hass, info: Any) -> str:
+    """'<own name> · <family> · <MAC>' for discovery title and picker."""
+    parts = [_brush_family(info), info.address]
+    previous = _previous_device_name(hass, info.address)
+    if previous:
+        parts.insert(0, previous)
+    return " · ".join(parts)
+
+
+_MAC_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$")
+
+
+def _valid_identity(raw: object) -> str:
+    """An upper-case BLE address, or "" for anything else."""
+    value = raw.upper() if isinstance(raw, str) else ""
+    return value if _MAC_RE.match(value) and value != "00:00:00:00:00:00" else ""
 
 
 def _identity_row(text: dict[str, str], identity: str, mac: str) -> str:
@@ -474,6 +588,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._fetched_data: dict[str, Any] | None = None
         self._pair_error: str | None = None
         self._transport_type: str = TRANSPORT_BLEAK
+        # Direct BLE only: the adapter picked before the first connect, so
+        # the probe — and its pairing — already runs through it.
+        self._bluetooth_adapter: str = BLUETOOTH_ADAPTER_AUTO
         self._esp_device_name: str | None = None
         self._esp_bridge_id: str = ""
         # Address the bridge files the bond under; differs from _address
@@ -501,6 +618,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # connects so a retry that never reaches the device keeps showing
         # the pairing dialog that matches the last known transport.
         self._probe_via_proxy: bool | None = None
+        # MAC of the local adapter that carried the last probe — bonds
+        # are per adapter, so bond checks and pairing must target it.
+        self._probe_adapter: str | None = None
         self._probe_proxy_name: str | None = None
         # Set when a probe read had to wait for SMP (encryption required).
         # Used to label BLE security on the proxy path, where the BlueZ
@@ -588,6 +708,21 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             except Exception:  # noqa: BLE001 — flow may have just finished
                 pass
+
+    async def _adopt_identity(self, identity: str | None) -> None:
+        """Key the entry on the identity a direct-BLE pairing revealed.
+
+        Same pattern as the bridge: the address is the identity, the
+        address the brush was found under is kept as bond_address. A brush
+        that already has an entry under its identity aborts here.
+        """
+        identity = _valid_identity(identity)
+        if not identity or identity == (self._address or "").upper():
+            return
+        self._bond_address = self._address or ""
+        self._address = identity
+        await self.async_set_unique_id(identity, raise_on_progress=False)
+        self._abort_if_already_configured()
 
     def _abort_if_already_configured(self) -> None:
         """Abort with detailed message if this unique_id is already configured."""
@@ -813,6 +948,18 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             _LOGGER.warning("Device %s not found despite recent ADV", address)
             raise DeviceAsleepException
 
+        fixed = self._bluetooth_adapter
+        if fixed != BLUETOOTH_ADAPTER_AUTO and fixed not in {
+            p["source"] for p in describe_available_paths(self.hass, address)
+        }:
+            # Fail fast with a readable reason instead of letting the fixed
+            # client run establish_connection into its retries.
+            _LOGGER.info(
+                "%s: fixed Bluetooth adapter %s does not receive the toothbrush",
+                address, fixed,
+            )
+            raise AdapterNotReceivingException
+
         client: BleakClient | None = None
         try:
             # Progress milestones: the connect is a single await and by far
@@ -827,7 +974,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             )
             try:
                 client = await bleak_establish(
-                    BleakClient, device, "philips_sonicare_ble",
+                    fixed_scanner_client_class(self._bluetooth_adapter),
+                    device, "philips_sonicare_ble",
                     use_services_cache=True, timeout=30.0,
                 )
             finally:
@@ -843,6 +991,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             # dialog (host instructions vs. proxy guidance) and decide
             # whether the D-Bus auto-pair machinery applies at all.
             self._probe_via_proxy = not is_local_bluez_connection(client)
+            self._probe_adapter = local_adapter_source(client)
             # Scanner names carry the adapter MAC in parentheses — strip it
             # for the dialog (same as _short_scanner in the preview).
             self._probe_proxy_name = (
@@ -877,7 +1026,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     async_is_device_paired,
                     async_pair_via_existing_client,
                 )
-                if not await async_is_device_paired(address):
+                if not await async_is_device_paired(
+                    address, self._probe_adapter
+                ):
                     _LOGGER.info(
                         "%s: Condor service present without a bond — "
                         "pairing on the existing probe connection",
@@ -898,6 +1049,17 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                         raise NotPairedException(
                             "Condor brush requires bonding"
                         ) from err
+
+            # Pairing hands BlueZ the brush's identity key; from then on it
+            # files the device under the identity, and bleak's client
+            # follows (Device1.Address). The rotating address it was found
+            # under is unreachable afterwards — the entry must use this.
+            identity = _valid_identity(getattr(client, "address", None))
+            if identity and identity != address.upper():
+                _LOGGER.info(
+                    "%s: toothbrush identity is %s", address, identity
+                )
+                result["identity"] = identity
 
             # Battery is on the standard 0x180F service. Condor brushes
             # don't expose it (battery comes via Condor port-property at
@@ -998,7 +1160,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         try:
             _LOGGER.info("Auto-pairing %s via D-Bus ...", address)
-            await async_pair_and_trust(address)
+            await async_pair_and_trust(
+                address, self._pair_target_adapter(address)
+            )
             await asyncio.sleep(2)  # let BlueZ key distribution settle
             return True
         except PairingError as err:
@@ -1007,6 +1171,38 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             # why pairing failed instead of a generic instruction wall.
             self._pair_error = str(err)
             return False
+
+    def _fixed_adapter_is_local(self, address: str) -> bool:
+        fixed = self._bluetooth_adapter.upper()
+        return any(
+            s["is_local"] and str(s["source"]).upper() == fixed
+            for s in describe_connectable_scanners(self.hass, address)
+        )
+
+    def _pair_target_adapter(self, address: str) -> str | None:
+        """Local adapter whose bond a pairing step should check and create.
+
+        A fixed adapter is the only one the entry will ever connect
+        through. On Automatic, the adapter that carried the probe; when
+        the probe never connected, the strongest local adapter hearing
+        the brush. None when no local adapter is known — then BlueZ picks.
+        """
+        if self._bluetooth_adapter != BLUETOOTH_ADAPTER_AUTO:
+            # A fixed proxy is no BlueZ adapter: nothing to pair there.
+            return (
+                self._bluetooth_adapter
+                if self._fixed_adapter_is_local(address) else None
+            )
+        if self._probe_adapter:
+            return self._probe_adapter
+        local = next(
+            (
+                p for p in describe_available_paths(self.hass, address)
+                if p.get("is_local") and p.get("source")
+            ),
+            None,
+        )
+        return str(local["source"]) if local else None
 
     async def _fetch_with_pair_retry(self, address: str) -> dict[str, Any]:
         """Fetch capabilities, auto-pairing on auth errors.
@@ -1034,7 +1230,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     "bonded" if self._probe_needed_encryption else "open_gatt"
                 )
             else:
-                paired = await async_is_device_paired(address)
+                paired = await async_is_device_paired(
+                    address, self._probe_adapter
+                )
                 result["pairing"] = "bonded" if paired else "open_gatt"
             return result
         except NotPairedException as err:
@@ -1047,7 +1245,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # entry. Skip it and surface the failure; the pairing step then
         # shows proxy-specific guidance, and its Retry re-triggers the
         # ESP-side SMP via a fresh probe read.
-        if self._probe_via_proxy:
+        if self._probe_via_proxy or (
+            self._bluetooth_adapter != BLUETOOTH_ADAPTER_AUTO
+            and not self._fixed_adapter_is_local(address)
+        ):
             raise NotPairedException
 
         # If a bond already exists, the destructive RemoveDevice in
@@ -1061,7 +1262,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # already worthless, so remove+re-pair is the only recovery
         # (issue #25: otherwise the user is stuck until a manual
         # ``bluetoothctl remove``).
-        if await async_is_device_paired(address):
+        if await async_is_device_paired(
+            address, self._pair_target_adapter(address)
+        ):
             if not auth_error:
                 _LOGGER.warning(
                     "%s: capability read failed but a bond exists — "
@@ -1242,17 +1445,20 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     @classmethod
     def _get_service_status_text(
         cls, fetched_uuids: list[str], model: str = ""
-    ) -> tuple[str, bool]:
-        """Return ``(table, needs_condor_note)`` for the services block.
+    ) -> tuple[str, bool, bool]:
+        """Return ``(table, needs_condor_note, has_missing)`` for the services block.
 
         The table is a 2-column HTML table — left column: ✅ available
         services, right column: ❌ services not present on this model.
+        A Condor handle never has the Classic feature services, so they
+        are left out rather than listed as missing.
         Its row count depends on the model, so unlike the device-info
         table it cannot become static translated text; the service names
         it lists are protocol identifiers and stay as they are.
 
         ``needs_condor_note`` asks for the text block explaining why the
-        Classic feature services are absent on a Condor handle.
+        Classic feature services are absent on a Condor handle;
+        ``has_missing`` asks for the ❌ legend.
         """
         fetched_lower = {s.lower() for s in fetched_uuids} - _STANDARD_BLE_SERVICES
         family = cls._detect_family(fetched_lower, model)
@@ -1273,6 +1479,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 reason = cls._missing_reason(uuid, family)
                 if reason:
                     used_reasons.add(reason)
+                if reason == "via Condor protocol":
+                    continue
                 missing.append(name)
 
         known_all = _EXPECTED_SERVICES | {SVC_BYTESTREAM.lower()}
@@ -1285,7 +1493,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if not found and not missing:
             # A dash, not a sentence — this value is built here and could
             # not follow the user's frontend language.
-            return "—", False
+            return "—", False, False
 
         # Layout: ✅ left column, ❌ right column when both groups are non-empty.
         # When only one group is present (e.g. premium model with all services
@@ -1315,7 +1523,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # step's translated text. The Condor note is model-specific, so
         # it rides in as a translated block — neither may be a sentence
         # built here, which would not follow the frontend language.
-        return table, "via Condor protocol" in used_reasons
+        return table, "via Condor protocol" in used_reasons, bool(missing)
 
     @staticmethod
     def _get_device_info_values(
@@ -1737,8 +1945,13 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "name": f"Philips Sonicare (Condor, seen {seen})"
             }
         else:
+            # Snapshot at discovery time — the title is not refreshed.
+            via = _via_label(
+                describe_available_paths(self.hass, discovery_info.address)
+            )
+            label = _brush_label(self.hass, discovery_info)
             self.context["title_placeholders"] = {
-                "name": f"Bluetooth ({discovery_info.address})"
+                "name": f"{label} · {via}" if via else label
             }
         return await self.async_step_bluetooth_confirm()
 
@@ -1799,6 +2012,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self._esp_bridge_health_check()
 
         if user_input is not None:
+            self._bluetooth_adapter = user_input.get(
+                CONF_BLUETOOTH_ADAPTER, BLUETOOTH_ADAPTER_AUTO
+            )
             return self._start_ble_probe("bluetooth_confirm", self._address)
 
         # One-shot outcome from ble_probe_finish. errors["base"] does not
@@ -1834,8 +2050,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             # its own that no longer reach the frontend once it is a value.
             warn = _alert("warning", caveat.format(**warning_values))
 
+        adapter_field = self._bluetooth_adapter_field(self._address or "")
         return self.async_show_form(
             step_id="bluetooth_confirm",
+            data_schema=vol.Schema(adapter_field) if adapter_field else None,
             description_placeholders={
                 "name": self._name,
                 "address": self._address,
@@ -1900,7 +2118,22 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             "proxy_rssi": _rssi(best),
         }
         if local is None:
-            return via, "proxy", values
+            # The local adapter does not hear the brush right now, but it
+            # may still be in the adapter field below — then point there
+            # instead of the generic "use a local adapter" advice.
+            listed = next(
+                (
+                    s for s in describe_connectable_scanners(
+                        self.hass, self._address or ""
+                    )
+                    if s["is_local"]
+                ),
+                None,
+            )
+            if listed is None:
+                return via, "proxy", values
+            values["local_name"] = f"<b>{self._short_scanner(listed)}</b>"
+            return via, "proxy_choose", values
         values["local_name"] = f"<b>{self._short_scanner(local)}</b>"
         values["local_rssi"] = _rssi(local)
         return via, "proxy_local", values
@@ -1954,6 +2187,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             }
         except DeviceAsleepException:
             return {"ok": False, "error": "asleep"}
+        except AdapterNotReceivingException:
+            return {"ok": False, "error": "adapter"}
         except NotPairedException:
             return {"ok": False, "error": "not_paired"}
         except Exception:  # noqa: BLE001
@@ -1992,6 +2227,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             elif has_device_info and self._has_sonicare_services(data):
                 self._fetched_data = data
                 self._transport_type = TRANSPORT_BLEAK
+                await self._adopt_identity(data.get("identity"))
                 _LOGGER.info(
                     "Read capabilities over direct BLE from %s: model %s, "
                     "firmware %s, %s Sonicare service(s)",
@@ -2016,6 +2252,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if manual:
             if error == "asleep":
                 return self.async_abort(reason="device_asleep")
+            if error == "adapter":
+                error = "adapter_not_receiving"
             if error == "unknown":
                 error = "cannot_connect"
             self._manual_error = error
@@ -2026,7 +2264,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # it when the brush wakes.
         # A step-variant key, not a sentence: bluetooth_confirm turns it
         # into the matching step so the wording is translatable.
-        self._confirm_status = "asleep" if error == "asleep" else "failed"
+        self._confirm_status = (
+            error if error in ("asleep", "adapter") else "failed"
+        )
         return await self.async_step_bluetooth_confirm()
 
     # ------------------------------------------------------------------
@@ -2072,6 +2312,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
                 self._address = address
                 self._name = address
+                self._bluetooth_adapter = user_input.get(
+                    CONF_BLUETOOTH_ADAPTER, BLUETOOTH_ADAPTER_AUTO
+                )
                 return self._start_ble_probe("user_bleak", address)
 
         # Free-text entry path: nothing to discover, or user asked for it.
@@ -2083,6 +2326,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_ADDRESS,
                         default=self._address,
                     ) if self._address else vol.Required(CONF_ADDRESS): str,
+                    **self._bluetooth_adapter_field(),
                 }),
                 errors=errors,
             )
@@ -2097,25 +2341,23 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             name = info.name or ""
             if "sonicare" not in name.lower() and "philips ohc" not in name.lower():
                 continue
+            # -127 is BlueZ's "no longer received" marker, not a reading —
+            # a brush that is out of range or asleep cannot be set up.
+            if info.rssi is not None and info.rssi <= -127:
+                continue
             age_s = max(0, int(now_mono - info.time)) if info.time else None
             rssi = info.rssi
-            label_parts = [f"{name} ({info.address})"]
+            label_parts = [_brush_label(self.hass, info)]
             if age_s is not None:
                 label_parts.append(f"{age_s}s ago")
             if rssi is not None:
                 label_parts.append(f"{rssi} dBm")
             # Name the scanner that will likely carry the connect — the
             # step is titled "Direct Bluetooth", but habluetooth routes
-            # by signal strength and may pick a bluetooth_proxy. Local
-            # scanner names carry the adapter MAC in parentheses; strip
-            # it to keep the label compact ("hci0" / "atom-lite (proxy)").
-            paths = describe_available_paths(self.hass, info.address)
-            if paths:
-                best = paths[0]
-                via = str(best["name"]).split(" (")[0]
-                label_parts.append(
-                    f"via {via}" + ("" if best["is_local"] else " (proxy)")
-                )
+            # by signal strength and may pick a bluetooth_proxy.
+            via = _via_label(describe_available_paths(self.hass, info.address))
+            if via:
+                label_parts.append(via)
             label = label_parts[0] + (" — " + ", ".join(label_parts[1:]) if len(label_parts) > 1 else "")
             scored.append((
                 age_s if age_s is not None else 9999,
@@ -2134,7 +2376,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 data_schema=vol.Schema({
                     vol.Required(CONF_ADDRESS): SelectSelector(
                         SelectSelectorConfig(options=options)
-                    )
+                    ),
+                    **self._bluetooth_adapter_field(),
                 }),
                 errors=errors,
             )
@@ -2147,6 +2390,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_ADDRESS,
                     default=self._address,
                 ) if self._address else vol.Required(CONF_ADDRESS): str,
+                **self._bluetooth_adapter_field(),
             }),
             errors=errors,
         )
@@ -3254,21 +3498,29 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             else:
                 entry_data[CONF_ADDRESS] = self._address
                 entry_data[CONF_TRANSPORT_TYPE] = TRANSPORT_BLEAK
+                if self._bond_address and self._bond_address != self._address:
+                    entry_data[CONF_BOND_ADDRESS] = self._bond_address
+
+            entry_options: dict[str, Any] = {}
+            if (
+                self._transport_type != TRANSPORT_ESP_BRIDGE
+                and self._bluetooth_adapter != BLUETOOTH_ADAPTER_AUTO
+            ):
+                entry_options[CONF_BLUETOOTH_ADAPTER] = self._bluetooth_adapter
 
             return self.async_create_entry(
                 title=f"Philips Sonicare ({device_name})",
                 data=entry_data,
+                options=entry_options,
             )
 
-        services_text, condor_note = self._get_service_status_text(
+        services_text, condor_note, has_missing = self._get_service_status_text(
             self._fetched_data.get("services", []),
             self._fetched_data.get("model") or "",
         )
 
         path = self._fetched_data.get("connection_path")
 
-        # Condor handles answer with a different service set, so the
-        # legend gets one extra sentence explaining the gaps.
         text = await _async_text_blocks(self.hass)
 
         return self.async_show_form(
@@ -3277,15 +3529,24 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_DEVICE_NAME, default=default_name): str,
             }),
             description_placeholders={
-                # The note continues the legend sentence, so it needs a
-                # separating space — which cannot live in the translation
-                # itself (hassfest rejects leading/trailing whitespace).
-                "condor_note": (
-                    f" {note}"
-                    if condor_note and (note := text.get("error.caps_condor_note", ""))
-                    else ""
+                # Legend and Condor note are translated blocks; the table
+                # itself carries no sentence. Without ❌ rows there is
+                # nothing for the legend to explain.
+                "services_note": " ".join(
+                    note
+                    for key, wanted in (
+                        ("error.caps_missing_legend", has_missing),
+                        ("error.caps_condor_note", condor_note),
+                    )
+                    if wanted and (note := text.get(key, ""))
                 ),
-                "name": str(self._name),
+                # The title already says "Philips Sonicare"; a brush that
+                # advertises just that name is told apart by its model.
+                "name": (
+                    str(self._fetched_data.get("model") or self._name)
+                    if str(self._name).strip().lower() == "philips sonicare"
+                    else str(self._name)
+                ),
                 **self._connection_status_placeholders(
                     self._transport_type, path,
                     via_proxy=bool(self._probe_via_proxy),
@@ -3301,6 +3562,33 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 "services": services_text,
             },
         )
+
+    def _bluetooth_adapter_field(self, address: str = "") -> dict[Any, Any]:
+        """Adapter field for direct BLE setup, or nothing.
+
+        Asked before the first connect, so the probe and its pairing run
+        through the chosen adapter. Without an address (manual entry) the
+        list has no signal strengths. With a single connectable scanner
+        there is nothing to choose.
+        """
+        # The current choice stays in the list even when it does not hear
+        # the brush right now — that is exactly the "adapter" error case,
+        # and a default missing from the options fails schema validation.
+        options = _bluetooth_adapter_options(
+            self.hass, address, self._bluetooth_adapter
+        )
+        if len(options) < 3 and self._bluetooth_adapter == BLUETOOTH_ADAPTER_AUTO:
+            return {}
+        return {
+            vol.Required(
+                CONF_BLUETOOTH_ADAPTER, default=self._bluetooth_adapter
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=options,
+                    translation_key=CONF_BLUETOOTH_ADAPTER,
+                )
+            )
+        }
 
     # ------------------------------------------------------------------
     # Pairing fallback (manual instructions)
@@ -3404,6 +3692,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except DeviceAsleepException:
                 return self.async_abort(reason="device_asleep")
+            except AdapterNotReceivingException:
+                errors["base"] = "adapter_not_receiving"
             except NotPairedException:
                 errors["base"] = "pairing_failed"
             except Exception:
@@ -3431,37 +3721,487 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         return PhilipsSonicareOptionsFlow()
 
 
+# Before pairing on a new adapter, wait this long for the brush to show up
+# there. After a disconnect the brush often stays silent for minutes until
+# its power button is pressed — pairing blindly would only time out.
+PAIR_ADVERTISEMENT_WAIT = 45  # seconds
+# Below this the target adapter receives the brush too weakly to pair
+# reliably (29./30.10.: -96 dBm timed out, -74 dBm paired in 4 s).
+PAIR_WEAK_RSSI = -90
+# _pair_error value for "no advertisement on the new adapter".
+_PAIR_NO_ADVERTISEMENT = "no_advertisement"
+
+
 class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
     """Options flow for Philips Sonicare BLE."""
+
+    # Re-pairing on a newly chosen local adapter (bonds are per adapter).
+    _pending_data: dict[str, Any] | None = None
+    _pair_task: asyncio.Task | None = None
+    _pair_error: str = ""
+    _pair_adapter_name: str = ""
+    _paired_on: str = ""
+    # A pairing attempt already ran in this dialog; BlueZ may have
+    # finished it after our timeout.
+    _pair_attempted: bool = False
+    # Set while the entry is unloaded for pairing; whoever ends the flow
+    # must bring it back.
+    _reload_pending: bool = False
+
+    def _scanner_kinds(self) -> dict[str, tuple[str, bool]]:
+        """Connectable scanners by upper-case source: (short name, is_local)."""
+        address = self.config_entry.data.get(CONF_ADDRESS) or ""
+        return {
+            str(sc["source"]).upper(): (self._short_name(sc["name"]), sc["is_local"])
+            for sc in describe_connectable_scanners(self.hass, address)
+        }
+
+    def _adapter_name(self, adapter: str) -> str:
+        if adapter == BLUETOOTH_ADAPTER_AUTO:
+            return "Chosen by Home Assistant"
+        return self._scanner_kinds().get(adapter.upper(), (adapter, False))[0]
+
+    async def _pairing_state(self, adapter: str) -> str:
+        """What switching to ``adapter`` means for pairing.
+
+        ``needed`` only for a local adapter without a bond, and only for a
+        brush that is bonded at all: one paired on another local adapter,
+        or a Condor, which always needs a bond. Otherwise the reason there
+        is nothing to do: ``auto``, ``proxy`` (pairs by itself),
+        ``already``, ``not_needed`` (readable without a bond) or
+        ``unknown`` (adapter offline, or BlueZ cannot be asked).
+        """
+        if adapter == BLUETOOTH_ADAPTER_AUTO:
+            return "auto"
+        kinds = self._scanner_kinds()
+        kind = kinds.get(adapter.upper())
+        if kind is None:
+            return "unknown"
+        if not kind[1]:
+            return "proxy"
+
+        from .dbus_pairing import async_paired_adapters, is_dbus_available
+
+        if not is_dbus_available():
+            return "unknown"
+        address = self.config_entry.data.get(CONF_ADDRESS) or ""
+        paired = await async_paired_adapters(address)
+        if paired is None:
+            return "unknown"
+        if adapter.upper() in paired:
+            return "already"
+        services = [
+            str(u).lower() for u in self.config_entry.data.get(CONF_SERVICES, [])
+        ]
+        if not paired and SVC_CONDOR.lower() not in services:
+            return "not_needed"
+        self._pair_adapter_name = kind[0]
+        self._paired_on = (
+            ", ".join(kinds.get(a, (a, True))[0] for a in paired) or "—"
+        )
+        return "needed"
+
+    @staticmethod
+    def _short_name(name: object) -> str:
+        # "hci0 (00:0A:CD:46:B2:2D)" → "hci0"; the MAC adds nothing here.
+        return str(name).split(" (")[0]
+
+    def _pair_placeholders(self) -> dict[str, str]:
+        return {
+            "adapter": self._pair_adapter_name,
+            "paired_on": self._paired_on,
+        }
+
+    async def async_step_pair_adapter(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Pair the brush on the newly chosen adapter before saving."""
+        task = self._pair_task
+        if task is not None:
+            if not task.done():
+                return self.async_show_progress(
+                    step_id="pair_adapter",
+                    progress_action="pair_adapter",
+                    progress_task=task,
+                    description_placeholders=self._pair_placeholders(),
+                )
+            self._pair_error = task.result()
+            self._pair_task = None
+            return self.async_show_progress_done(
+                next_step_id="pair_adapter_finish"
+            )
+
+        if user_input is not None:
+            self._pair_task = self.hass.async_create_task(
+                self._async_pair_on_adapter()
+            )
+            return self.async_show_progress(
+                step_id="pair_adapter",
+                progress_action="pair_adapter",
+                progress_task=self._pair_task,
+                description_placeholders=self._pair_placeholders(),
+            )
+
+        # A form without fields cannot show errors[] — the failure goes into
+        # the description as a notice instead.
+        text = await _async_text_blocks(self.hass, "options")
+        # Markdown is not parsed inside the alert's HTML block.
+        adapter_html = f"<b>{html.escape(self._pair_adapter_name)}</b>"
+        alert = ""
+        if self._pair_error == _PAIR_NO_ADVERTISEMENT:
+            alert = _alert(
+                "error",
+                text.get("error.pair_adapter_no_advertisement", "")
+                .replace("{adapter}", adapter_html)
+                .replace("{seconds}", str(PAIR_ADVERTISEMENT_WAIT)),
+            )
+        elif self._pair_error:
+            alert = _alert(
+                "error",
+                text.get("error.pair_adapter_failed", "")
+                .replace("{adapter}", adapter_html)
+                .replace("{error}", html.escape(self._pair_error)),
+            )
+        assert self._pending_data is not None
+        rssi = scanner_rssi(
+            self.hass,
+            self.config_entry.data.get(CONF_ADDRESS) or "",
+            self._pending_data[CONF_BLUETOOTH_ADAPTER],
+        )
+        if rssi is not None and rssi < PAIR_WEAK_RSSI:
+            alert += _alert(
+                "warning",
+                text.get("error.pair_adapter_weak", "")
+                .replace("{adapter}", adapter_html)
+                .replace("{rssi}", str(rssi)),
+            )
+        return self.async_show_form(
+            step_id="pair_adapter",
+            data_schema=vol.Schema({}),
+            description_placeholders={**self._pair_placeholders(), "alert": alert},
+        )
+
+    async def _async_pair_on_adapter(self) -> str:
+        """Pause the entry and pair on the chosen adapter; '' on success.
+
+        The running entry would otherwise keep (re)connecting — over the
+        old adapter, or failing over the new one — and race BlueZ's
+        Pair(). Unloading reuses the normal teardown.
+        """
+        from .dbus_pairing import PairingError, async_pair_and_trust
+
+        assert self._pending_data is not None
+        entry = self.config_entry
+        address = entry.data.get(CONF_ADDRESS) or ""
+        adapter = self._pending_data[CONF_BLUETOOTH_ADAPTER]
+        retry = self._pair_attempted
+        self._pair_attempted = True
+        # Watch from before the disconnect, so the first advertisement
+        # after it is not missed.
+        try:
+            heard, stop_watching = watch_advertisements(address, adapter)
+        except LookupError as err:
+            _LOGGER.debug(
+                "%s: cannot watch advertisements per adapter (%s); pairing "
+                "without waiting", address, err,
+            )
+            heard, stop_watching = None, None
+        self._reload_pending = True
+        try:
+            await self.hass.config_entries.async_unload(entry.entry_id)
+            if retry and await self._async_bonded_on(address, adapter):
+                # The earlier attempt timed out on our side, but BlueZ
+                # finished it later. The bond is the one we asked for —
+                # removing it as "stale" would throw away a good pairing.
+                _LOGGER.info(
+                    "%s: already paired on %s by the previous attempt",
+                    address, self._pair_adapter_name,
+                )
+                return ""
+            if heard is not None and not await self._async_wait_for_advertisement(
+                address, heard
+            ):
+                _LOGGER.warning(
+                    "%s: %s did not receive the brush within %ss",
+                    address, self._pair_adapter_name, PAIR_ADVERTISEMENT_WAIT,
+                )
+                return _PAIR_NO_ADVERTISEMENT
+            _LOGGER.info(
+                "%s: pairing on Bluetooth adapter %s (%s, %s dBm)",
+                address, self._pair_adapter_name, adapter,
+                scanner_rssi(self.hass, address, adapter),
+            )
+            await async_pair_and_trust(address, adapter)
+            await asyncio.sleep(2)  # let BlueZ key distribution settle
+            return ""
+        except PairingError as err:
+            _LOGGER.warning(
+                "%s: pairing on %s failed: %s",
+                address, self._pair_adapter_name, err,
+            )
+            return str(err)
+        except Exception as err:  # noqa: BLE001 — shown in the dialog
+            _LOGGER.exception("%s: pairing on %s failed", address, adapter)
+            return str(err) or type(err).__name__
+        finally:
+            if stop_watching is not None:
+                stop_watching()
+
+    @staticmethod
+    async def _async_bonded_on(address: str, adapter: str) -> bool:
+        from .dbus_pairing import async_paired_adapters
+
+        paired = await async_paired_adapters(address)
+        return bool(paired) and adapter.upper() in paired
+
+    async def _async_wait_for_advertisement(
+        self, address: str, heard: asyncio.Event
+    ) -> bool:
+        """Wait until the new adapter receives an advertisement of the brush."""
+        if heard.is_set():
+            return True
+        _LOGGER.debug(
+            "%s: waiting up to %ss for an advertisement on %s",
+            address, PAIR_ADVERTISEMENT_WAIT, self._pair_adapter_name,
+        )
+        try:
+            await asyncio.wait_for(heard.wait(), PAIR_ADVERTISEMENT_WAIT)
+        except TimeoutError:
+            return False
+        _LOGGER.debug(
+            "%s: advertisement received on %s", address, self._pair_adapter_name
+        )
+        return True
+
+    async def async_step_pair_adapter_finish(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        if self._pair_error:
+            # Back to the form: Submit retries, closing keeps the old options.
+            return await self.async_step_pair_adapter()
+        return await self._async_finish_adapter_change("paired")
+
+    async def _async_finish_adapter_change(self, pairing: str) -> FlowResult:
+        """Drop the other bonds, save, and end with what was done."""
+        assert self._pending_data is not None
+        adapter = self._pending_data[CONF_BLUETOOTH_ADAPTER]
+        dropped, failed, kept = await self._async_drop_other_bonds(adapter)
+        name = self._adapter_name(adapter)
+        rows: list[tuple[str, dict[str, str]]] = [
+            ("adapter_auto" if adapter == BLUETOOTH_ADAPTER_AUTO else "adapter",
+             {"adapter": name}),
+            (f"pair_{pairing}", {"adapter": name}),
+        ]
+        # One row per adapter: each line starts with what it is about.
+        rows += [("drop_done", {"adapter": other}) for other in dropped]
+        rows += [("drop_failed", {"adapter": other}) for other in failed]
+        if not dropped and not failed:
+            rows.append((f"drop_{kept}", {}))
+        rows.append(("reload", {}))
+
+        text = await _async_text_blocks(self.hass, "options")
+        lines = []
+        for key, values in rows:
+            line = text.get(f"error.summary_{key}", "")
+            for placeholder, value in values.items():
+                line = line.replace("{" + placeholder + "}", value)
+            if line:
+                lines.append(f"- {line}")
+
+        # The options dialog's own success page cannot carry text of ours,
+        # but its abort page can: save here and end with the checklist.
+        data = self._pending_data
+        self._pending_data = None
+        _LOGGER.info(
+            "Options saved for %s: %s",
+            self.config_entry.title,
+            ", ".join(f"{k}={v}" for k, v in sorted(data.items())),
+        )
+        self.hass.config_entries.async_update_entry(
+            self.config_entry, options=data
+        )
+        # No create_entry, so no automatic reload either.
+        self._reload_pending = False
+        self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
+        return self.async_abort(
+            reason="adapter_changed",
+            description_placeholders={"summary": "\n".join(lines)},
+        )
+
+    async def _async_drop_other_bonds(
+        self, adapter: str
+    ) -> tuple[list[str], list[str], str]:
+        """Switching to a fixed local adapter removes the other local bonds.
+
+        A fixed adapter means one bond. A bond left behind on an adapter
+        the entry no longer uses can go stale on the brush side while
+        BlueZ still reports it — switching back would then skip the
+        pairing step and fail. Removing it makes the way back pair again.
+
+        Runs only after the new adapter is paired (or already was). Not
+        for Automatic, which may use any adapter, and not for a proxy:
+        whether a brush needs a bond at all is only known from a bond
+        somewhere, so dropping every local one would hide that.
+
+        Returns (removed, failed, reason) — adapter names, and when nothing
+        was removed why: ``auto``, ``proxy``, ``unknown`` or ``none``.
+        """
+        if adapter == BLUETOOTH_ADAPTER_AUTO:
+            return [], [], "auto"
+        address = self.config_entry.data.get(CONF_ADDRESS) or ""
+        kinds = self._scanner_kinds()
+        kind = kinds.get(adapter.upper())
+        if kind is None:
+            return [], [], "unknown"
+        if not kind[1]:
+            return [], [], "proxy"
+
+        from .dbus_pairing import (
+            async_paired_adapters,
+            async_remove_device,
+            is_dbus_available,
+        )
+
+        if not is_dbus_available():
+            return [], [], "unknown"
+        paired = await async_paired_adapters(address)
+        if paired is None:
+            return [], [], "unknown"
+        others = [a for a in paired if a != adapter.upper()]
+        if not others:
+            return [], [], "none"
+        if not self._reload_pending:
+            # The running entry may be connected through one of them.
+            self._reload_pending = True
+            await self.hass.config_entries.async_unload(
+                self.config_entry.entry_id
+            )
+        removed: list[str] = []
+        failed: list[str] = []
+        for other in others:
+            other_name = kinds.get(other, (other, True))[0]
+            if await async_remove_device(address, other):
+                _LOGGER.info(
+                    "%s: removed the bond on adapter %s (now fixed to %s)",
+                    address, other, adapter,
+                )
+                removed.append(other_name)
+            else:
+                _LOGGER.warning(
+                    "%s: could not remove the bond on adapter %s", address, other
+                )
+                failed.append(other_name)
+        return removed, failed, "none"
+
+    def _save_options(self, data: dict[str, Any]) -> FlowResult:
+        # Info: which options a device runs with explains a lot of later
+        # behaviour (disabled sensors, throttling), and nothing here is
+        # sensitive enough to keep out of the log.
+        _LOGGER.info(
+            "Options saved for %s: %s",
+            self.config_entry.title,
+            ", ".join(f"{k}={v}" for k, v in sorted(data.items())),
+        )
+        if (
+            self._reload_pending
+            and getattr(self, "automatic_reload", False)
+            and data != dict(self.config_entry.options)
+        ):
+            # HA reloads by itself once it has stored the changed options.
+            self._reload_pending = False
+        # Otherwise (options unchanged, or a core without
+        # OptionsFlowWithReload) async_remove reloads: HA calls it after
+        # storing the options, so the entry comes back with the new ones.
+        return self.async_create_entry(title="", data=data)
+
+    @callback
+    def async_remove(self) -> None:
+        """Dialog closed: never leave the entry unloaded."""
+        if self._pair_task is not None and not self._pair_task.done():
+            self._pair_task.cancel()
+        if self._reload_pending:
+            self._reload_pending = False
+            self.hass.config_entries.async_schedule_reload(
+                self.config_entry.entry_id
+            )
+
+    def _is_esp(self) -> bool:
+        return (
+            self.config_entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
+        )
+
+    def _current_options(self) -> dict[str, Any]:
+        """Stored options with defaults filled in — the base for any save."""
+        options = self.config_entry.options
+        data: dict[str, Any] = {
+            CONF_SENSOR_PRESSURE: options.get(CONF_SENSOR_PRESSURE, DEFAULT_SENSOR_PRESSURE),
+            CONF_SENSOR_TEMPERATURE: options.get(CONF_SENSOR_TEMPERATURE, DEFAULT_SENSOR_TEMPERATURE),
+            CONF_SENSOR_GYROSCOPE: options.get(CONF_SENSOR_GYROSCOPE, DEFAULT_SENSOR_GYROSCOPE),
+            CONF_WARN_COUNTERFEIT: options.get(CONF_WARN_COUNTERFEIT, DEFAULT_WARN_COUNTERFEIT),
+        }
+        if self._is_esp():
+            for key in (CONF_NOTIFY_THROTTLE, CONF_PIPELINED_READS):
+                if key in options:
+                    data[key] = options[key]
+        else:
+            data[CONF_BLUETOOTH_ADAPTER] = options.get(
+                CONF_BLUETOOTH_ADAPTER, BLUETOOTH_ADAPTER_AUTO
+            )
+        return data
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        is_esp = (
-            self.config_entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
+        """Direct BLE: settings or moving the brush to another adapter.
+
+        Switching the adapter is an action with its own steps (pairing,
+        removing old bonds), not one more option — so it gets its own
+        entry. An ESP bridge entry has no adapter and goes straight to
+        the settings, and so does an entry with a single adapter to
+        choose from — unless it is already fixed to one, so the way back
+        to automatic choice stays open.
+        """
+        if self._is_esp() or not self._adapter_choice_available():
+            return await self.async_step_settings(user_input)
+        return self.async_show_menu(
+            step_id="init", menu_options=["settings", "adapter"]
         )
 
+    def _adapter_choice_available(self) -> bool:
+        """Whether moving the brush to another adapter is possible at all.
+
+        Same rule as the adapter field during setup: "auto" plus a single
+        connectable scanner leaves nothing to choose.
+        """
+        current = self.config_entry.options.get(
+            CONF_BLUETOOTH_ADAPTER, BLUETOOTH_ADAPTER_AUTO
+        )
+        if current != BLUETOOTH_ADAPTER_AUTO:
+            return True
+        options = _bluetooth_adapter_options(
+            self.hass, self.config_entry.data.get(CONF_ADDRESS) or "", current
+        )
+        return len(options) >= 3
+
+    async def async_step_settings(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        is_esp = self._is_esp()
+
         if user_input is not None:
-            data = {
+            data = self._current_options()
+            data.update({
                 CONF_SENSOR_PRESSURE: user_input.get(CONF_SENSOR_PRESSURE, DEFAULT_SENSOR_PRESSURE),
                 CONF_SENSOR_TEMPERATURE: user_input.get(CONF_SENSOR_TEMPERATURE, DEFAULT_SENSOR_TEMPERATURE),
                 CONF_SENSOR_GYROSCOPE: user_input.get(CONF_SENSOR_GYROSCOPE, DEFAULT_SENSOR_GYROSCOPE),
                 CONF_WARN_COUNTERFEIT: user_input.get(CONF_WARN_COUNTERFEIT, DEFAULT_WARN_COUNTERFEIT),
-            }
+            })
             if is_esp:
                 if CONF_NOTIFY_THROTTLE in user_input:
                     data[CONF_NOTIFY_THROTTLE] = int(user_input[CONF_NOTIFY_THROTTLE])
                 if CONF_PIPELINED_READS in user_input:
                     data[CONF_PIPELINED_READS] = bool(user_input[CONF_PIPELINED_READS])
-            # Info: which options a device runs with explains a lot of later
-            # behaviour (disabled sensors, throttling), and nothing here is
-            # sensitive enough to keep out of the log.
-            _LOGGER.info(
-                "Options saved for %s: %s",
-                self.config_entry.title,
-                ", ".join(f"{k}={v}" for k, v in sorted(data.items())),
-            )
-            return self.async_create_entry(title="", data=data)
+            return self._save_options(data)
 
         options = self.config_entry.options
         schema_fields: dict = {}
@@ -3496,10 +4236,50 @@ class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
             )] = bool
 
         _LOGGER.debug(
-            "Options flow: showing init for %s (esp bridge: %s)",
+            "Options flow: showing settings for %s (esp bridge: %s)",
             self.config_entry.title, is_esp,
         )
         return self.async_show_form(
-            step_id="init",
+            step_id="settings",
             data_schema=vol.Schema(schema_fields),
+        )
+
+    async def async_step_adapter(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Move the brush to another Bluetooth adapter (direct BLE only)."""
+        current = self.config_entry.options.get(
+            CONF_BLUETOOTH_ADAPTER, BLUETOOTH_ADAPTER_AUTO
+        )
+        if user_input is not None:
+            adapter = user_input.get(CONF_BLUETOOTH_ADAPTER, BLUETOOTH_ADAPTER_AUTO)
+            data = {**self._current_options(), CONF_BLUETOOTH_ADAPTER: adapter}
+            # Same adapter again: nothing to pair or remove.
+            if adapter == current:
+                return self._save_options(data)
+            state = await self._pairing_state(adapter)
+            self._pending_data = data
+            if state == "needed":
+                self._pair_error = ""
+                self._pair_attempted = False
+                return await self.async_step_pair_adapter()
+            return await self._async_finish_adapter_change(state)
+
+        _LOGGER.debug(
+            "Options flow: showing adapter for %s", self.config_entry.title
+        )
+        return self.async_show_form(
+            step_id="adapter",
+            data_schema=vol.Schema({
+                vol.Required(CONF_BLUETOOTH_ADAPTER, default=current): SelectSelector(
+                    SelectSelectorConfig(
+                        options=_bluetooth_adapter_options(
+                            self.hass,
+                            self.config_entry.data.get(CONF_ADDRESS) or "",
+                            current,
+                        ),
+                        translation_key=CONF_BLUETOOTH_ADAPTER,
+                    )
+                ),
+            }),
         )

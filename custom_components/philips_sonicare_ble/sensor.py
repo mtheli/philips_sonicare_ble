@@ -18,6 +18,7 @@ from homeassistant.const import UnitOfTime, PERCENTAGE
 from homeassistant.util import dt as dt_util
 
 from .coordinator import PhilipsSonicareCoordinator
+from .transport import _scanner_name_by_source
 from homeassistant.components.bluetooth import async_last_service_info
 
 from .const import (
@@ -31,6 +32,8 @@ from .const import (
     BRUSHHEAD_TYPE_FAMILY,
     CONF_TRANSPORT_TYPE,
     CONF_SERVICES,
+    CONF_BLUETOOTH_ADAPTER,
+    BLUETOOTH_ADAPTER_AUTO,
     TRANSPORT_ESP_BRIDGE,
     SVC_BRUSHHEAD,
     SVC_CONDOR,
@@ -187,6 +190,7 @@ async def async_setup_entry(
     # RSSI sensor (direct BLE only — ESP bridge has no advertisement RSSI)
     if entry.data.get(CONF_TRANSPORT_TYPE) != TRANSPORT_ESP_BRIDGE:
         entities.append(SonicareRssiSensor(coordinator, entry))
+        entities.append(SonicareAdapterSelectionSensor(coordinator, entry))
 
     # ESP bridge sub-device sensor (only for ESP transport)
     if entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE:
@@ -1289,10 +1293,16 @@ class SonicareAdapterSensor(PhilipsConnectionEntity, SensorEntity):
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{self._device_id}_adapter"
+        self._fixed_source = entry.options.get(CONF_BLUETOOTH_ADAPTER, BLUETOOTH_ADAPTER_AUTO)
 
     @property
     def native_value(self) -> str | None:
-        return self.coordinator.transport.connection_path
+        path = self.coordinator.transport.connection_path
+        if path or self._fixed_source == BLUETOOTH_ADAPTER_AUTO:
+            return path
+        # A fixed adapter is the only path there can be, so name it even
+        # while the toothbrush is asleep.
+        return _scanner_name_by_source(self.hass, self._fixed_source) or self._fixed_source
 
 
 class SonicareAdapterTypeSensor(PhilipsConnectionEntity, SensorEntity):
@@ -1317,6 +1327,37 @@ class SonicareAdapterTypeSensor(PhilipsConnectionEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         return self.coordinator.adapter_type
+
+
+class SonicareAdapterSelectionSensor(PhilipsConnectionEntity, SensorEntity):
+    """Whether Home Assistant picks the adapter or the option fixes one.
+
+    Direct BLE only. Changing the option reloads the entry, so reading
+    the options here is always current.
+    """
+
+    _attr_translation_key = "adapter_selection"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["automatic", "fixed"]
+    _attr_icon = "mdi:bluetooth-settings"
+
+    def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_adapter_selection"
+        self._source = entry.options.get(CONF_BLUETOOTH_ADAPTER, BLUETOOTH_ADAPTER_AUTO)
+
+    @property
+    def native_value(self) -> str:
+        return "automatic" if self._source == BLUETOOTH_ADAPTER_AUTO else "fixed"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str] | None:
+        if self._source == BLUETOOTH_ADAPTER_AUTO:
+            return None
+        # The name is only known while the scanner is registered.
+        name = _scanner_name_by_source(self.hass, self._source)
+        return {"fixed_adapter": name or self._source, "source": self._source}
 
 
 # ---------------------------------------------------------------------------

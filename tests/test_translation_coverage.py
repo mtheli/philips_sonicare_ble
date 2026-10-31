@@ -37,14 +37,17 @@ DYNAMIC_STEPS = {
 # Text blocks the flow selects by interpolating an outcome into the name,
 # so the literal scan below cannot see them.
 DYNAMIC_BLOCKS = {
+    "confirm_alert_adapter",
     "confirm_alert_asleep",
     "confirm_alert_failed",
     "confirm_warn_proxy",
+    "confirm_warn_proxy_choose",
     "confirm_warn_proxy_local",
 }
 # Selected at runtime through errors[] / an error_key, never by literal
 # name — so the dead-block check below cannot see them.
 ERROR_KEYS = {
+    "adapter_not_receiving",
     "cannot_connect",
     "not_a_sonicare",
     "pairing_failed",
@@ -184,6 +187,7 @@ async def test_rendered_dialogs_have_every_placeholder_they_use() -> None:
         "none": [],
         "local": [{"name": "hci0 (00:0A:CD:46:B2:2D)", "rssi": -60, "is_local": True}],
         "proxy": [{"name": "atom-lite", "rssi": -64, "is_local": False}],
+        "proxy_choose": [{"name": "atom-lite", "rssi": -64, "is_local": False}],
         "proxy_local": [
             {"name": "atom-lite", "rssi": -64, "is_local": False},
             {"name": "hci0 (00:0A:CD:46:B2:2D)", "rssi": -82, "is_local": True},
@@ -191,10 +195,22 @@ async def test_rendered_dialogs_have_every_placeholder_they_use() -> None:
     }
     import custom_components.philips_sonicare_ble.config_flow as cf
 
+    # A local adapter that does not hear the brush but is offered in the
+    # adapter field ("proxy_choose").
+    silent_local = [
+        {"name": "atom-lite", "source": "F4:65:0B:01:B9:6E",
+         "rssi": -64, "is_local": False},
+        {"name": "hci0 (00:0A:CD:46:B2:2D)", "source": "00:0A:CD:46:B2:2D",
+         "rssi": None, "is_local": True},
+    ]
     original = cf.describe_available_paths
+    original_connectable = cf.describe_connectable_scanners
     try:
-        for paths in topologies.values():
+        for name, paths in topologies.items():
             cf.describe_available_paths = lambda hass, addr, _p=paths: list(_p)
+            cf.describe_connectable_scanners = (
+                lambda hass, addr: list(silent_local) if name == "proxy_choose" else []
+            )
             for outcome in ("", "asleep", "failed"):
                 flow = _flow()
                 flow._esp_redirect_checked = True
@@ -204,6 +220,7 @@ async def test_rendered_dialogs_have_every_placeholder_they_use() -> None:
                 seen.add(result["step_id"])
     finally:
         cf.describe_available_paths = original
+        cf.describe_connectable_scanners = original_connectable
 
     # pairing instructions: host terminal vs. the Supervised addon
     for components in (set(), {"hassio"}):
@@ -529,7 +546,9 @@ def _is_empty_schema(node) -> bool:
 
 def test_progress_actions_are_defined() -> None:
     used = set(re.findall(r'progress_action="(\w+)"', FLOW_SRC))
-    defined = set(STRINGS["config"]["progress"])
+    defined = set(STRINGS["config"]["progress"]) | set(
+        STRINGS["options"].get("progress", {})
+    )
     assert used <= defined, f"progress texts missing: {used - defined}"
 
 
