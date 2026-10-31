@@ -91,7 +91,7 @@
       },
       "show_capabilities": {
         "title": "Philips Sonicare — {name}",
-        "description": "{alert_open}Verbunden über {transport}{detail}.{alert_close}\n\n**Geräteinformationen**\n\n| **Modell** | {model} |\n|---|---|\n| **Seriennummer** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Akku** | {battery} |\n| **MAC** | `{mac}` |{identity_row}\n| **BLE-Sicherheit** | {ble_security} |\n\n🔐 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Erkannte Dienste**\n\n{services}\n\n❌ bedeutet: auf diesem Modell nicht verfügbar.{condor_note}",
+        "description": "{alert_open}Verbunden über {transport}{detail}.{alert_close}\n\n**Geräteinformationen**\n\n| **Modell** | {model} |\n|---|---|\n| **Seriennummer** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Akku** | {battery} |\n| **MAC** | `{mac}` |{identity_row}\n| **BLE-Sicherheit** | {ble_security} |\n\n🔐 gebondet (verschlüsselt) · 🔓 ungekoppelt (unverschlüsselt)\n\n**Erkannte Dienste**\n\n{services}\n\n{services_note}",
         "submit": "Einrichten",
         "data": {
           "device_name": "Name"
@@ -113,6 +113,7 @@
     },
     "error": {
       "cannot_connect": "Verbindung zur Zahnbürste nicht möglich. Stelle sicher, dass sie wach (Knopf drücken oder auf die Ladestation stellen) und in Reichweite ist.",
+      "caps_missing_legend": "❌ bedeutet: auf diesem Modell nicht verfügbar.",
       "caps_condor_note": "Bei diesem Handstück werden die Classic-Funktionsdienste durch das Condor-Protokoll ersetzt.",
       "identity_row": "| **Identität** | `{identity}` |",
       "confirm_alert_asleep": "Die Zahnbürste schläft — wecke sie (Power-Knopf drücken oder von der Ladestation nehmen) und klicke dann erneut auf Senden.",

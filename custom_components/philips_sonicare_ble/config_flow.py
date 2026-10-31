@@ -1445,17 +1445,20 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     @classmethod
     def _get_service_status_text(
         cls, fetched_uuids: list[str], model: str = ""
-    ) -> tuple[str, bool]:
-        """Return ``(table, needs_condor_note)`` for the services block.
+    ) -> tuple[str, bool, bool]:
+        """Return ``(table, needs_condor_note, has_missing)`` for the services block.
 
         The table is a 2-column HTML table — left column: ✅ available
         services, right column: ❌ services not present on this model.
+        A Condor handle never has the Classic feature services, so they
+        are left out rather than listed as missing.
         Its row count depends on the model, so unlike the device-info
         table it cannot become static translated text; the service names
         it lists are protocol identifiers and stay as they are.
 
         ``needs_condor_note`` asks for the text block explaining why the
-        Classic feature services are absent on a Condor handle.
+        Classic feature services are absent on a Condor handle;
+        ``has_missing`` asks for the ❌ legend.
         """
         fetched_lower = {s.lower() for s in fetched_uuids} - _STANDARD_BLE_SERVICES
         family = cls._detect_family(fetched_lower, model)
@@ -1476,6 +1479,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 reason = cls._missing_reason(uuid, family)
                 if reason:
                     used_reasons.add(reason)
+                if reason == "via Condor protocol":
+                    continue
                 missing.append(name)
 
         known_all = _EXPECTED_SERVICES | {SVC_BYTESTREAM.lower()}
@@ -1488,7 +1493,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         if not found and not missing:
             # A dash, not a sentence — this value is built here and could
             # not follow the user's frontend language.
-            return "—", False
+            return "—", False, False
 
         # Layout: ✅ left column, ❌ right column when both groups are non-empty.
         # When only one group is present (e.g. premium model with all services
@@ -1518,7 +1523,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # step's translated text. The Condor note is model-specific, so
         # it rides in as a translated block — neither may be a sentence
         # built here, which would not follow the frontend language.
-        return table, "via Condor protocol" in used_reasons
+        return table, "via Condor protocol" in used_reasons, bool(missing)
 
     @staticmethod
     def _get_device_info_values(
@@ -3509,15 +3514,13 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 options=entry_options,
             )
 
-        services_text, condor_note = self._get_service_status_text(
+        services_text, condor_note, has_missing = self._get_service_status_text(
             self._fetched_data.get("services", []),
             self._fetched_data.get("model") or "",
         )
 
         path = self._fetched_data.get("connection_path")
 
-        # Condor handles answer with a different service set, so the
-        # legend gets one extra sentence explaining the gaps.
         text = await _async_text_blocks(self.hass)
 
         return self.async_show_form(
@@ -3526,13 +3529,16 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_DEVICE_NAME, default=default_name): str,
             }),
             description_placeholders={
-                # The note continues the legend sentence, so it needs a
-                # separating space — which cannot live in the translation
-                # itself (hassfest rejects leading/trailing whitespace).
-                "condor_note": (
-                    f" {note}"
-                    if condor_note and (note := text.get("error.caps_condor_note", ""))
-                    else ""
+                # Legend and Condor note are translated blocks; the table
+                # itself carries no sentence. Without ❌ rows there is
+                # nothing for the legend to explain.
+                "services_note": " ".join(
+                    note
+                    for key, wanted in (
+                        ("error.caps_missing_legend", has_missing),
+                        ("error.caps_condor_note", condor_note),
+                    )
+                    if wanted and (note := text.get(key, ""))
                 ),
                 # The title already says "Philips Sonicare"; a brush that
                 # advertises just that name is told apart by its model.

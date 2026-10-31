@@ -116,3 +116,27 @@ async def test_discovery_title_names_family_and_path(monkeypatch) -> None:
     assert flow.context["title_placeholders"]["name"] == (
         f"Sonicare (Classic) · {ADDRESS} · via hci0"
     )
+
+
+def test_condor_services_table_lists_only_present_services() -> None:
+    # A Condor handle never has the Classic feature services; listing
+    # them as ❌ suggested something was missing.
+    from custom_components.philips_sonicare_ble.const import (
+        SVC_CONDOR, SVC_DEVICE_INFO, SVC_SONICARE,
+    )
+    flow_cls = cf.PhilipsSonicareConfigFlow
+
+    table, condor_note, has_missing = flow_cls._get_service_status_text(
+        [SVC_DEVICE_INFO, SVC_CONDOR], "HX742X"
+    )
+
+    assert "❌" not in table
+    assert "Device Information" in table and "Condor" in table
+    assert condor_note is True
+    assert has_missing is False
+
+    table, condor_note, has_missing = flow_cls._get_service_status_text(
+        [SVC_DEVICE_INFO, SVC_SONICARE], "HX9999"
+    )
+    assert condor_note is False
+    assert has_missing is ("❌" in table)
