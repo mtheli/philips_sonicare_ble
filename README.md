@@ -35,6 +35,7 @@ See [Configuration](#configuration) for setup instructions.
   - [Option A: Direct Bluetooth](#option-a-direct-bluetooth)
   - [Option B: ESP32 BLE Bridge](#option-b-esp32-ble-bridge)
   - [Option C: Bluetooth Proxy](#option-c-bluetooth-proxy)
+  - [Bluetooth adapter](#bluetooth-adapter)
 - [How It Works](#how-it-works)
 - [Troubleshooting & Caveats](#troubleshooting--caveats)
 - [BLE Protocol](#ble-protocol)
@@ -177,6 +178,7 @@ These sensors are only available while actively brushing and stream live data fr
 | **Last Seen** | Sensor | Timestamp of last successful data read. |
 | **BLE RSSI** | Sensor | BLE signal strength in dBm (Direct BLE only). |
 | **Adapter** | Sensor | Name/path of the BLE adapter currently carrying the link (e.g. `hci0`, ESP device name + bridge slot). |
+| **Adapter Selection** | Sensor | *Chosen by Home Assistant* or *Fixed* (Direct Bluetooth only), see [Bluetooth adapter](#bluetooth-adapter). |
 | **Adapter Type** | Sensor | Transport classification: *Direct Bluetooth* / *ESP Bridge* / *Bluetooth Proxy*. |
 | **Bridge Version** | Sensor | ESP bridge firmware version (ESP Bridge only). |
 | **Bridge Firmware** | Update | Passive notification when newer ESP bridge firmware is available, with cumulative release notes. Informational only — there's no install button; reflash via ESPHome (ESP Bridge only). |
@@ -329,7 +331,19 @@ Setup is the same as Option A — Home Assistant's Bluetooth stack picks the pro
 | Gyroscope Sensor | Disabled | Stream live 6-axis IMU data during brushing (experimental). |
 | Notify Throttle | 500ms | Minimum interval between BLE notification updates (ESP Bridge only, 100-5000ms). |
 | Pipelined GATT reads | Enabled | Send poll reads to the ESP bridge as one concurrent batch (ESP Bridge only, needs bridge firmware ≥ 1.7.0 — older bridges always read sequentially). Takes effect immediately, no reload. |
+| Bluetooth adapter | Chosen by Home Assistant | The adapter or Bluetooth proxy the brush connects through (Direct Bluetooth only). Changed via **Change Bluetooth adapter**, see [below](#bluetooth-adapter). |
 | Warn about counterfeit brush heads | Enabled | Raise a repair warning if no valid brush head NFC serial is read after 30 seconds of brushing. |
+
+### Bluetooth adapter
+
+For Direct Bluetooth entries only. When Home Assistant has more than one Bluetooth adapter or proxy that can connect, the setup dialog and the options let you choose which one the brush uses:
+
+- **Chosen by Home Assistant** (default): Home Assistant picks the adapter by its own rules, usually the strongest signal. The choice can change from one connection to the next.
+- **A fixed adapter**: the brush connects only through this adapter. If it does not receive the brush, there is no connection, and the log names the adapters that do. Useful when the brush is paired on one adapter only, or when a stronger proxy in another room keeps taking over.
+
+To move a brush to another adapter, open the entry's options and choose **Change Bluetooth adapter**. If the new adapter needs a pairing first, that follows in the next step; pairings on the other local adapters are removed afterwards. With a single adapter and automatic choice there is nothing to choose, and the options open the settings directly.
+
+The diagnostic sensors **Adapter selection** and **Adapter** show the current setting and the adapter carrying the link.
 
 ---
 

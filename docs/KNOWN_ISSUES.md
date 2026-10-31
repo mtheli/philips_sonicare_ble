@@ -6,10 +6,50 @@
 
 | Issue | Affects | Known since | Status |
 | :--- | :--- | :--- | :--- |
+| [Brushes with a rotating address do not reconnect on Linux kernel 6.19 and later](#brushes-with-a-rotating-address-do-not-reconnect-on-linux-kernel-619-and-later) | Direct Bluetooth on Linux 6.19+ (not Home Assistant OS) | 2026-10-30 | ⏳ Fixed in the kernel, not yet released |
 | [Some USB dongles cannot complete SMP bonding](#some-usb-dongles-cannot-complete-smp-bonding) | Some USB Bluetooth dongles | 2026-07-20 | ❌ Adapter limitation |
 | [Budget BT adapters can't scan while a GATT connection is active](#budget-bt-adapters-cant-scan-while-a-gatt-connection-is-active) | Budget USB Bluetooth adapters | 2026-04-24 | ❌ Adapter limitation |
 | [Toothbrush not reachable on charger](#toothbrush-not-reachable-on-charger) | All models | 2026-04-01 | ℹ️ By design |
 | [Brushing Mode Select not available on BrushSync models](#brushing-mode-select-not-available-on-brushsync-models) | BrushSync models | 2026-03-23 | ❌ Brush firmware limitation |
+
+---
+
+## Brushes with a rotating address do not reconnect on Linux kernel 6.19 and later
+
+**Known since:** 2026-10-30
+
+**Status:** Linux kernel bug, fixed in `bluetooth-next` but not yet in a released kernel (not in 7.3)
+
+Affects brushes that advertise under a rotating private address, such as the
+Series 7100 (HX742X), connected over **direct Bluetooth** to a host running
+Linux **6.19 or later** — for example Ubuntu with kernel 7.0. Home Assistant
+OS runs kernel 6.18 and is not affected, and neither is the ESP bridge.
+Brushes with a fixed address (most other models) are not affected.
+
+### Symptoms
+
+- Setup and pairing succeed, and the brush works until the connection ends.
+- Every later reconnect fails, although the brush is awake and received
+  with a good signal; the log shows repeated connection timeouts.
+- A `btmon` trace shows `LE Extended Create Connection` to the brush's
+  current private address with `Peer address type: Public (0x00)` instead
+  of `Random (0x01)`, followed by `Unknown Connection Identifier (0x02)`.
+
+### Root cause
+
+Since kernel 6.19 the kernel builds the connection to a bonded device with
+the device's identity address type, but sends the private address it
+currently advertises under. The controller then looks for a public device
+with a random address and never finds it. Reported upstream in
+[bluez/bluez#2609](https://github.com/bluez/bluez/issues/2609) (first seen
+with hearing aids); the fixes are queued in `bluetooth-next`.
+
+### Mitigations
+
+- Run Home Assistant on Home Assistant OS, or on a host with a kernel
+  before 6.19.
+- Connect the brush through the [ESP32 bridge](ESP32_BRIDGE.md) instead of
+  direct Bluetooth.
 
 ---
 
