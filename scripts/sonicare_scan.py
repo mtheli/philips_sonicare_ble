@@ -302,6 +302,95 @@ def _parse_json_list(resp: bytes) -> list[str]:
     return [p for p in data if isinstance(p, str)] if isinstance(data, list) else []
 
 
+class DuplicateGuard:
+    """Count, and by default drop, notifications delivered more than once.
+
+    On some hosts every notification reaches the callback many times over
+    although the brush sent it once (GitHub issue #45). Acking each copy
+    floods TX_ACK, and the brush answers the flood by disconnecting. A copy
+    is recognised as the same bytes on the same characteristic within
+    WINDOW_MS of the previous delivery; a real repeat on TX cannot look like
+    that, because its sequence number moves on.
+
+    The counts are the point: how many copies, and how far apart, tells a
+    signal fanned out inside the process (microseconds) from one sent
+    again (milliseconds).
+    """
+
+    WINDOW_MS = 100
+
+    def __init__(self, keep: bool = False):
+        self.keep = keep
+        # label -> [last bytes, first delivery ns, last delivery ns, copies]
+        self._current: dict[str, list] = {}
+        # label -> one (copies, spread_ms, max_gap_ms) per distinct packet
+        self._packets: dict[str, list[tuple[int, float, float]]] = {}
+        self._max_gap: dict[str, float] = {}
+        self._announced: set[str] = set()
+
+    def is_copy(self, label: str, data: bytes) -> bool:
+        """Record a delivery; True when it repeats the previous one."""
+        now = time.perf_counter_ns()
+        cur = self._current.get(label)
+        if (cur is not None and cur[0] == data
+                and (now - cur[2]) < self.WINDOW_MS * 1_000_000):
+            gap = (now - cur[2]) / 1e6
+            self._max_gap[label] = max(self._max_gap.get(label, 0.0), gap)
+            cur[2] = now
+            cur[3] += 1
+            if label not in self._announced:
+                self._announced.add(label)
+                action = "acking every copy (--keep-duplicates)" if self.keep else "dropping the copies"
+                print(f"      !!! {label}: the same notification arrived again "
+                      f"after {gap:.3f} ms, {action}")
+            return not self.keep
+        self._close(label)
+        self._current[label] = [data, now, now, 1]
+        self._max_gap[label] = 0.0
+        return False
+
+    def _close(self, label: str) -> None:
+        cur = self._current.pop(label, None)
+        if cur is not None:
+            self._packets.setdefault(label, []).append(
+                (cur[3], (cur[2] - cur[1]) / 1e6, self._max_gap.get(label, 0.0)))
+
+    def as_dict(self) -> dict:
+        """Per-characteristic counts for the JSON capture."""
+        for label in list(self._current):
+            self._close(label)
+        return {
+            label: {
+                "packets": len(packets),
+                "deliveries": sum(c for c, _, _ in packets),
+                "max_copies": max(c for c, _, _ in packets),
+                "max_spread_ms": round(max(s for _, s, _ in packets), 3),
+                "max_gap_ms": round(max(g for _, _, g in packets), 3),
+            }
+            for label, packets in self._packets.items()
+        }
+
+    def summary(self) -> None:
+        for label in list(self._current):
+            self._close(label)
+        print("\n  -- Notification deliveries --")
+        if not self._packets:
+            print("  None received.")
+            return
+        for label, packets in self._packets.items():
+            delivered = sum(c for c, _, _ in packets)
+            repeated = [p for p in packets if p[0] > 1]
+            print(f"  {label}: {len(packets)} packets, {delivered} deliveries")
+            if not repeated:
+                continue
+            copies = [c for c, _, _ in repeated]
+            spread = max(s for _, s, _ in repeated)
+            gap = max(g for _, _, g in repeated)
+            print(f"      {len(repeated)} of {len(packets)} packets came more than once: "
+                  f"{min(copies)}-{max(copies)} copies, all copies within {spread:.3f} ms, "
+                  f"largest gap between two copies {gap:.3f} ms")
+
+
 class NewerProtocolProbe:
     """Probe a Sonicare device using the newer (e50b) BLE protocol."""
 
@@ -327,8 +416,10 @@ class NewerProtocolProbe:
         listen_seconds: int = 0,
         subscribe_binary: bool = False,
         enable_sensors: int | None = None,
+        keep_duplicates: bool = False,
     ):
         self.client = client
+        self.duplicates = DuplicateGuard(keep=keep_duplicates)
         self.listen_seconds = listen_seconds
         # Enabling the sensor streams implies we want their binary payloads.
         self.enable_sensors = enable_sensors
@@ -425,6 +516,8 @@ class NewerProtocolProbe:
     def _on_tx(self, _sender, data: bytearray):
         if len(data) < 1:
             return
+        if self.duplicates.is_copy("TX", bytes(data)):
+            return
         hdr = data[0]
         seq = hdr & self.MASK_SEQ
         payload = bytes(data[1:])
@@ -447,6 +540,8 @@ class NewerProtocolProbe:
                 self.rx_buffer = bytearray()
 
     def _on_rx_ack(self, _sender, data: bytearray):
+        if self.duplicates.is_copy("RX ACK", bytes(data)):
+            return
         # First notification on RX_ACK after the handshake completes the
         # channel-open round-trip; subsequent ones acknowledge our outgoing
         # data packets and can be ignored.
@@ -455,6 +550,8 @@ class NewerProtocolProbe:
             self.handshake_ack_event.set()
 
     def _on_server_cfg(self, _sender, data: bytearray):
+        if self.duplicates.is_copy("Server Config", bytes(data)):
+            return
         self.server_cfg_data = bytes(data)
         print(f"  <<< Server Config: {self.server_cfg_data.hex()}")
         self.server_cfg_event.set()
@@ -1282,6 +1379,7 @@ async def scan_device(
     subscribe_binary: bool = False,
     enable_sensors: int | None = None,
     json_path: str | None = None,
+    keep_duplicates: bool = False,
     adv_name: str | None = None,
     connect_target=None,
 ):
@@ -1403,15 +1501,29 @@ async def scan_device(
 
         # Probe newer protocol if detected and still connected
         condor_capture: dict = {}
+        deliveries: dict = {}
         if has_newer and client.is_connected:
             probe = NewerProtocolProbe(
                 client,
                 listen_seconds=listen_seconds,
                 subscribe_binary=subscribe_binary,
                 enable_sensors=enable_sensors,
+                keep_duplicates=keep_duplicates,
             )
-            await probe.run()
+            try:
+                await probe.run()
+            except BleakError as e:
+                # A dropped link surfaces as whatever bleak call came next
+                # (e.g. "Service Discovery has not been performed yet").
+                # Keep what was captured so far instead of a traceback.
+                state = "connected" if client.is_connected else "disconnected"
+                print(f"\n!!! Probe aborted ({state}): {e}")
+            finally:
+                # Also when the link dropped mid-probe: that is the run
+                # whose counts matter most.
+                probe.duplicates.summary()
             condor_capture = probe.capture
+            deliveries = probe.duplicates.as_dict()
 
         if json_path:
             _write_capture(
@@ -1422,6 +1534,7 @@ async def scan_device(
                 device_info=device_info,
                 gatt_services=gatt_services,
                 condor=condor_capture,
+                notification_deliveries=deliveries,
             )
 
 
@@ -1434,6 +1547,7 @@ def _write_capture(
     device_info: dict,
     gatt_services: list,
     condor: dict,
+    notification_deliveries: dict,
 ) -> None:
     """Write a structured snapshot of the probe to a JSON file.
 
@@ -1449,6 +1563,7 @@ def _write_capture(
         "protocol": protocol,
         "device_info": device_info,
         "condor": condor,
+        "notification_deliveries": notification_deliveries,
         "gatt_services": gatt_services,
     }
     try:
@@ -1516,6 +1631,16 @@ async def main():
             "condor_adapter test fixture."
         ),
     )
+    parser.add_argument(
+        "--keep-duplicates",
+        action="store_true",
+        help=(
+            "Handle and ack a notification every time it is delivered, even "
+            "when the host hands the same one over several times. By default "
+            "repeated deliveries are counted and dropped; this reproduces the "
+            "behaviour before that."
+        ),
+    )
     args = parser.parse_args()
 
     adv_name = None
@@ -1544,6 +1669,7 @@ async def main():
         subscribe_binary=args.subscribe_binary,
         enable_sensors=args.enable_sensors,
         json_path=args.json,
+        keep_duplicates=args.keep_duplicates,
         adv_name=adv_name,
         connect_target=device,
     )
