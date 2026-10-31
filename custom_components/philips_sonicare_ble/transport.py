@@ -659,6 +659,34 @@ class SonicareTransport(abc.ABC):
         """Register a callback invoked when the connection drops."""
 
 
+async def _cleanup_disconnected_client(client: BleakClient) -> None:
+    """Close the private D-Bus connection bleak opened for this client.
+
+    bleak only tears this down inside ``BleakClient.disconnect()`` — a
+    remote disconnect (``disconnected_callback``) never calls it, so the
+    connection is otherwise left open — and stays open, since dbus-fast
+    registers its socket with the event loop (``loop.add_reader``), which
+    keeps it alive until the process exits, not until Python garbage-collects it.
+    Until it actually closes, BlueZ keeps every ``StartNotify``
+    registration made on it alive, and re-arms them on the brush's next
+    connect — each one then delivers its own copy of every notification
+    (see GitHub issue #45).
+
+    Also used at call sites where the client may still be connected: on a
+    dead client, ``disconnect()`` is a fast no-op (skips BlueZ's
+    ``Device1.Disconnect`` since the link is already down, then closes
+    bleak's own bus). On a live one, it sends that D-Bus call and bleak
+    bounds the wait for BlueZ's reply itself (its own internal 10s
+    timeout) before closing the bus — an outer timeout here must not be
+    shorter than that, or it cancels ``disconnect()`` before it reaches
+    the bus-closing step, leaking the bus instead of closing it.
+    """
+    try:
+        await client.disconnect()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 class BleakTransport(SonicareTransport):
     """Direct BLE transport using bleak."""
 
@@ -751,11 +779,24 @@ class BleakTransport(SonicareTransport):
         if device is None:
             raise TransportError(f"Device {self._address} not in range")
 
+        if self._client is not None:
+            # The disconnected callback for this client was never
+            # delivered (link already dead) — still need disconnect() to
+            # close bleak's own D-Bus connection for it, or it leaks
+            # (see _cleanup_disconnected_client).
+            await _cleanup_disconnected_client(self._client)
+            self._client = None
+
         def _on_disconnect(_client):
             _LOGGER.info("%s: connection lost", self._address)
             self._client = None
             self._connection_path = None
             self._connected_scanner = None
+            # Scheduled before the disconnect callback: if that callback
+            # raises, cleanup must still happen or _client leaks its bus.
+            # _client is the now-dead client bleak handed us; self._client
+            # is already None above, so nothing else still references it.
+            self._hass.async_create_task(_cleanup_disconnected_client(_client))
             if self._disconnect_cb:
                 self._disconnect_cb()
 
@@ -773,11 +814,12 @@ class BleakTransport(SonicareTransport):
         _LOGGER.info("%s: connected via %s", self._address, self._connection_path)
 
     async def disconnect(self) -> None:
-        if self._client and self._client.is_connected:
-            try:
-                await self._client.disconnect()
-            except Exception:
-                pass
+        # Not gated on is_connected (see _cleanup_disconnected_client):
+        # practically unreachable with a stale client here, since
+        # _on_disconnect already nulls self._client first, but kept
+        # consistent with the rest of the file regardless.
+        if self._client:
+            await _cleanup_disconnected_client(self._client)
         self._client = None
 
     def pop_read_error(self, char_uuid: str) -> str | None:
@@ -820,11 +862,8 @@ class BleakTransport(SonicareTransport):
         except Exception as err:
             _LOGGER.debug("BLE poll error (device likely sleeping): %s", err)
         finally:
-            if client and client.is_connected:
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
+            if client:
+                await _cleanup_disconnected_client(client)
         return results
 
     async def write_char(self, char_uuid: str, data: bytes) -> None:

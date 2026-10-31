@@ -95,6 +95,7 @@ from .const import (
 from .helpers import esphome_service_id, is_bond_gated_profile
 from .transport import (
     EspBridgeTransport,
+    _cleanup_disconnected_client,
     async_unpair_bridge_slot,
     bridge_bond_address,
     bridge_identity,
@@ -1139,11 +1140,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         except Exception as err:
             _LOGGER.warning("Could not connect during capabilities fetch: %s", err)
         finally:
-            if client and client.is_connected:
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
+            # Not gated on is_connected: a client the brush already
+            # disconnected still needs disconnect() called to close
+            # bleak's own D-Bus connection — #45. Reuses the shared
+            # helper instead of a duplicated inline try/except.
+            if client:
+                await _cleanup_disconnected_client(client)
 
         return result
 

@@ -792,6 +792,83 @@ async def test_transport_connects_with_fixed_class(monkeypatch) -> None:
     assert used[1] is transport.BleakClient
 
 
+async def test_remote_disconnect_closes_old_clients_bus(monkeypatch) -> None:
+    # #45: a client the brush disconnected on its own must still get
+    # disconnect() called, or bleak's private D-Bus connection for that
+    # session leaks — BlueZ then re-arms its StartNotify registrations on
+    # the next connect and delivers duplicate notifications.
+    class _TaskTrackingHass(SimpleNamespace):
+        def __init__(self):
+            super().__init__()
+            self.tasks: list = []
+
+        def async_create_task(self, coro):
+            import asyncio as _asyncio
+
+            task = _asyncio.ensure_future(coro)
+            self.tasks.append(task)
+            return task
+
+    captured: dict = {}
+
+    async def fake_establish(cls, device, name, **kwargs):
+        captured["disconnected_callback"] = kwargs["disconnected_callback"]
+        client = SimpleNamespace(is_connected=True, _connected_scanner=None)
+        client.disconnect = AsyncMock()
+        return client
+
+    monkeypatch.setattr(transport, "bleak_establish", fake_establish)
+    monkeypatch.setattr(
+        transport, "async_last_service_info",
+        lambda hass, address: SimpleNamespace(device=SimpleNamespace(address=ADDRESS)),
+    )
+    monkeypatch.setattr(transport, "describe_connection_path", lambda *a: "hci0")
+
+    hass = _TaskTrackingHass()
+    bt = transport.BleakTransport(hass, ADDRESS)
+    await bt.connect()
+    old_client = bt._client
+
+    # The brush ends the link; bleak invokes our disconnected_callback.
+    captured["disconnected_callback"](old_client)
+
+    assert bt._client is None
+    assert hass.tasks
+    await hass.tasks[-1]
+    old_client.disconnect.assert_awaited_once()
+
+
+async def test_reconnect_closes_stale_client_with_no_callback(monkeypatch) -> None:
+    # Mirrors #45 for the case where BlueZ never delivers the
+    # disconnected_callback at all (link already dead, is_connected reads
+    # False) — the next connect() must still close the stale client's bus
+    # itself before establishing a new one, or it leaks.
+    clients = [
+        SimpleNamespace(is_connected=False, _connected_scanner=None, disconnect=AsyncMock()),
+        SimpleNamespace(is_connected=True, _connected_scanner=None, disconnect=AsyncMock()),
+    ]
+
+    async def fake_establish(cls, device, name, **kwargs):
+        return clients.pop(0)
+
+    monkeypatch.setattr(transport, "bleak_establish", fake_establish)
+    monkeypatch.setattr(
+        transport, "async_last_service_info",
+        lambda hass, address: SimpleNamespace(device=SimpleNamespace(address=ADDRESS)),
+    )
+    monkeypatch.setattr(transport, "describe_connection_path", lambda *a: "hci0")
+
+    bt = transport.BleakTransport(SimpleNamespace(), ADDRESS)
+    await bt.connect()
+    stale_client = bt._client
+
+    await bt.connect()
+
+    stale_client.disconnect.assert_awaited_once()
+    assert bt._client is not stale_client
+    assert bt.is_connected
+
+
 # --- Diagnostic sensor: automatic vs. fixed ---------------------------------
 
 from custom_components.philips_sonicare_ble import sensor as sensor_mod
