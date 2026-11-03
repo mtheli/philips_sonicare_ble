@@ -1,0 +1,533 @@
+{
+  "issues": {
+    "esp_bridge_outdated": {
+      "title": "Mise à jour du firmware du pont ESP requise",
+      "description": "Votre pont ESP utilise la version **v{version}**, mais la version **v{min_version}** ou plus récente est requise pour toutes les fonctionnalités.\n\nRecompilez et flashez votre appareil ESPHome pour obtenir le dernier firmware. Consultez le changelog du pont ESP dans le dépôt pour plus de détails."
+    },
+    "brushhead_counterfeit": {
+      "title": "Tête de brosse contrefaite ou absente — {device}",
+      "description": "**{device}** fonctionne depuis 30 secondes sans avoir lu de numéro de série NFC valide sur la tête de brosse.\n\nCela signifie généralement qu'il s'agit d'une tête contrefaite ou non d'origine, sans puce NFC, ou qu'aucune tête n'est montée.\n\n**Pour résoudre le problème :** montez une tête de brosse Philips Sonicare d'origine. L'avertissement disparaît automatiquement dès qu'un numéro de série valide est lu.\n\nVous pouvez désactiver cet avertissement dans les options de l'intégration."
+    },
+    "esp_bridge_idf_bond_loss": {
+      "title": "Philips Sonicare : le pont ESP {esp_device} perd ses appairages (ESP-IDF {idf_version})",
+      "description": "L'intégration **Philips Sonicare** a détecté que son pont ESP **{esp_device}** utilise un firmware compilé avec ESP-IDF **{idf_version}**, la version par défaut d'ESPHome 2026.10.0. Cette version d'ESP-IDF contient un bug Bluetooth : après la première déconnexion, le pont oublie l'appairage avec votre brosse à dents jusqu'au redémarrage de l'ESP. Les modèles appairés ne se reconnectent alors plus.\n\n**Correction :** fixez ESP-IDF 5.5.5 dans le YAML du pont, puis recompilez et flashez-le :\n\n```yaml\nesp32:\n  framework:\n    type: esp-idf\n    version: 5.5.5\n```\n\nCet avertissement disparaît automatiquement dès que le pont utilise un firmware compilé avec une autre version d'ESP-IDF."
+    },
+    "esp_bridge_rotating_address": {
+      "title": "Philips Sonicare : {device} ne se reconnecte pas via le pont ESP {esp_device}",
+      "description": "L'intégration **Philips Sonicare** a détecté que **{device}** est appairée via le pont ESP **{esp_device}** sous une adresse Bluetooth changeante, et que la puce du pont résout ces adresses dans le contrôleur Bluetooth. Le pont perd alors la brosse à dents après chaque séance, et les reconnexions échouent avec `status=133` jusqu'à une nouvelle configuration.\n\n**Correction :** ajoutez ceci au YAML du pont, puis recompilez et flashez-le. L'appairage reste valide :\n\n```yaml\nesphome:\n  build_flags:\n    - -DCONFIG_BT_BLE_RPA_SUPPORTED=0\n```\n\nCet avertissement disparaît automatiquement dès que le pont utilise un firmware avec cette option."
+    }
+  },
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "bluetooth_confirm": {
+        "title": "Confirmer la Philips Sonicare",
+        "description": "{alert}{warn}**{name}** détectée à l'adresse `{address}`{via}.\n\n**Allumez votre Sonicare** (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur), puis cliquez sur **Valider**.",
+        "data": {
+          "bluetooth_adapter": "Adaptateur Bluetooth"
+        },
+        "data_description": {
+          "bluetooth_adapter": "Adaptateur ou proxy Bluetooth par lequel la brosse à dents se connecte, dès cette première connexion. Avec « Choisi par Home Assistant », Home Assistant choisit l'adaptateur selon ses propres règles (généralement le signal le plus fort) ; cette intégration n'a aucune influence sur ce choix. Avec un adaptateur fixe, Home Assistant se connecte uniquement par celui-ci : s'il ne reçoit pas la brosse à dents, il n'y a pas de connexion. Vous pourrez modifier ce choix plus tard dans les options."
+        }
+      },
+      "user": {
+        "title": "Ajouter une Philips Sonicare",
+        "description": "Choisissez comment vous connecter à votre brosse à dents.",
+        "menu_options": {
+          "user_bleak": "Bluetooth direct",
+          "esp_bridge": "Pont ESP32 (ESPHome)"
+        }
+      },
+      "user_bleak": {
+        "title": "Bluetooth direct",
+        "description": "Sélectionnez ou saisissez l'adresse BLE de votre brosse à dents Sonicare.\n\n**Important :** **allumez votre Sonicare** (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur) avant de cliquer sur Valider — elle doit rester allumée pour que ses services puissent être lus.",
+        "data": {
+          "address": "Adresse BLE",
+          "bluetooth_adapter": "Adaptateur Bluetooth"
+        },
+        "data_description": {
+          "bluetooth_adapter": "Adaptateur ou proxy Bluetooth par lequel la brosse à dents se connecte, dès cette première connexion. Avec « Choisi par Home Assistant », Home Assistant choisit l'adaptateur selon ses propres règles (généralement le signal le plus fort) ; cette intégration n'a aucune influence sur ce choix. Avec un adaptateur fixe, Home Assistant se connecte uniquement par celui-ci : s'il ne reçoit pas la brosse à dents, il n'y a pas de connexion. Vous pourrez modifier ce choix plus tard dans les options."
+        }
+      },
+      "esp_bridge": {
+        "title": "Pont ESP32 (ESPHome)",
+        "description": "Sélectionnez l'appareil ESPHome qui sert de pont BLE pour votre brosse à dents.",
+        "data": {
+          "esp_device_name": "Appareil pont ESPHome"
+        }
+      },
+      "esp_select_device": {
+        "title": "Sélectionner l'appareil BLE",
+        "description": "Ce pont ESP gère plusieurs brosses à dents Sonicare. Sélectionnez celle que vous voulez ajouter.\n\n✅ déjà configurée · 🔐 liée · 🔓 non appairée · 🟢 en ligne · ⚪ hors ligne",
+        "data": {
+          "esp_bridge_id": "Appareil BLE"
+        },
+        "data_description": {
+          "esp_bridge_id": "Les entrées sans icône d'état sont des emplacements vides en mode appairage. Allumez la brosse à dents à lier avant de valider."
+        }
+      },
+      "esp_slot_action": {
+        "title": "Brosse à dents liée trouvée",
+        "description": "L'emplacement **{target}** est déjà lié à une brosse à dents sur le pont, mais elle n'est pas encore configurée dans Home Assistant.\n\nQue voulez-vous faire ?",
+        "menu_options": {
+          "slot_setup": "Configurer cette brosse à dents",
+          "slot_unpair": "La désappairer du pont"
+        }
+      },
+      "esp_bridge_status": {
+        "title": "Connexion via le pont ESP32",
+        "description": "{alert}Configuration de la brosse à dents via le **pont ESP32** ({target}).\n\n| **BLE** | {ble_state} |\n|---|---|\n| **Sécurité** | {security} |\n| **MAC de la brosse** | `{mac}` |{identity_row}\n| **Version du pont** | {version} |\n\n✅ connectée · ❌ déconnectée · 🔐 liée (chiffrée) · 🔓 non appairée (sans chiffrement)\n\n{action}",
+        "submit": "Lire les fonctions"
+      },
+      "request_pair": {
+        "title": "Appairer la brosse à dents avec le pont",
+        "description": "{alert}Aucune brosse à dents n'est encore liée à l'emplacement **{target}**.\n\n1. **Allumez** la Sonicare à lier (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur) et tenez-la à environ 1 m du pont. Si plusieurs brosses à dents se trouvent à proximité, laissez les autres éteintes.\n2. Cliquez sur **Démarrer l'appairage**. La fenêtre attend jusqu'à environ 60 s pendant que le pont recherche la première Sonicare trouvée et s'y lie. Ne fermez pas cette fenêtre.",
+        "submit": "Démarrer l'appairage"
+      },
+      "reset_bridge": {
+        "title": "Réinitialiser la liaison du pont",
+        "description": "{alert}L'emplacement **{target}** est actuellement lié à **{identity_address}**.\n\nEn cliquant sur **Valider**, la liaison BLE sur le pont sera supprimée et l'identité enregistrée effacée. Vous pourrez ensuite appairer une autre Sonicare.\n\nLa Sonicare conserve sa propre moitié de la liaison, mais il n'y a rien à effacer sur la brosse elle-même — appairer plus tard cette même brosse fonctionne sans étape supplémentaire.",
+        "submit": "Désappairer et réinitialiser"
+      },
+      "show_capabilities": {
+        "title": "Philips Sonicare — {name}",
+        "description": "{alert_open}Connectée via {transport}{detail}.{alert_close}\n\n**Informations sur l'appareil**\n\n| **Modèle** | {model} |\n|---|---|\n| **Numéro de série** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Batterie** | {battery} |\n| **MAC** | `{mac}` |{identity_row}\n| **Sécurité BLE** | {ble_security} |\n\n🔐 liée (chiffrée) · 🔓 non appairée (sans chiffrement)\n\n**Services détectés**\n\n{services}\n\n{services_note}",
+        "submit": "Configurer",
+        "data": {
+          "device_name": "Nom"
+        },
+        "data_description": {
+          "device_name": "Nom de cette brosse à dents dans Home Assistant. Choisissez un nom qui la distingue de vos autres brosses (par ex. « Salle de bain », « Marie »)."
+        }
+      },
+      "not_paired": {
+        "title": "Appairage BLE requis",
+        "description": "{alert}Votre brosse à dents à l'adresse `{address}` nécessite une **liaison BLE** avant que ses caractéristiques puissent être lues. L'appairage automatique a échoué.\n\n{pair_error}Ouvrez {terminal} et lancez le script d'appairage :\n\n`{pair_cmd}`\n\nLe script enregistre l'agent d'appairage nécessaire, puis appaire la brosse à dents et lui fait confiance — gardez-la simplement **allumée** (appuyez sur le bouton marche/arrêt) pendant son exécution.\n\nVous pouvez aussi appairer manuellement dans une session `bluetoothctl` interactive — un simple `bluetoothctl pair` n'enregistre aucun agent, et certains modèles refusent l'appairage sans agent :\n\n```\nbluetoothctl\nagent NoInputNoOutput\ndefault-agent\npair {address}\ntrust {address}\nexit\n```\n\nCliquez ensuite sur **Réessayer**.",
+        "submit": "Réessayer"
+      },
+      "not_paired_proxy": {
+        "title": "Appairage BLE requis",
+        "description": "{alert}Votre brosse à dents à l'adresse `{address}` nécessite une **liaison BLE** avant que ses caractéristiques puissent être lues.\n\nCette connexion passe par un **proxy Bluetooth** (`{proxy_name}`). Le proxy s'appaire avec la brosse à dents **automatiquement pendant la lecture** — les outils d'appairage sur l'hôte Home Assistant (`bluetoothctl`, scripts d'appairage) n'ont aucun effet sur cette connexion.\n\nL'appairage automatique n'a pas abouti. Causes les plus probables :\n\n1. **La brosse à dents conserve une ancienne liaison** avec un téléphone ou un autre adaptateur. Supprimez la brosse de l'application Philips Sonicare (ou oubliez-la dans les réglages Bluetooth de votre téléphone), réveillez la brosse et cliquez sur **Réessayer** — chaque nouvel essai relance l'appairage.\n2. **La brosse à dents s'est mise en veille** pendant la configuration — appuyez sur le bouton marche/arrêt, gardez-la allumée et cliquez sur **Réessayer**.\n3. **Vous utilisez plusieurs proxys Bluetooth :** les liaisons ne passent pas d'un proxy à l'autre, et Home Assistant choisit le proxy ayant le meilleur signal. Placez la brosse près d'un seul proxy et cliquez sur **Réessayer**.\n4. Certains modèles **refusent tout appairage**. Si chaque essai échoue immédiatement, configurez plutôt la brosse via l'adaptateur Bluetooth de l'hôte ou via le pont ESP32 dédié.",
+        "submit": "Réessayer"
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter à la brosse à dents. Vérifiez qu'elle est allumée (appuyez sur le bouton ou posez-la sur le chargeur) et à portée.",
+      "caps_missing_legend": "Les entrées ❌ ne sont pas disponibles sur ce modèle.",
+      "caps_condor_note": "Sur ce manche, les services de fonctions Classic sont remplacés par le protocole Condor.",
+      "identity_row": "| **Identité** | `{identity}` |",
+      "confirm_alert_asleep": "La brosse à dents est en veille — réveillez-la (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur), puis cliquez à nouveau sur Valider.",
+      "confirm_alert_failed": "Impossible de lire la brosse à dents. Vérifiez qu'elle est allumée et à portée, puis cliquez sur Valider pour réessayer.",
+      "confirm_warn_proxy": "Cette connexion passera par le proxy Bluetooth {proxy_name}{proxy_rssi}.{nl}Selon le modèle de brosse à dents, l'appairage et les mises à jour en direct via un proxy Bluetooth standard peuvent être peu fiables.{nl}Pour un appairage et des mises à jour en direct fiables, utilisez un adaptateur Bluetooth local ou le pont ESP32.",
+      "confirm_warn_proxy_local": "Cette connexion passera par le proxy Bluetooth {proxy_name}{proxy_rssi}.{nl}Selon le modèle de brosse à dents, l'appairage et les mises à jour en direct via un proxy Bluetooth standard peuvent être peu fiables.{nl}Votre adaptateur local {local_name} reçoit aussi la brosse à dents{local_rssi} — pour vous connecter par celui-ci, sélectionnez-le ci-dessous comme adaptateur Bluetooth.",
+      "confirm_warn_proxy_choose": "Cette connexion passera par le proxy Bluetooth {proxy_name}{proxy_rssi}.{nl}Selon le modèle de brosse à dents, l'appairage et les mises à jour en direct via un proxy Bluetooth standard peuvent être peu fiables.{nl}Pour vous connecter plutôt par votre adaptateur local {local_name}, rapprochez la brosse à dents de celui-ci et sélectionnez-le ci-dessous comme adaptateur Bluetooth.",
+      "confirm_warn_proxy_retry": "Cette connexion passe par le proxy Bluetooth {proxy_name}{proxy_rssi}.{nl}Selon le modèle de brosse à dents, l'appairage et les mises à jour en direct via un proxy Bluetooth standard peuvent être peu fiables. Si les nouveaux essais échouent toujours, utilisez plutôt un adaptateur Bluetooth local ou le pont ESP32.",
+      "esp_action_connected": "Le pont est déjà connecté à votre brosse à dents. **Gardez votre Sonicare allumée** — cliquez sur **Lire les fonctions** pour terminer la configuration.",
+      "esp_action_retry": "**Allumez votre Sonicare** (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur) et **gardez-la allumée**, puis cliquez sur **Lire les fonctions** pour réessayer.",
+      "esp_action_switch_on": "**Allumez votre Sonicare** (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur) et **gardez-la allumée**, puis cliquez sur **Lire les fonctions** pour terminer la configuration.",
+      "esp_status_paired": "Appairage réussi — le pont est maintenant lié à votre brosse à dents.",
+      "esp_status_paired_rpa_unsupported": "**Appairée, mais ce pont perdra la brosse à dents après la première séance.** La brosse à dents change d'adresse Bluetooth, et la puce du pont ne suit une telle adresse que si le pont est compilé avec une option supplémentaire. Ajoutez `-DCONFIG_BT_BLE_RPA_SUPPORTED=0` sous `esphome:` → `build_flags:` dans le YAML du pont, puis recompilez et flashez-le. L'appairage reste valide. [Détails]({url})",
+      "esp_status_read_error": "Une erreur s'est produite lors de la lecture de la brosse à dents. Consultez les journaux (Paramètres → Système → Journaux) et réessayez.",
+      "esp_status_read_failed": "Impossible de lire la brosse à dents via le pont. Vérifiez qu'elle est allumée et que le pont est en ligne, puis réessayez.",
+      "not_a_sonicare": "Connecté à l'appareil, mais aucune caractéristique Philips Sonicare n'a été trouvée. Vérifiez que l'adresse correspond bien à une brosse à dents Sonicare.",
+      "not_paired_terminal_hassio": "le module complémentaire **Terminal & SSH** ([installez-le d'abord](/hassio/addon/core_ssh/info) si nécessaire)",
+      "not_paired_terminal_host": "un terminal sur la machine qui exécute Home Assistant",
+      "pair_status_unpaired": "Liaison supprimée — l'emplacement est libre. Allumez la Sonicare à lier, puis démarrez l'appairage.",
+      "pair_timeout": "Aucune Sonicare n'a été appairée dans le délai imparti. Appuyez sur le bouton marche/arrêt de la brosse à dents pour la réveiller et réessayez.",
+      "pair_timeout_passive_scanner": "**Aucune Sonicare n'a été appairée dans le délai imparti.** Le pont a **scanné en mode passif** pendant tout ce temps et ne pouvait donc pas voir la brosse à dents — un scan passif ne demande jamais la réponse de scan qui contient l'UUID de service Sonicare.\n\n**Que faire :** réglez le mode de scan Bluetooth de cet appareil ESPHome sur **Actif** sous `Paramètres > Appareils et services > ESPHome > Configurer`, puis réessayez.",
+      "pairing_failed": "L'appareil n'est toujours pas appairé. Vérifiez que la brosse à dents est allumée et réessayez l'appairage.",
+      "reset_alert_offline": "Impossible de joindre le pont ESP pour effacer la liaison. Vérifiez qu'il est en ligne et alimenté, puis réessayez.",
+      "reset_alert_unconfirmed": "Impossible de confirmer que le pont a effacé la liaison — un redémarrage est peut-être nécessaire. Vérifiez qu'il est en ligne, puis réessayez.",
+      "unknown": "Erreur inattendue. Consultez les journaux (Paramètres → Système → Journaux) pour plus de détails.",
+      "confirm_alert_adapter": "L'adaptateur Bluetooth sélectionné ne reçoit pas la brosse à dents en ce moment. Réveillez la brosse à dents et rapprochez-la de cet adaptateur, ou choisissez un autre adaptateur.",
+      "adapter_not_receiving": "L'adaptateur Bluetooth sélectionné ne reçoit pas la brosse à dents en ce moment. Réveillez la brosse à dents et rapprochez-la de cet adaptateur, ou choisissez un autre adaptateur."
+    },
+    "progress": {
+      "ble_probing": "Connexion à {name} et lecture de ses données — généralement quelques secondes ; si plusieurs tentatives de connexion sont nécessaires (signal faible, premier contact après un problème d'appairage), cela peut prendre jusqu'à deux minutes…",
+      "pair_arming": "Activation du mode appairage sur {target}…",
+      "pair_scanning": "Recherche de votre Sonicare et liaison — allumez-la et tenez-la à environ 1 m du pont. Cela peut prendre jusqu'à une minute.",
+      "unpairing": "Suppression de la liaison sur {target}…",
+      "esp_reading": "Lecture de la brosse à dents via {target}…"
+    },
+    "abort": {
+      "device_asleep": "La brosse à dents est en veille et n'a pas pu être jointe. Réveillez-la (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur), puis relancez la configuration.",
+      "already_configured": "L'appareil est déjà configuré.",
+      "already_configured_detail": "Cette brosse à dents est déjà configurée via **{transport}**. Supprimez d'abord l'entrée existante.",
+      "already_configured_disabled": "Cette brosse à dents est déjà configurée via **{transport}**, mais cette entrée est désactivée. Réactivez-la ou supprimez-la d'abord.",
+      "esp_bridge_repaired": "Cette brosse à dents est déjà configurée sur **{target}**. Son entrée continue de fonctionner — rien d'autre à faire.",
+      "esp_bridge_elsewhere": "Cette brosse à dents est déjà configurée sur **{old_target}**. Pour l'utiliser sur **{target}**, supprimez d'abord son entrée existante.",
+      "esp_bridge_elsewhere_undone": "Cette brosse à dents est déjà configurée sur **{old_target}**, l'appairage sur **{target}** a donc été annulé. Pour l'utiliser ici, supprimez d'abord son entrée existante et appairez-la à nouveau.",
+      "already_in_progress": "Une configuration est déjà en cours.",
+      "no_devices_found": "Aucun appareil Philips Sonicare compatible n'a été trouvé sur ce pont ESP.",
+      "no_esphome_devices": "Aucun pont ESPHome trouvé. Configurez d'abord un appareil ESPHome avec le composant pont BLE Sonicare — cliquez sur l'icône d'aide (en haut à droite) pour le guide d'installation.",
+      "not_supported": "Cet appareil ESPHome n'héberge pas de composant pont Philips Sonicare."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options Philips Sonicare",
+        "description": "Que voulez-vous modifier ?",
+        "menu_options": {
+          "settings": "Paramètres",
+          "adapter": "Changer d'adaptateur Bluetooth"
+        }
+      },
+      "settings": {
+        "title": "Paramètres",
+        "data": {
+          "sensor_pressure": "Activer le capteur de pression",
+          "sensor_temperature": "Activer le capteur de température",
+          "sensor_gyroscope": "Activer le capteur gyroscopique",
+          "notify_throttle_ms": "Limitation des notifications (ms)",
+          "pipelined_reads": "Lectures GATT groupées",
+          "warn_counterfeit_brushhead": "Avertir en cas de tête de brosse contrefaite"
+        },
+        "data_description": {
+          "sensor_pressure": "Transmettre les données de pression pendant les séances de brossage.",
+          "sensor_temperature": "Transmettre les données de température pendant les séances de brossage.",
+          "sensor_gyroscope": "Transmettre les données de mouvement sur 6 axes pendant les séances de brossage. Débit élevé — généralement sans problème sur un ESP32 complet, mais peut provoquer des coupures sur des cartes plus petites comme l'ESP32-C3. Disponible uniquement sur les modèles équipés d'un capteur de mouvement.",
+          "notify_throttle_ms": "Intervalle minimal entre les notifications BLE transmises par le pont ESP. Des valeurs plus basses donnent des mises à jour plus rapides, mais peuvent surcharger l'ESP.",
+          "pipelined_reads": "Envoyer les lectures périodiques au pont ESP en un seul lot simultané plutôt qu'une par une. Nécessite le firmware de pont 1.7.0 ou plus récent (les ponts plus anciens sont toujours lus séquentiellement). Ne désactivez cette option que si des erreurs de lecture apparaissent après une mise à jour du pont.",
+          "warn_counterfeit_brushhead": "Avertir si aucun numéro de série NFC valide de la tête de brosse n'est détecté après 30 secondes de brossage."
+        }
+      },
+      "adapter": {
+        "title": "Changer d'adaptateur Bluetooth",
+        "description": "Déplacer la brosse à dents vers un autre adaptateur ou proxy Bluetooth. Si le nouvel adaptateur nécessite d'abord un appairage, celui-ci suit à l'étape suivante.",
+        "data": {
+          "bluetooth_adapter": "Adaptateur Bluetooth"
+        },
+        "data_description": {
+          "bluetooth_adapter": "Adaptateur ou proxy Bluetooth par lequel la brosse à dents se connecte. Avec « Choisi par Home Assistant », Home Assistant choisit l'adaptateur selon ses propres règles (généralement le signal le plus fort) ; cette intégration n'a aucune influence sur ce choix. Avec un adaptateur fixe, Home Assistant se connecte uniquement par celui-ci : s'il ne reçoit pas la brosse à dents, il n'y a pas de connexion. Si la brosse à dents nécessite un appairage que cet adaptateur n'a pas encore, l'appairage suit à l'étape suivante. Lorsque vous passez à un adaptateur fixe, les appairages de la brosse à dents sur les autres adaptateurs locaux sont supprimés. La force du signal est affichée pour les adaptateurs qui reçoivent la brosse à dents en ce moment."
+        }
+      },
+      "pair_adapter": {
+        "title": "Appairer l'adaptateur Bluetooth",
+        "description": "{alert}La brosse à dents n'est pas encore appairée avec **{adapter}**. Chaque adaptateur Bluetooth a besoin de son propre appairage — appairée jusqu'à présent avec : **{paired_on}**.\n\nPlacez la brosse à dents près de **{adapter}**, **appuyez sur le bouton marche/arrêt** pour qu'elle fonctionne, puis cliquez immédiatement sur **Valider**. La connexion en direct est suspendue pendant l'appairage et reprend ensuite."
+      }
+    },
+    "progress": {
+      "pair_adapter": "En attente de la brosse à dents sur **{adapter}**, puis appairage — gardez-la en marche et près de l'adaptateur. Si rien ne se passe, appuyez sur le bouton marche/arrêt. Cela peut prendre jusqu'à deux minutes…"
+    },
+    "error": {
+      "pair_adapter_failed": "L'appairage avec {adapter} a échoué : {error}\n\nRéveillez la brosse à dents et cliquez sur Valider pour réessayer, ou fermez cette fenêtre pour conserver les paramètres précédents.",
+      "pair_adapter_no_advertisement": "{adapter} n'a pas reçu la brosse à dents en {seconds} secondes. Après une déconnexion, la brosse à dents reste souvent silencieuse jusqu'à ce que son bouton marche/arrêt soit pressé.\n\nPlacez-la près de {adapter}, appuyez sur le bouton marche/arrêt pour qu'elle fonctionne, puis cliquez immédiatement sur Valider — ou fermez cette fenêtre pour conserver les paramètres précédents.",
+      "pair_adapter_weak": "{adapter} ne reçoit la brosse à dents que faiblement ({rssi} dBm) — l'appairage risque d'expirer. Rapprochez la brosse à dents de {adapter}.",
+      "summary_adapter": "✅ **{adapter}** : défini comme adaptateur Bluetooth fixe",
+      "summary_adapter_auto": "✅ **Choisi par Home Assistant** : Home Assistant choisit l'adaptateur Bluetooth selon ses propres règles",
+      "summary_pair_paired": "✅ **{adapter}** : appairé",
+      "summary_pair_already": "🔲 **{adapter}** : appairage inutile — déjà appairé",
+      "summary_pair_not_needed": "🔲 **{adapter}** : appairage inutile — cette brosse à dents fonctionne sans appairage",
+      "summary_pair_proxy": "🔲 **{adapter}** : appairage inutile — le proxy Bluetooth s'appaire lui-même si nécessaire",
+      "summary_pair_auto": "🔲 **Appairage** : inutile — Home Assistant choisit l'adaptateur",
+      "summary_pair_unknown": "🔲 **{adapter}** : appairage non vérifié — adaptateur ou service Bluetooth indisponible pour le moment",
+      "summary_drop_done": "✅ **{adapter}** : ancien appairage supprimé",
+      "summary_drop_failed": "❌ **{adapter}** : l'ancien appairage n'a pas pu être supprimé — voir le journal",
+      "summary_drop_none": "🔲 **Autres adaptateurs** : aucun ancien appairage à supprimer",
+      "summary_drop_auto": "🔲 **Autres adaptateurs** : appairages conservés — Home Assistant peut utiliser n'importe quel adaptateur",
+      "summary_drop_proxy": "🔲 **Adaptateurs locaux** : appairages conservés — ils indiquent que cette brosse à dents nécessite un appairage si vous revenez en arrière",
+      "summary_drop_unknown": "🔲 **Autres adaptateurs** : non vérifié — service Bluetooth indisponible pour le moment",
+      "summary_reload": "✅ **Intégration** : rechargée — la brosse à dents se reconnecte dès qu'elle est allumée. Sinon, allumez-la avec le bouton marche/arrêt."
+    },
+    "abort": {
+      "adapter_changed": "Options enregistrées.\n\n{summary}"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "Batterie"
+      },
+      "handle_state": {
+        "name": "État du manche",
+        "state": {
+          "off": "Éteint",
+          "standby": "Veille",
+          "run": "En marche",
+          "charge": "En charge",
+          "shutdown": "Arrêt",
+          "validate": "Vérification",
+          "background": "Arrière-plan"
+        }
+      },
+      "brushing_mode": {
+        "name": "Mode de brossage",
+        "state": {
+          "clean": "Nettoyage",
+          "white_plus": "White+",
+          "white": "White",
+          "gum_health": "Santé des gencives",
+          "gum_care": "Soin des gencives",
+          "deep_clean_plus": "Nettoyage en profondeur+",
+          "deep_clean": "Nettoyage en profondeur",
+          "sensitive": "Sensible",
+          "tongue_care": "Soin de la langue"
+        }
+      },
+      "brushing_state": {
+        "name": "État du brossage",
+        "state": {
+          "off": "Éteint",
+          "on": "En marche",
+          "pause": "Pause",
+          "session_complete": "Séance terminée",
+          "session_aborted": "Séance interrompue"
+        }
+      },
+      "intensity": {
+        "name": "Intensité",
+        "state": {
+          "low": "Faible",
+          "medium": "Moyenne",
+          "high": "Élevée"
+        }
+      },
+      "brushing_time": {
+        "name": "Durée de brossage"
+      },
+      "routine_length": {
+        "name": "Durée de la routine"
+      },
+      "routine_countdown": {
+        "name": "Compte à rebours de la routine"
+      },
+      "number_of_sectors": {
+        "name": "Nombre de secteurs"
+      },
+      "sector": {
+        "name": "Secteur",
+        "state": {
+          "sector_1": "Secteur 1",
+          "sector_2": "Secteur 2",
+          "sector_3": "Secteur 3",
+          "sector_4": "Secteur 4",
+          "sector_5": "Secteur 5",
+          "sector_6": "Secteur 6",
+          "success": "Réussi",
+          "no_sector": "Aucun secteur"
+        }
+      },
+      "session_id": {
+        "name": "ID de séance"
+      },
+      "latest_session_id": {
+        "name": "ID de la dernière séance"
+      },
+      "last_session": {
+        "name": "Dernière séance"
+      },
+      "last_session_duration": {
+        "name": "Durée de la dernière séance"
+      },
+      "session_count": {
+        "name": "Nombre de séances"
+      },
+      "motor_runtime": {
+        "name": "Durée de fonctionnement du moteur"
+      },
+      "brushhead_wear": {
+        "name": "Usure"
+      },
+      "brushhead_sessions_left": {
+        "name": "Séances restantes"
+      },
+      "brushhead_usage": {
+        "name": "Utilisation"
+      },
+      "brushhead_limit": {
+        "name": "Limite de durée de vie"
+      },
+      "brushhead_serial": {
+        "name": "Numéro de série"
+      },
+      "brushhead_date": {
+        "name": "Date de fabrication"
+      },
+      "brushhead_ring_id": {
+        "name": "ID de l'anneau NFC"
+      },
+      "brushhead_nfc_version": {
+        "name": "Version NFC"
+      },
+      "brushhead_type": {
+        "name": "Type",
+        "state": {
+          "adaptive_clean": "Clean (C)",
+          "adaptive_white": "White (W)",
+          "adaptive_gums": "Gum Care (G)",
+          "tongue_clean": "TongueCare+",
+          "premium_all_in_one": "All-in-One (A)",
+          "sensitive": "Sensitive (S)",
+          "non_rfid": "Sans RFID"
+        }
+      },
+      "brushhead_payload": {
+        "name": "Données NFC"
+      },
+      "bridge_version": {
+        "name": "Version du pont"
+      },
+      "bridge_build": {
+        "name": "Build ESP"
+      },
+      "bridge_chip": {
+        "name": "Puce ESP"
+      },
+      "bridge_boot_time": {
+        "name": "Dernier démarrage de l'ESP"
+      },
+      "model_number": {
+        "name": "Numéro de modèle"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "last_seen": {
+        "name": "Vue pour la dernière fois"
+      },
+      "pressure": {
+        "name": "Pression"
+      },
+      "pressure_state": {
+        "name": "État de la pression",
+        "state": {
+          "ok": "OK",
+          "optimal": "Optimale",
+          "too_high": "Trop élevée"
+        }
+      },
+      "temperature": {
+        "name": "Température"
+      },
+      "handle_time": {
+        "name": "Durée d'utilisation du manche"
+      },
+      "activity": {
+        "name": "Activité",
+        "state": {
+          "initializing": "Initialisation",
+          "off": "Éteinte",
+          "standby": "Veille",
+          "brushing": "Brossage",
+          "paused": "En pause",
+          "charging": "En charge"
+        }
+      },
+      "rssi": {
+        "name": "RSSI BLE"
+      },
+      "adapter": {
+        "name": "Adaptateur"
+      },
+      "adapter_selection": {
+        "name": "Choix de l'adaptateur",
+        "state": {
+          "automatic": "Choisi par Home Assistant",
+          "fixed": "Fixe"
+        }
+      },
+      "adapter_type": {
+        "name": "Type d'adaptateur",
+        "state": {
+          "direct_ble": "Bluetooth direct",
+          "esp_bridge": "Pont ESP",
+          "stock_proxy": "Proxy Bluetooth",
+          "unknown": "Inconnu"
+        }
+      }
+    },
+    "binary_sensor": {
+      "is_brushing": {
+        "name": "Brossage"
+      },
+      "is_charging": {
+        "name": "En charge",
+        "state": {
+          "off": "Pas en charge",
+          "on": "En charge"
+        }
+      },
+      "pressure_alert": {
+        "name": "Alerte de pression",
+        "state": {
+          "off": "OK",
+          "on": "Problème"
+        }
+      },
+      "esp_bridge_alive": {
+        "name": "ESP connecté",
+        "state": {
+          "off": "Déconnecté",
+          "on": "Connecté"
+        }
+      },
+      "ble_connected": {
+        "name": "BLE connecté",
+        "state": {
+          "off": "Déconnecté",
+          "on": "Connecté"
+        }
+      },
+      "brushhead_counterfeit": {
+        "name": "Tête de brosse contrefaite",
+        "state": {
+          "off": "OK",
+          "on": "Problème"
+        }
+      }
+    },
+    "select": {
+      "brushing_mode_select": {
+        "name": "Mode de brossage",
+        "state": {
+          "clean": "Nettoyage",
+          "white_plus": "White+",
+          "gum_health": "Santé des gencives",
+          "deep_clean_plus": "Nettoyage en profondeur+",
+          "sensitive": "Sensible",
+          "tongue_care": "Soin de la langue"
+        }
+      },
+      "intensity_select": {
+        "name": "Intensité",
+        "state": {
+          "low": "Faible",
+          "medium": "Moyenne",
+          "high": "Élevée"
+        }
+      }
+    },
+    "switch": {
+      "adaptive_intensity": {
+        "name": "Intensité adaptative"
+      },
+      "scrubbing_feedback": {
+        "name": "Alerte de frottement"
+      },
+      "pressure_feedback": {
+        "name": "Alerte de pression"
+      }
+    },
+    "update": {
+      "bridge_firmware": {
+        "name": "Firmware du pont"
+      }
+    }
+  },
+  "device": {
+    "brush_head": {
+      "name": "Tête de brosse {device_name}"
+    },
+    "connection": {
+      "name": "Connexion {device_name}"
+    }
+  },
+  "selector": {
+    "bluetooth_adapter": {
+      "options": {
+        "auto": "Choisi par Home Assistant"
+      }
+    }
+  }
+}

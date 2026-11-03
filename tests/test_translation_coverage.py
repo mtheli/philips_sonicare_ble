@@ -413,7 +413,7 @@ async def test_user_language_prefers_the_profile_over_the_server(
         assert await cf._async_user_language(hass) == "en"
 
         # A language we do not ship falls through to the server's.
-        _set_request(accept="fr-FR,fr;q=0.9")
+        _set_request(accept="it-IT,it;q=0.9")
         assert await cf._async_user_language(hass) == "de"
     finally:
         for token in reversed(tokens):
@@ -437,8 +437,8 @@ def test_accept_language_ranking() -> None:
     assert parse("de,en") == "de"
     assert parse("en,de") == "en"
     # Unshipped languages are skipped rather than matched loosely.
-    assert parse("fr-FR,fr;q=0.9,de;q=0.1") == "de"
-    assert parse("fr,es") is None
+    assert parse("it-IT,it;q=0.9,de;q=0.1") == "de"
+    assert parse("it,es") is None
     # Malformed quality must not raise.
     assert parse("de;q=notanumber,en") == "en"
 

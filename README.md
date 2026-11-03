@@ -108,6 +108,7 @@ Like the card above, this is a **separate project and not bundled with this inte
 |----------|------|---------|
 | English  | en | |
 | Deutsch  | de | |
+| Français | fr | AI-generated, community review pending |
 
 Setup dialogs, entity names and entity states all follow the language configured in your Home Assistant instance (per-user profile setting). This includes binary sensor states, which otherwise fall back to English. If your language is not yet supported, it falls back to English. Contributions for additional languages are welcome — copy `custom_components/philips_sonicare_ble/translations/en.json`, translate the values and open a pull request.
 

@@ -262,7 +262,7 @@ def _alert(alert_type: str, text: str) -> str:
 # The languages we ship translations for. Kept as a constant so the flow
 # needs no file access; tests/test_translation_coverage.py pins it against
 # the contents of translations/.
-_TRANSLATED_LANGUAGES = ("en", "de")
+_TRANSLATED_LANGUAGES = ("en", "de", "fr")
 
 
 def _language_from_accept_header(header: str | None) -> str | None:
