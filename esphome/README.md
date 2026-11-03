@@ -95,6 +95,30 @@ The bridge firmware and the integration come from the same repository and are re
 
 If the bridge is older than the integration requires, Home Assistant shows the repair issue "ESP bridge firmware update required". Rebuild and flash the bridge to clear it.
 
+## Bridge vs. bluetooth_proxy
+
+The standard ESPHome `bluetooth_proxy` transparently relays BLE connections
+from Home Assistant through the ESP32. From ESPHome 2026.7.1 (older
+builders need the [Bluedroid NULL-check
+patch](#bluedroid-null-check-patch-bluedroid_null_fixpy))
+it works for a single Sonicare — but it has real drawbacks:
+
+- **No notification throttling** — the full BLE stream goes over WiFi.
+  With multiple Sonicares on one proxy, this overloads the WiFi socket
+  queue.
+- **Silent-connection failures** in multi-device setups — a brush can
+  stop delivering notifications while the proxy stays reachable,
+  requiring a Home Assistant integration reload to recover.
+- **Bond keys live on the proxy's NVS** — first connect after reboot
+  races service discovery against re-encryption (~5 s extra delay).
+
+This dedicated Bridge component manages the GATT connection directly on
+the ESP32 with its own pairing stack, notification throttle, and
+per-device subscription state — avoiding all three issues. Reconnects
+on a bonded brush also eagerly initiate SMP encryption (rather than
+discovering the need via a probe read), so the handshake overlaps with
+the post-SDP read pass instead of serialising behind it.
+
 ## Per-slot defaults: `friendly_name` and `area`
 
 Each `philips_sonicare:` slot accepts two optional fields that pre-fill the

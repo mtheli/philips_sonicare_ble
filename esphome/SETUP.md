@@ -5,15 +5,8 @@ for the Philips Sonicare Home Assistant integration. The ESP32 connects to the
 toothbrush via BLE and relays data to Home Assistant over WiFi, removing the need
 for direct Bluetooth access from the HA host.
 
-> [!IMPORTANT]
-> This is a **dedicated ESPHome component**, not a standard
-> [ESPHome Bluetooth Proxy](https://esphome.io/components/bluetooth_proxy.html).
-> The bridge provides stable bonding, notification throttling, and multi-device
-> support; `bluetooth_proxy` is available as a less stable fallback — see
-> [Option C: Bluetooth Proxy](../README.md#option-c-bluetooth-proxy) in the
-> main README. Both can run on the same ESP32 when building with
-> ESPHome 2026.7.1 or newer; on older builders, apply the
-> [Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy).
+> [!NOTE]
+> This is a dedicated ESPHome component, not a standard [ESPHome Bluetooth Proxy](https://esphome.io/components/bluetooth_proxy.html). The differences are explained in [Bridge vs. bluetooth_proxy](README.md#bridge-vs-bluetooth_proxy).
 
 ## Contents
 
@@ -29,8 +22,6 @@ for direct Bluetooth access from the HA host.
 - [Step 4: Add the Integration in Home Assistant](#step-4-add-the-integration-in-home-assistant)
   - [Expected pair-mode logs](#expected-pair-mode-logs)
 - [Multi-Device Setup](#multi-device-setup)
-- [Bridge vs. bluetooth_proxy](#bridge-vs-bluetooth_proxy)
-  - [Persisted GATT cache (optional)](#persisted-gatt-cache-optional)
 - [Troubleshooting](#troubleshooting)
   - [ESP32 crashes/reboots when connecting](#esp32-crashesreboots-when-connecting)
   - [Pair-mode times out without finding the brush](#pair-mode-times-out-without-finding-the-brush)
@@ -43,64 +34,53 @@ for direct Bluetooth access from the HA host.
 
 ## Tested Hardware
 
-| Board | Tested | Status |
-| :--- | :---: | :--- |
-| [M5Stack Atom Lite](https://docs.m5stack.com/en/core/ATOM%20Lite) (ESP32-PICO) | :white_check_mark: | Maintainer (up to 3 brushes); Community ([#13](https://github.com/mtheli/philips_sonicare_ble/issues/13), [#27](https://github.com/mtheli/philips_sonicare_ble/issues/27) — HX742X with rotating address) |
-| [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R) (ESP32-S3) | :white_check_mark: | Maintainer — HX742X with rotating address, with the build option¹ |
-| [M5Stack AtomS3](https://docs.m5stack.com/en/core/AtomS3) (ESP32-S3) | :white_check_mark: | Community ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)) |
-| [LilyGO T-Dongle-S3](https://lilygo.cc/products/t-dongle-s3) (ESP32-S3) | :white_check_mark: | Community — HX742X with rotating address, with the build option¹ ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
-| SB Components Micro-S3 (ESP32-S3) | :white_check_mark: | Community — two HX742X with rotating address on one bridge, with the build option¹ ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
-| [LCDwiki ES3C35P](https://www.lcdwiki.com/3.5inch_ESP32-S3_Display) / Freenove FNK0104N (ESP32-S3, 3.5" display) | :white_check_mark: | Community — HX960V, `esp32-s3-devkitc-1` ([#47](https://github.com/mtheli/philips_sonicare_ble/issues/47)) |
-| Generic ESP32 dev board (ESP32-WROOM/PICO) | :white_check_mark: | Community — two brushes on one bridge ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)); DOIT ESP32 DevKit v1, `esp32doit-devkit-v1` ([#24](https://github.com/mtheli/philips_sonicare_ble/issues/24)); `esp32dev` ([#1](https://github.com/mtheli/philips_sonicare_ble/issues/1)); AZDelivery ESP32 NodeMCU ([#32](https://github.com/mtheli/philips_sonicare_ble/issues/32)); ESP32-WROOM-32 and a classic dev board, both with brushes that rotate their address ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
-| Heemol ESP32 Mini (classic ESP32, mini form factor) | :white_check_mark: | Community ([#20](https://github.com/mtheli/philips_sonicare_ble/issues/20)) |
-| ESP32-S3 DevKitC-1 | :grey_question: | Should work — same SoC as the confirmed S3 boards. Untested with the build option¹ — on an ESP32-S3-N16R8 two HX6600 paired but did not reconnect without it ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
-| ESP32-C3 / ESP32-C6 | :grey_question: | Untested with the build option¹ — on an ESP32-C3 SuperMini a HX742X paired but did not reconnect without it ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
+| Board | Tested | Build option¹ | Status |
+| :--- | :---: | :---: | :--- |
+| [M5Stack Atom Lite](https://docs.m5stack.com/en/core/ATOM%20Lite) (ESP32-PICO) | :white_check_mark: | — | Maintainer (up to 3 brushes); Community ([#13](https://github.com/mtheli/philips_sonicare_ble/issues/13), [#27](https://github.com/mtheli/philips_sonicare_ble/issues/27) — HX742X with rotating address) |
+| [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R) (ESP32-S3) | :white_check_mark: | needed | Maintainer — HX742X with rotating address |
+| [M5Stack AtomS3](https://docs.m5stack.com/en/core/AtomS3) (ESP32-S3) | :white_check_mark: | needed | Community ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)) |
+| [LilyGO T-Dongle-S3](https://lilygo.cc/products/t-dongle-s3) (ESP32-S3) | :white_check_mark: | needed | Community — HX742X with rotating address ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
+| SB Components Micro-S3 (ESP32-S3) | :white_check_mark: | needed | Community — two HX742X with rotating address on one bridge ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
+| [LCDwiki ES3C35P](https://www.lcdwiki.com/3.5inch_ESP32-S3_Display) / Freenove FNK0104N (ESP32-S3, 3.5" display) | :white_check_mark: | needed | Community — HX960V, `esp32-s3-devkitc-1` ([#47](https://github.com/mtheli/philips_sonicare_ble/issues/47)) |
+| Generic ESP32 dev board (ESP32-WROOM/PICO) | :white_check_mark: | — | Community — two brushes on one bridge ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)); DOIT ESP32 DevKit v1, `esp32doit-devkit-v1` ([#24](https://github.com/mtheli/philips_sonicare_ble/issues/24)); `esp32dev` ([#1](https://github.com/mtheli/philips_sonicare_ble/issues/1)); AZDelivery ESP32 NodeMCU ([#32](https://github.com/mtheli/philips_sonicare_ble/issues/32)); ESP32-WROOM-32 and a classic dev board, both with brushes that rotate their address ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
+| Heemol ESP32 Mini (classic ESP32, mini form factor) | :white_check_mark: | — | Community ([#20](https://github.com/mtheli/philips_sonicare_ble/issues/20)) |
+| ESP32-S3 DevKitC-1 | :grey_question: | needed | Should work — same SoC as the confirmed S3 boards. Untested — on an ESP32-S3-N16R8 two HX6600 paired but did not reconnect without it ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
+| ESP32-C3 / ESP32-C6 | :grey_question: | needed | Untested — on an ESP32-C3 SuperMini a HX742X paired but did not reconnect without it ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
 
-¹ `-DCONFIG_BT_BLE_RPA_SUPPORTED=0` under `esphome: build_flags`. Every chip but the original ESP32 needs it for brushes with a rotating address (Series 7100, Sonicare For Kids HX6600), see the [known issue](KNOWN_ISSUES.md#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips). Brushes with a fixed address work without it.
+¹ `-DCONFIG_BT_BLE_RPA_SUPPORTED=0` under `esphome: build_flags`, see [Required changes](#required-changes), item 4. Every chip but the original ESP32 needs it for brushes with a rotating address (Series 7100, Sonicare For Kids HX6600), see the [known issue](KNOWN_ISSUES.md#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips). Brushes with a fixed address work without it.
 
 ## Prerequisites
 
+- **ESPHome 2026.7.1 or newer**, as the Home Assistant add-on (ESPHome Device Builder) or standalone. New to ESPHome? Start with [Getting Started with ESPHome and Home Assistant](https://esphome.io/guides/getting_started_hassio/). Older versions cannot build the example configs, and running `bluetooth_proxy:` on the same ESP crashes them, see [ESP32 crashes/reboots when connecting](#esp32-crashesreboots-when-connecting).
 - **ESP32 board** — see [Tested Hardware](#tested-hardware) above
-- **ESPHome** — installed as Home Assistant add-on or standalone
 - **Philips Sonicare toothbrush** — see [Tested Models](../README.md#tested-models)
-- **ESPHome 2026.7.1 or newer** if `bluetooth_proxy:` runs on the same ESP. On older ESPHome versions the ESP crashes as soon as it reads the toothbrush's services after connecting, and then keeps rebooting. The component therefore refuses to build this combination. To stay on an older ESPHome, see [ESP32 crashes/reboots when connecting](#esp32-crashesreboots-when-connecting).
 
 ## Setup overview
 
-The bridge supports two configuration paths. Both run on the same standalone
-component — they only differ in how the brush gets associated with the bridge:
+There are two ways to tell the bridge which brush it belongs to:
 
-- **Auto-Discovery** ⭐ — no MAC in YAML. The ESP scans for the
-  Sonicare service UUID and bonds with the brush you put into pair-mode via
-  the HA setup dialog. The bridge then resolves rotating BLE addresses (RPA)
-  back to the same brush automatically. Recommended for all new setups —
-  works for every supported model, including those with bonding.
-- **Fixed MAC** — set `mac_address:` directly in the `philips_sonicare:`
-  entry. The bridge connects to that MAC automatically on boot, no HA
-  pair-dialog needed. Useful when the brush's BLE address is stable
-  (no RPA rotation) and you want deterministic slot assignment from YAML.
+- **Auto-Discovery** ⭐ (recommended, works with every brush) — no MAC address in the YAML. You pair the brush through the Home Assistant setup dialog.
+- **Fixed MAC** — you write the brush's MAC address into the YAML and the bridge connects to it on its own. Only for brushes whose address never changes. The Series 7100 (HX742X) and Sonicare For Kids HX6600 change their address, so do not use Fixed MAC for them.
 
-<sub>⭐ marks the preferred path for new setups.</sub>
-
-> [!IMPORTANT]
-> The most recent Sonicares (e.g. Series 7100 / HX742X, Sonicare For Kids HX6600) use RPA — their
-> advertised MAC changes on every power cycle. Pinning a MAC for those models
-> will work until the brush rotates its address, after which the bridge can't
-> reconnect. Auto-Discovery handles RPA transparently via the bond's identity
-> resolving key, which is why it's the recommended default.
-
-The walkthrough below uses Auto-Discovery as the primary flow, with the Fixed
-MAC variant called out where the steps differ.
+The walkthrough below uses Auto-Discovery, with the Fixed MAC variant called out where the steps differ.
 
 ## Step 1: Create the ESPHome Configuration
 
-Start from one of the example configs in [`examples/`](examples/): copy it to your ESPHome configuration directory and adjust it. For example:
+Start from one of the example configs in [`examples/`](examples/). For example:
 
 - [`atom-lite.yaml`](examples/atom-lite.yaml) — M5Stack Atom Lite, one brush
 - [`atom-s3.yaml`](examples/atom-s3.yaml) — M5Stack AtomS3 / AtomS3R / AtomS3 Lite (ESP32-S3)
 - [`esp32-generic.yaml`](examples/esp32-generic.yaml) — any classic ESP32 dev board
 
 All examples, including configs for two and three brushes, are listed in the [README](README.md#contents).
+
+To get it into the ESPHome dashboard:
+
+1. In the ESPHome dashboard, click **+ New Device**, give it a name and pick your board type. When it offers to install, choose **Skip**.
+2. The dashboard has created a config with a fresh API encryption key. Click **Edit** on the new device and copy that key (the value under `api: encryption: key:`), you need it for `secrets.yaml` below.
+3. Replace the whole content with the example config, set `name:` to the name you chose, then make the changes below and click **Save**.
+
+The examples load the component with `ref: master`, which is fine to start with. To stay on a fixed release instead, see [Version pinning](README.md#version-pinning).
 
 If you already have an ESP32 running other components (e.g. `ble_adv_proxy`,
 `bluetooth_proxy`), you can add the Sonicare component to your existing config
@@ -114,14 +94,15 @@ instead of using the template.
      board: m5stack-atom   # or m5stack-atoms3, esp32dev, esp32-s3-devkitc-1, …
    ```
 
-2. **Secrets** — create or update your `secrets.yaml` with:
+2. **Secrets** — the examples read passwords from `secrets.yaml`. In the ESPHome dashboard, open it with **Secrets** (top right) and add:
    ```yaml
-   api_encryption_key: "<generate with `esphome wizard`>"
-   ota_password: "<your OTA password>"
-   wifi_ssid: "<your WiFi SSID>"
-   wifi_password: "<your WiFi password>"
-   fallback_password: "<fallback AP password>"
+   api_encryption_key: "<the key you copied from the new device>"
+   ota_password: "<choose a password for wireless updates>"
+   wifi_ssid: "<your Wi-Fi name>"
+   wifi_password: "<your Wi-Fi password>"
+   fallback_password: "<choose a password>"
    ```
+   `fallback_password` protects the hotspot the ESP opens when it cannot reach your Wi-Fi. If you did not copy a key, the [ESPHome API page](https://esphome.io/components/api/) can generate one.
 
 3. **ESP-IDF 5.5.5 with ESPHome 2026.10** — its default ESP-IDF 5.5.6 makes the bridge lose pairings after the first disconnect. The examples already pin it; in your own config add:
    ```yaml
@@ -142,21 +123,10 @@ instead of using the template.
 
 ### What you should NOT change
 
-- **Framework**: must be `esp-idf` (not Arduino) — the Arduino framework uses a
-  precompiled Bluetooth library (`libbt.a`) that limits notification subscriptions
-  to 5 (`BTA_GATTC_NOTIF_REG_MAX=5`). The Sonicare needs 11+ concurrent
-  subscriptions. With ESP-IDF, this limit is configurable via `sdkconfig_options`
-- **sdkconfig options**: `CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"` and
-  `CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"`, because we subscribe to 11+
-  characteristics. The notification limit alone would survive without them —
-  ESPHome defaults it to 12 through `esp32_ble`'s `max_notifications` — but
-  that one spare slot is gone the moment a `bluetooth_proxy`, a second
-  `ble_client` or a second brush shares the node, and the failure is silent.
-  `MAX_CACHE_CHAR` is the other case: ESPHome never sets it, so leaving it out
-  really does run against the ESP-IDF default of 40
-- **API flags**: `custom_services: true` and `homeassistant_services: true` — required
-  for the bridge component to register its services
-- **external_components**: the component is loaded directly from this GitHub repository. With `ref: master`, `refresh: 0s` fetches the latest code on every build; to stay on a release, set `ref:` to its tag (see [Version pinning](README.md#version-pinning))
+- **Framework** `esp-idf` — the Arduino framework cannot raise the Bluetooth limits the bridge needs.
+- **`sdkconfig_options`** `CONFIG_BT_GATTC_MAX_CACHE_CHAR` and `CONFIG_BT_GATTC_NOTIF_REG_MAX`, and `max_notifications` under `esp32_ble:` — without them some sensors silently stop updating. Background: [Notification subscription limit](KNOWN_ISSUES.md#notification-subscription-limit-default-too-low).
+- **API flags** `custom_services: true` and `homeassistant_services: true` — the bridge needs them to register its services.
+- **`external_components`** — loads the component from this repository. With `ref: master`, `refresh: 0s` fetches the latest code on every build; to stay on a release, set `ref:` to its tag (see [Version pinning](README.md#version-pinning)).
 
 ### Minimal config snippets
 
@@ -220,6 +190,9 @@ philips_sonicare:
 
 #### Fixed MAC
 
+<details>
+<summary>Only for brushes with a fixed address — click to expand</summary>
+
 Set `mac_address:` to pin the bridge to a specific brush. The bridge connects
 on boot without going through the HA pair-dialog:
 
@@ -247,14 +220,14 @@ after being picked up from the charger or turned on/off:
 - **ESPHome logs**: any ESP32 with `esp32_ble_tracker` enabled will print
   `Found device … Name: 'Philips Sonicare'`
 
+</details>
+
 ## Step 2: Flash the ESP32
 
-1. Open the **ESPHome Dashboard** in Home Assistant
-2. Add a new device or upload your customized YAML
-3. Click **Install** and choose your flashing method:
-   - USB for first-time flash
-   - OTA for subsequent updates
-4. Wait for the build and flash to complete
+1. In the ESPHome dashboard, click **Install** on the device.
+2. **First flash:** connect the ESP32 by USB and choose **Plug into this computer** (needs Chrome or Edge) or **Plug into the computer running ESPHome Device Builder** (USB on the Home Assistant machine).
+3. **Later updates:** choose **Wirelessly**.
+4. Wait until the build and flash are done. The first build takes several minutes.
 
 > [!NOTE]
 > Switching between Arduino and ESP-IDF framework requires a full clean build
@@ -268,8 +241,7 @@ after being picked up from the charger or turned on/off:
 
 ## Step 3: Verify the Bridge Boots
 
-After flashing, the ESP32 boots and starts scanning. The expected boot log
-depends on which configuration path you chose.
+After flashing, the ESP32 boots and starts scanning. To watch it, click **Logs** on the device in the ESPHome dashboard. The expected boot log depends on which configuration path you chose.
 
 **Auto-Discovery (no MAC, no stored bond)** — the bridge does **not** initiate
 any connection on its own; it waits for the HA setup flow to arm pair-mode:
@@ -277,7 +249,7 @@ any connection on its own; it waits for the HA setup flow to arm pair-mode:
 ```
 [I][philips_sonicare:065]: Services registered
 [I][philips_sonicare:072]: No identity in flash — UUID scan mode (waiting for pair-mode)
-[C][philips_sonicare:110]: Philips Sonicare Bridge v1.3.0
+[C][philips_sonicare:110]: Philips Sonicare Bridge vX.Y.Z
 ```
 
 The `No identity in flash — UUID scan mode` line confirms the bridge is up and
@@ -292,7 +264,7 @@ immediately:
 ```
 [I][philips_sonicare:065]: Services registered
 [I][philips_sonicare:063]: Using configured MAC address — MAC mode
-[C][philips_sonicare:110]: Philips Sonicare Bridge v1.3.0
+[C][philips_sonicare:110]: Philips Sonicare Bridge vX.Y.Z
 ```
 
 After a successful pair, subsequent boots show the brush reconnecting on its own:
@@ -306,17 +278,14 @@ After a successful pair, subsequent boots show the brush reconnecting on its own
 ```
 
 > [!NOTE]
-> Most Sonicare models (DiamondClean Smart HX992X) use **open GATT without
-> bonding** — no `auth success` line is expected. Models with bonding
-> (Prestige HX999X, ExpertClean HX962X, HX991M, HX742X Condor) emit
-> `auth success` after a successful pair-mode flow.
+> Some models (DiamondClean Smart HX992X, Sonicare For Kids HX63xx) connect without pairing, so no `auth success` line appears. Models that pair (Prestige HX999X, ExpertClean HX962X, HX991M, Series 7100 HX742X, Sonicare For Kids HX6600) log `auth success` after a successful pair-mode run.
 
 ## Step 4: Add the Integration in Home Assistant
 
 1. Install the **Philips Sonicare** integration in Home Assistant
    (via [HACS](../README.md#installation) or manually)
 2. Go to **Settings > Devices & Services > + Add Integration** and search for **Philips Sonicare**
-3. Select **"ESP32 Bridge"** → pick your ESP32 from the list
+3. Select **"ESP32 Bridge (ESPHome)"** → pick your ESP32 from the list
 4. If the ESP exposes multiple bridge slots (multi-device setup), pick the one
    you want to bond
 
@@ -335,16 +304,9 @@ integration goes straight to **"Pair toothbrush with bridge"**:
 > bond — the bridge bonds to the first matching brush, period. The pair dialog
 > in HA reminds you of this.
 
-**Fixed MAC** — the slot already has an identity from YAML
-(`pair_capable=false`), so the pair dialog is skipped and the integration
-goes straight to capability detection. Make sure the brush is reachable
-(within range, not on the charger) on first setup so the bridge can complete
-GATT discovery; bonded models will run the SMP exchange on this first
-connection.
+**Fixed MAC** — there is no pair dialog. Switch on the brush, keep it within range (not on the charger), then continue.
 
-After both paths, the integration reads the toothbrush capabilities and shows
-the **Connection via ESP32 Bridge** page (v1.3.0, BLE Connected, bond status,
-MAC, etc.). Click **Read capabilities** to finish setup.
+After both paths, the integration shows the **Connection via ESP32 Bridge** page (bridge version, BLE connection, pairing status, MAC). Click **Read capabilities** to finish setup.
 
 ### Expected pair-mode logs
 
@@ -479,47 +441,6 @@ Full examples:
 > or ESP Bridge, not both simultaneously.
 
 ---
-
-## Bridge vs. bluetooth_proxy
-
-The standard ESPHome `bluetooth_proxy` transparently relays BLE connections
-from Home Assistant through the ESP32. From ESPHome 2026.7.1 (older
-builders need the [Bluedroid NULL-check
-patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy))
-it works for a single Sonicare — but it has real drawbacks:
-
-- **No notification throttling** — the full BLE stream goes over WiFi.
-  With multiple Sonicares on one proxy, this overloads the WiFi socket
-  queue.
-- **Silent-connection failures** in multi-device setups — a brush can
-  stop delivering notifications while the proxy stays reachable,
-  requiring a Home Assistant integration reload to recover.
-- **Bond keys live on the proxy's NVS** — first connect after reboot
-  races service discovery against re-encryption (~5 s extra delay).
-
-This dedicated Bridge component manages the GATT connection directly on
-the ESP32 with its own pairing stack, notification throttle, and
-per-device subscription state — avoiding all three issues. Reconnects
-on a bonded brush also eagerly initiate SMP encryption (rather than
-discovering the need via a probe read), so the handshake overlaps with
-the post-SDP read pass instead of serialising behind it.
-
-### Persisted GATT cache (optional)
-
-Setting `CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"` under `esp32.framework.sdkconfig_options`
-persists the discovered GATT table to NVS keyed by the bonded peer's
-identity. The first connect after a flash or unpair still runs the full
-~4 s SDP; subsequent reconnects to the same brush hit the cache in tens
-of ms and skip discovery entirely. On a brush you reconnect to often,
-this is the biggest single contributor to reconnect latency.
-
-The cache-save path in older Bluedroid has the same NULL deref as the
-`bluetooth_proxy` coexistence bug — fixed from ESPHome 2026.7.1
-(ESP-IDF 5.5.5). On older builders this flag depends on the
-[Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy)
-(the component enforces this at compile time). Disable the flag if
-you'd rather skip the patch — the bridge still works, just runs the
-full SDP on every wake.
 
 ## Troubleshooting
 

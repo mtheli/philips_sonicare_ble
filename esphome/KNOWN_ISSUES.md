@@ -8,9 +8,9 @@ Issues with the ESP32 bridge, ESPHome and ESP-IDF. Issues with Bluetooth adapter
 | :--- | :--- | :--- | :--- |
 | [ESP bridge loses pairings with ESP-IDF 5.5.6](#esp-bridge-loses-pairings-with-esp-idf-556) | ESPHome 2026.10.0 (ESP-IDF 5.5.6) | 2026-10-25 | ⚠️ Workaround: ESP-IDF 5.5.5 |
 | [Brushes with a rotating address stop reconnecting on newer ESP32 chips](#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips) | ESP32-S3, C3, C6 and other chips except the original ESP32 | 2026-09-12 | ⚠️ Workaround: build option |
+| [Bluedroid crash with bluetooth_proxy](#bluedroid-crash-with-bluetooth_proxy-fixed-in-esphome-202671) | `bluetooth_proxy` built with ESPHome before 2026.7.1 | 2026-04-01 | ✅ Resolved in ESPHome 2026.7.1 |
 | [Notification subscription limit (default too low)](#notification-subscription-limit-default-too-low) | ESPHome setups without this bridge | 2026-04-01 | ✅ Solved in the bridge |
 | [Unnecessary pair() calls in other ESPHome projects](#unnecessary-pair-calls-in-other-esphome-projects) | Other ESPHome projects | 2026-04-01 | ℹ️ Informational |
-| [Bluedroid crash with bluetooth_proxy](#bluedroid-crash-with-bluetooth_proxy-fixed-in-esphome-202671) | `bluetooth_proxy` built with ESPHome before 2026.7.1 | 2026-04-01 | ✅ Resolved in ESPHome 2026.7.1 |
 
 ---
 
@@ -92,90 +92,6 @@ Each new pairing files the bond under a different address of the same brush. Up 
 
 ---
 
-## Notification subscription limit (default too low)
-
-**Known since:** 2026-04-01
-
-**Status:** Solved in our ESP32 Bridge component
-
-The ESP32 Bluedroid BLE stack limits the number of concurrent GATT notification
-subscriptions. The Sonicare requires 11+ subscriptions for full live data.
-
-### Symptoms
-
-- Some sensors never update (silently fail to subscribe)
-- `E BT_APPL: Max Notification Reached, registration failed` in ESP32 logs
-- Battery or basic status works but brushing data / pressure / brush head missing
-
-### Root cause
-
-| Config option | ESP-IDF default | What you actually get | Recommended |
-|---------------|---------|---------|----------|
-| `CONFIG_BT_GATTC_NOTIF_REG_MAX` | 5 | **12** | 20 |
-| `CONFIG_BT_GATTC_MAX_CACHE_CHAR` | 40 | **40** | 80 |
-
-The two columns differ because ESPHome sets one of them and not the other.
-`esp32_ble` writes `CONFIG_BT_GATTC_NOTIF_REG_MAX` from its `max_notifications`
-option, which defaults to 12 — and `esp32_ble_tracker` auto-loads that
-component, so the default applies even to a config with no `esp32_ble:` block
-in it. `MAX_CACHE_CHAR` has no such option and stays at the ESP-IDF default.
-
-A config that sets neither is therefore not automatically broken: 12 slots
-cover the 11 subscriptions. What it has is a single slot of headroom. The
-moment anything else on the node subscribes — a `bluetooth_proxy`, a second
-`ble_client`, a second brush — the limit is reached, and it is reached
-silently: no build error, just sensors that never update. The limit is per
-GATT client interface, not per connection, so every consumer on the node
-draws from the same pool.
-
-The Arduino framework uses a precompiled `libbt.a` where these values are
-hardcoded and cannot be changed. The ESP-IDF framework allows configuration
-via `sdkconfig_options`.
-
-### Affected projects
-
-All ESPHome YAML projects (iamjoshk, Andrecall, v6ak, edwardtfn, xuio) do
-**not** set these options. They work around the limit by polling characteristics
-on a timer (`set_update_interval`) instead of using GATT notifications. This
-means they miss real-time updates during brushing.
-
-### Solution
-
-Use ESP-IDF framework with explicit `sdkconfig_options`:
-
-```yaml
-esp32:
-  framework:
-    type: esp-idf
-    sdkconfig_options:
-      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"
-      CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"
-```
-
-Our [ESP32 Bridge](SETUP.md) component requires ESP-IDF and documents
-these settings.
-
----
-
-## Unnecessary pair() calls in other ESPHome projects
-
-**Known since:** 2026-04-01
-
-**Status:** Informational
-
-Some community ESPHome configs (notably Andrecall/esphome-sonicare) call
-`pair()` or `esp_ble_set_encryption()` in the `on_connect` handler. This is
-unnecessary on DiamondClean Smart (HX992X) models which use open GATT.
-However, on models that require BLE bonding (ExpertClean HX962X, Prestige
-HX999X), the `pair()` call is actually needed — Andrecall likely had
-such a model.
-
-The `pair()` call happens to be harmless when using `ble_client` directly
-(the auth failure is handled gracefully), but it contributes to confusion
-about whether pairing is required. It is not.
-
----
-
 ## Bluedroid crash with bluetooth_proxy (fixed in ESPHome 2026.7.1)
 
 **Known since:** 2026-04-01
@@ -202,7 +118,7 @@ in the main README for scope and limitations of the proxy path compared to
 the dedicated [ESP32 BLE Bridge](SETUP.md).
 
 The same patch also unlocks an optional bridge performance setting
-([`CONFIG_BT_GATTC_CACHE_NVS_FLASH`](SETUP.md#persisted-gatt-cache-optional))
+([`CONFIG_BT_GATTC_CACHE_NVS_FLASH`](README.md#persisted-gatt-cache-optional))
 that depends on the same NULL guards. The flag is off in a stock build
 and only relevant if you enable it explicitly.
 
@@ -319,3 +235,89 @@ Use the [ESP32 BLE Bridge](SETUP.md) component alone. If you need a
 Bluetooth Proxy for other devices, run it on a **separate ESP32**.
 
 </details>
+
+---
+
+*The next two entries concern other ESPHome projects that talk to a Sonicare without this bridge. The bridge handles both itself.*
+
+## Notification subscription limit (default too low)
+
+**Known since:** 2026-04-01
+
+**Status:** Solved in our ESP32 Bridge component
+
+The ESP32 Bluedroid BLE stack limits the number of concurrent GATT notification
+subscriptions. The Sonicare requires 11+ subscriptions for full live data.
+
+### Symptoms
+
+- Some sensors never update (silently fail to subscribe)
+- `E BT_APPL: Max Notification Reached, registration failed` in ESP32 logs
+- Battery or basic status works but brushing data / pressure / brush head missing
+
+### Root cause
+
+| Config option | ESP-IDF default | What you actually get | Recommended |
+|---------------|---------|---------|----------|
+| `CONFIG_BT_GATTC_NOTIF_REG_MAX` | 5 | **12** | 20 |
+| `CONFIG_BT_GATTC_MAX_CACHE_CHAR` | 40 | **40** | 80 |
+
+The two columns differ because ESPHome sets one of them and not the other.
+`esp32_ble` writes `CONFIG_BT_GATTC_NOTIF_REG_MAX` from its `max_notifications`
+option, which defaults to 12 — and `esp32_ble_tracker` auto-loads that
+component, so the default applies even to a config with no `esp32_ble:` block
+in it. `MAX_CACHE_CHAR` has no such option and stays at the ESP-IDF default.
+
+A config that sets neither is therefore not automatically broken: 12 slots
+cover the 11 subscriptions. What it has is a single slot of headroom. The
+moment anything else on the node subscribes — a `bluetooth_proxy`, a second
+`ble_client`, a second brush — the limit is reached, and it is reached
+silently: no build error, just sensors that never update. The limit is per
+GATT client interface, not per connection, so every consumer on the node
+draws from the same pool.
+
+The Arduino framework uses a precompiled `libbt.a` where these values are
+hardcoded and cannot be changed. The ESP-IDF framework allows configuration
+via `sdkconfig_options`.
+
+### Affected projects
+
+All ESPHome YAML projects (iamjoshk, Andrecall, v6ak, edwardtfn, xuio) do
+**not** set these options. They work around the limit by polling characteristics
+on a timer (`set_update_interval`) instead of using GATT notifications. This
+means they miss real-time updates during brushing.
+
+### Solution
+
+Use ESP-IDF framework with explicit `sdkconfig_options`:
+
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"
+      CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"
+```
+
+Our [ESP32 Bridge](SETUP.md) component requires ESP-IDF and documents
+these settings.
+
+---
+
+## Unnecessary pair() calls in other ESPHome projects
+
+**Known since:** 2026-04-01
+
+**Status:** Informational
+
+Some community ESPHome configs (notably Andrecall/esphome-sonicare) call
+`pair()` or `esp_ble_set_encryption()` in the `on_connect` handler. This is
+unnecessary on DiamondClean Smart (HX992X) models which use open GATT.
+However, on models that require BLE bonding (ExpertClean HX962X, Prestige
+HX999X), the `pair()` call is actually needed — Andrecall likely had
+such a model.
+
+The `pair()` call happens to be harmless when using `ble_client` directly
+(the auth failure is handled gracefully), but it contributes to confusion
+about whether pairing is required. It is not.

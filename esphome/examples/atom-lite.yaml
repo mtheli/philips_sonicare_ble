@@ -87,8 +87,8 @@ esp32_ble_tracker:
 #
 # The component scans for the Sonicare service UUID, bonds with the brush
 # you put into pair-mode via the HA setup flow, and stores the bond identity
-# in NVS.  After bonding, the controller resolves rotating BLE addresses
-# (RPA) back to the same brush automatically — no MAC pinning needed.
+# in NVS.  After bonding, the bridge follows the brush's rotating BLE address
+# (RPA) through the bond — no MAC pinning needed.
 #
 # To pair:
 #   1. Flash this firmware
@@ -98,7 +98,8 @@ esp32_ble_tracker:
 #
 # BLE bonding is handled automatically. Models that require bonding (e.g.
 # Prestige 9900, ExpertClean, HX991M) are paired via SMP after service
-# discovery; models with open GATT (e.g. DiamondClean) work without pairing.
+# discovery; models with open GATT (e.g. DiamondClean Smart HX992X) work
+# without pairing.
 
 external_components:
   - source:

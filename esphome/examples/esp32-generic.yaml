@@ -1,6 +1,13 @@
 esphome:
   name: esp32-ble-bridge
   friendly_name: "ESP32 BLE Bridge"
+  # On ESP32-S3, C3, C6 and other newer chips, uncomment for brushes with a
+  # rotating address (Series 7100, Sonicare For Kids HX6600): without it the
+  # bridge pairs, but loses the brush after the first session. Not needed on
+  # the original ESP32. See KNOWN_ISSUES.md, "Brushes with a rotating address
+  # stop reconnecting on newer ESP32 chips".
+  # build_flags:
+  #   - -DCONFIG_BT_BLE_RPA_SUPPORTED=0
   # Optional: bluedroid_null_fix.py cherry-picks the NULL pointer guards
   # from ESP-IDF commit d4f3517 into the build. Only needed on
   # ESPHome < 2026.7.1 (ESP-IDF < 5.5.5) when you opt into either:
@@ -87,8 +94,8 @@ esp32_ble_tracker:
 #
 # The component scans for the Sonicare service UUID, bonds with the brush
 # you put into pair-mode via the HA setup flow, and stores the bond identity
-# in NVS.  After bonding, the controller resolves rotating BLE addresses
-# (RPA) back to the same brush automatically — no MAC pinning needed.
+# in NVS.  After bonding, the bridge follows the brush's rotating BLE address
+# (RPA) through the bond — no MAC pinning needed.
 #
 # To pair:
 #   1. Flash this firmware
@@ -98,7 +105,8 @@ esp32_ble_tracker:
 #
 # BLE bonding is handled automatically. Models that require bonding (e.g.
 # Prestige 9900, ExpertClean, HX991M) are paired via SMP after service
-# discovery; models with open GATT (e.g. DiamondClean) work without pairing.
+# discovery; models with open GATT (e.g. DiamondClean Smart HX992X) work
+# without pairing.
 
 external_components:
   - source:

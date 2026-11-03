@@ -31,8 +31,9 @@ esp32:
     version: 5.5.5
     sdkconfig_options:
       # ESPHome never touches MAX_CACHE_CHAR — leave this out and the ESP-IDF
-      # default of 40 stands, for both brushes together.
-      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "160"
+      # default of 40 stands. The limit applies to each brush on its own, not
+      # to all brushes together, so it stays at 80 for any number of brushes.
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"
       # NOTIF_REG_MAX is written by esp32_ble from its max_notifications option
       # (default 12) — not enough here: the limit is per GATT client interface,
       # so two brushes at 11 subscriptions each share it. Matched to
