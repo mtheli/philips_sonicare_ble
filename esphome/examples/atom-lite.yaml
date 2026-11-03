@@ -1,6 +1,6 @@
 esphome:
-  name: esp32-ble-bridge
-  friendly_name: "ESP32 BLE Bridge"
+  name: atom-lite
+  friendly_name: "Atom Lite BLE Bridge"
   # Optional: bluedroid_null_fix.py cherry-picks the NULL pointer guards
   # from ESP-IDF commit d4f3517 into the build. Only needed on
   # ESPHome < 2026.7.1 (ESP-IDF < 5.5.5) when you opt into either:
@@ -20,9 +20,15 @@ esphome:
 # is only configurable via sdkconfig.  Arduino uses precompiled libbt.a with
 # BTA_GATTC_NOTIF_REG_MAX=5 — Sonicare needs 11 subscriptions.
 esp32:
-  board: esp32dev
+  board: m5stack-atom
   framework:
     type: esp-idf
+    # ESPHome 2026.10.0 defaults to ESP-IDF 5.5.6, which drops the pairing
+    # after the first disconnect (see KNOWN_ISSUES.md, "ESP bridge loses
+    # pairings with ESP-IDF 5.5.6"). ESPHome warns that this is not the
+    # recommended version; that is expected. Remove the line once an ESPHome
+    # release ships an ESP-IDF version with the fix.
+    version: 5.5.5
     sdkconfig_options:
       # ESPHome never touches MAX_CACHE_CHAR — leave this out and the ESP-IDF
       # default of 40 stands.
@@ -60,7 +66,7 @@ wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   ap:
-    ssid: "ESP32-BLE-Bridge-Fallback"
+    ssid: "Atom-Lite-Fallback"
     password: !secret fallback_password
 
 captive_portal:
@@ -101,7 +107,7 @@ external_components:
       ref: master
       path: esphome/components
     components: [philips_sonicare]
-    refresh: 0s                  # always fetch latest code on build
+    refresh: 0s
 
 philips_sonicare:
   - id: philips_sonicare_ble
@@ -113,24 +119,41 @@ philips_sonicare:
     on_connect:
       then:
         - logger.log: "Connected to Sonicare"
+        - light.turn_on:
+            id: status_led
+            red: 0%
+            green: 100%
+            blue: 0%
     on_disconnect:
       then:
         - logger.log: "Disconnected from Sonicare"
+        - light.turn_on:
+            id: status_led
+            red: 100%
+            green: 0%
+            blue: 0%
 
-# --- Optional: Status LED ---
-# Uncomment and adjust GPIO for your board if you want a status indicator.
-#
-# For boards with a built-in LED (e.g. GPIO2 on many DevKit boards):
-# light:
-#   - platform: binary
-#     output: status_led_output
-#     id: status_led
-#     name: "Status LED"
-#
-# output:
-#   - platform: gpio
-#     id: status_led_output
-#     pin: GPIO2
+# --- Hardware: M5Stack Atom Lite ---
+
+# NeoPixel LED (GPIO27) — esp32_rmt_led_strip required for ESP-IDF
+light:
+  - platform: esp32_rmt_led_strip
+    chipset: ws2812
+    rgb_order: GRB
+    pin: GPIO27
+    num_leds: 1
+    id: status_led
+    name: "Status LED"
+    restore_mode: ALWAYS_OFF
+
+# Button (GPIO39)
+binary_sensor:
+  - platform: gpio
+    id: atom_button
+    name: "Button"
+    pin:
+      number: GPIO39
+      inverted: true
 
 # --- Bluetooth Proxy (optional) ---
 # Uncomment to relay BLE for other devices through this ESP. On

@@ -88,7 +88,7 @@ A bridge on a classic ESP32 (ESP32-WROOM, ESP32-PICO, M5Stack Atom Lite and simi
 
 ### Pairing the brush again
 
-Each new pairing files the bond under a different address of the same brush. Up to integration 0.30.x the Home Assistant entry was keyed by that address, so after a new pairing it ignored the events of its own slot and showed no data. From integration 0.31.0 with bridge firmware 1.15.0 the entry is keyed by the identity the brush hands over during pairing, which stays the same, so a new pairing on the same slot keeps the entry working. See [Brush identity](README.md#brush-identity-integration-0310-and-later) for how existing entries switch.
+Each new pairing files the bond under a different address of the same brush. Up to integration 0.30.x the Home Assistant entry was keyed by that address, so after a new pairing it ignored the events of its own slot and showed no data. From integration 0.31.0 with bridge firmware 1.15.0 the entry is keyed by the identity the brush hands over during pairing, which stays the same, so a new pairing on the same slot keeps the entry working. Existing entries switch after the brush has sent one event and Home Assistant restarts or the entry reloads.
 
 ---
 

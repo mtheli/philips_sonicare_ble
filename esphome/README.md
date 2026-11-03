@@ -38,33 +38,62 @@ adapter), which the integration uses when no bridge is configured:
                                        └──────────┘ └──────────┘
 ```
 
-- **Where the BLE link lives:** Direct BLE ties the connection to the HA
-  host's adapter — the brush must be in radio range of your server. With
-  the bridge, the BLE link terminates on the ESP32, which you can place
-  anywhere with Wi-Fi coverage (e.g. in the bathroom).
-- **Who holds the bond:** on the bridge path the ESP stores the LE bond
-  in its own flash (NVS), independent of Home Assistant restarts,
-  container rebuilds, or the host's BlueZ state.
-- **What travels over Wi-Fi:** plain ESPHome traffic — HA calls services
-  (`ble_read_char_<bridge_id>`, …) and the bridge answers with events.
-  No Bluetooth stack is involved on the HA side at all.
-- **Multi-device:** one bridge serves several toothbrushes, each as its
-  own slot with its own service set.
+- **Placement:** with Direct BLE the brush must be in range of the Home Assistant host. The ESP32 can sit anywhere with Wi-Fi, e.g. in the bathroom.
+- **Pairing:** the ESP32 keeps the pairing in its own flash, unaffected by Home Assistant restarts or the host's Bluetooth.
+- **Link to Home Assistant:** plain ESPHome API (service calls and events), no Bluetooth on the Home Assistant side.
+- **Several brushes:** one bridge serves several toothbrushes, each in its own slot.
 
 For end-to-end setup instructions (flashing, integration configuration,
 multi-device setups) see [`SETUP.md`](SETUP.md).
 
 ## Contents
 
-| File | Description |
-|------|-------------|
-| [`components/philips_sonicare/`](components/philips_sonicare/) | The C++ ESPHome external component. This is the actual bridge implementation — BLE client, GATT read/write/subscribe, bonding, and the HA event/service interface. |
-| [`atom-lite.yaml`](atom-lite.yaml) | Ready-to-flash config for the M5Stack Atom Lite, one toothbrush. `bluetooth_proxy` is disabled by default but prepared — uncomment the `bluetooth_proxy:` block (and, only on ESPHome < 2026.7.1, the `extra_scripts:` entry — both clearly marked in the file) to run the bridge and a proxy for other BLE devices in parallel. |
-| [`atom-lite-dual.yaml`](atom-lite-dual.yaml) | Same board, but configured for **two** Sonicares via one bridge. Raises `BTA_GATTC_NOTIF_REG_MAX` and `BTA_GATTC_MAX_CACHE_CHAR` accordingly. `bluetooth_proxy` also off by default, same uncomment recipe as above. |
-| [`esp32-generic.yaml`](esp32-generic.yaml) | Generic ESP32 dev-board config (`esp32dev`). Use as a starting point for other boards. Same proxy opt-in pattern. |
-| [`bluedroid_null_fix.py`](bluedroid_null_fix.py) | Compile-time patch — see next section. |
-| [`CHANGELOG.md`](CHANGELOG.md) | Version history for the external component. |
+**Start here**
+
+| File | What it is |
+|------|------------|
+| [`SETUP.md`](SETUP.md) | Step-by-step setup: flashing, adding the integration, multi-brush setups, troubleshooting. Includes the list of [tested boards](SETUP.md#tested-hardware). |
 | [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) | Known problems with ESPHome, ESP-IDF and particular chips, with workarounds. |
+
+**Example configs** (in [`examples/`](examples/))
+
+| File | Board | Brushes |
+|------|-------|:-------:|
+| [`atom-lite.yaml`](examples/atom-lite.yaml) | M5Stack Atom Lite | 1 |
+| [`atom-lite-dual.yaml`](examples/atom-lite-dual.yaml) | M5Stack Atom Lite | 2 |
+| [`atom-lite-triple.yaml`](examples/atom-lite-triple.yaml) | M5Stack Atom Lite | 3 |
+| [`atom-s3.yaml`](examples/atom-s3.yaml) | M5Stack AtomS3 / AtomS3R / AtomS3 Lite (ESP32-S3), with the build option for brushes with a rotating address | 1 |
+| [`esp32-generic.yaml`](examples/esp32-generic.yaml) | Generic ESP32 dev board (`esp32dev`), starting point for other boards | 1 |
+
+All example configs pin ESP-IDF 5.5.5 and have `bluetooth_proxy` prepared but switched off. To run a proxy for other BLE devices alongside the bridge, uncomment the `bluetooth_proxy:` block (and, only on ESPHome < 2026.7.1, the `extra_scripts:` entry). Both are marked in the files.
+
+**Reference**
+
+| File | What it is |
+|------|------------|
+| [`PROTOCOL.md`](PROTOCOL.md) | The services and events between the bridge and Home Assistant, including how poll reads are batched. |
+| [`CHANGELOG.md`](CHANGELOG.md) | Version history of the bridge component. |
+| [`components/philips_sonicare/`](components/philips_sonicare/) | The ESPHome external component (C++): BLE client, pairing, and the Home Assistant service and event interface. |
+| [`bluedroid_null_fix.py`](bluedroid_null_fix.py) | Compile-time patch, only for ESPHome < 2026.7.1 (see [below](#bluedroid-null-check-patch-bluedroid_null_fixpy)). |
+
+## Requirements
+
+- **ESP-IDF framework** (not Arduino). Arduino's precompiled Bluedroid has
+  `BTA_GATTC_MAX_CACHE_CHAR=40` and `BTA_GATTC_NOTIF_REG_MAX=5`, both too
+  small for the toothbrush's ~45 attributes and 11 subscriptions per device.
+  The YAMLs set the larger limits via `sdkconfig_options`.
+- **ESP-IDF 5.5.5 with ESPHome 2026.10.** Its default ESP-IDF 5.5.6 makes the bridge lose pairings after the first disconnect. The example configs pin 5.5.5; see the [known issue](KNOWN_ISSUES.md#esp-bridge-loses-pairings-with-esp-idf-556).
+- **One extra build option on ESP32-S3, C3, C6 and other newer chips** for brushes with a rotating address (Series 7100, Sonicare For Kids HX6600): `-DCONFIG_BT_BLE_RPA_SUPPORTED=0` under `esphome: build_flags`. See the [known issue](KNOWN_ISSUES.md#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips).
+- An ESP32 within BLE range of the toothbrush (ideally RSSI better than
+  -85 dBm). RSSI around -100 dBm is the noise floor — bonding will fail
+  at that range on models that require it (ExpertClean, HX991M,
+  DiamondClean Prestige).
+
+## Version pinning
+
+The bridge firmware and the integration come from the same repository and are released together. Build the bridge from the same release as the integration you run: in `external_components:`, replace `ref: master` with the release tag, e.g. `ref: v0.32.1`.
+
+If the bridge is older than the integration requires, Home Assistant shows the repair issue "ESP bridge firmware update required". Rebuild and flash the bridge to clear it.
 
 ## Per-slot defaults: `friendly_name` and `area`
 
@@ -95,18 +124,30 @@ the device's area in HA and reload the integration, the YAML default will
 fill it in again. To opt out permanently, remove the `area:` line from
 the slot.
 
+## Persisted GATT cache (optional)
+
+Adding `CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"` under `sdkconfig_options`
+persists the discovered GATT table to NVS keyed by the bonded peer's
+identity. With it, the first connect to a bonded brush still does a
+full ~4 s service discovery; subsequent reconnects hit the cached
+service table in tens of ms. On a brush you reconnect to often this is
+the biggest single contributor to reconnect latency.
+
+The cache-save path crashes on the same NULL deref as the proxy bug, so
+on ESPHome < 2026.7.1 this flag depends on the [Bluedroid patch](#bluedroid-null-check-patch-bluedroid_null_fixpy) — the
+component enforces this at compile time. From ESPHome 2026.7.1 on, no
+patch is needed. To opt in, uncomment the
+`CONFIG_BT_GATTC_CACHE_NVS_FLASH` line in your YAML (and, only on older
+ESPHome, the patch wiring at the top of `esphome:`).
+
 ## Bluedroid NULL-check patch (`bluedroid_null_fix.py`)
 
-> [!IMPORTANT]
-> **Fixed upstream in ESPHome 2026.7.1** (bundles ESP-IDF 5.5.5). If you
-> build with 2026.7.1 or newer, this section does not apply — no patch
-> needed. On older ESPHome versions, enabling `bluetooth_proxy:` in the
-> same ESP config as this bridge crashes the ESP on boot with a
-> `LoadProhibited` / `bta_gattc_cache_save` exception. This is an ESP-IDF
-> bug (not specific to this integration) — tracked in
-> [esphome#15783](https://github.com/esphome/esphome/issues/15783), fixed
-> by ESP-IDF commit [`d4f3517`](https://github.com/espressif/esp-idf/commit/d4f3517)
-> (shipped in ESP-IDF 5.5.5 / 6.0.2).
+Only needed on **ESPHome older than 2026.7.1**. From 2026.7.1 on, the fix ships with ESP-IDF 5.5.5 and this section does not apply.
+
+<details>
+<summary>Details for older ESPHome versions</summary>
+
+On ESPHome before 2026.7.1, enabling `bluetooth_proxy:` in the same ESP config as this bridge crashes the ESP with a `LoadProhibited` / `bta_gattc_cache_save` exception as soon as it reads the toothbrush's services after connecting, and it keeps rebooting. This is an ESP-IDF bug (not specific to this integration), tracked in [esphome#15783](https://github.com/esphome/esphome/issues/15783) and fixed by ESP-IDF commit [`d4f3517`](https://github.com/espressif/esp-idf/commit/d4f3517) (shipped in ESP-IDF 5.5.5 / 6.0.2).
 
 The component checks for this at compile time: building the crash-prone
 combination (old ESP-IDF + GATT service cache enabled) aborts with clear
@@ -134,131 +175,6 @@ removed. The script is harmless to leave in place — it becomes a no-op
 against patched source.
 
 **If you only run this bridge and no `bluetooth_proxy:`, the patch is not
-required** — unless you also opt into the persisted GATT cache (next
-section), which depends on the same NULL guards.
+required** — unless you also opt into the [persisted GATT cache](#persisted-gatt-cache-optional), which depends on the same NULL guards.
 
-## Persisted GATT cache (optional)
-
-Adding `CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"` under `sdkconfig_options`
-persists the discovered GATT table to NVS keyed by the bonded peer's
-identity. With it, the first connect to a bonded brush still does a
-full ~4 s service discovery; subsequent reconnects hit the cached
-service table in tens of ms. On a brush you reconnect to often this is
-the biggest single contributor to reconnect latency.
-
-The cache-save path crashes on the same NULL deref as the proxy bug, so
-on ESPHome < 2026.7.1 this flag depends on the patch above — the
-component enforces this at compile time. From ESPHome 2026.7.1 on, no
-patch is needed. To opt in, uncomment the
-`CONFIG_BT_GATTC_CACHE_NVS_FLASH` line in your YAML (and, only on older
-ESPHome, the patch wiring at the top of `esphome:`).
-
-## Pipelined GATT reads (bridge ≥ 1.7.0)
-
-How the integration polls characteristics depends on the bridge firmware
-version, which the bridge reports in its status events:
-
-- **Bridge ≥ 1.7.0 (pipelined):** Home Assistant fires the whole poll
-  batch at once. The firmware serialises everything through a single
-  ATT-operation scheduler — only one GATT read/write/subscribe is in
-  flight on the BLE link at any time; the rest wait in the bridge's
-  pending-calls queue and are drained back-to-back as each operation
-  completes. Reads deferred behind connection setup (service discovery,
-  subscription writes, the SMP handshake on bonded brushes) simply wait
-  in the queue instead of timing out individually, so a poll batch
-  completes without lost values. A 10-second ATT watchdog recovers the
-  queue if the BLE stack ever drops a completion event, so a lost read
-  costs one 10 s stall instead of a stuck connection.
-
-  ```text
-  HA                ESP                 Brush
-  │── N reads ─────►│ queue [████ N]      │
-  │                 │── request #1 ──────►│
-  │◄──── event ─────│◄─── response #1 ────│
-  │◄──── event ─────│── request #2 ──────►│  ◄─ back-to-back at radio
-  │◄──── event ─────│── request #3 ──────►│     pace, no HA round-trip
-  ⋮                 ⋮                     ⋮     in between
-
-  • one timeout budgets the whole batch (15 s + 1 s per read)
-  • waiting behind connection setup is safe: the queue holds the reads
-    instead of letting them time out
-  ```
-
-- **Bridge < 1.7.0 (sequential):** older firmware has a single response
-  slot, so overlapping reads would silently drop all but the last reply.
-  The integration detects this from the reported version and falls back
-  to reading one characteristic at a time, waiting for each reply —
-  exactly the previous behavior. Everything keeps working, just with a
-  slower read phase, and a read fired during connection setup can time
-  out on the HA side before the bridge executes it.
-
-  ```text
-  HA                ESP                 Brush
-  │── read #1 ─────►│                     │
-  │                 │── ATT request ─────►│ ╮
-  │                 │◄──── ATT response ──│ ╯ a few conn events
-  │◄──── event ─────│                     │
-  │── read #2 ─────►│                     │  ◄─ next read only after a
-  │                 │──────►              │     full HA↔ESP round-trip
-  ⋮                 ⋮                     ⋮     (× N reads)
-
-  • per read: radio round-trip + HA↔ESP round-trip
-  • each read has its own 5 s timeout → a read fired while the bridge
-    is still subscribing (or mid-SMP on a bonded brush) can expire
-    before it ever executes
-  ```
-
-The "Pipelined GATT reads" toggle in the integration options is a
-runtime opt-out: switch it off to force sequential reads without
-reflashing if a setup misbehaves. It has no effect on bridges older
-than 1.7.0.
-
-How fast a batch completes is bounded by the BLE **connection
-interval**, which the device may renegotiate depending on its state.
-Each GATT read costs a few connection events, so the same batch can
-take a different time on a fresh connection than on a long-idle one —
-in both modes. Pipelining removes the per-read HA→ESP round-trip and
-the timeout risk; it cannot make the radio tick faster. The firmware
-logs `Conn params initial/now: interval=… ms` lines (INFO) whenever
-the parameters change, which makes this directly visible.
-
-## Connection-parameter boost (not implemented)
-
-Unlike the bridge firmware of [philips_shaver](https://github.com/mtheli/philips_shaver)
-(the sister integration for Philips shavers, ≥ 1.11.0), this firmware
-implements no connection-parameter boost. The toothbrushes measured so far have not
-shown a profile that would need one: a Prestige 9900 holds a constant
-15 ms interval for the whole connection, and a Kids HX6340 settles on
-a mild power-save profile (70 ms, slave latency 3) that still
-completes a full poll batch in under 3 s and delivers its
-once-per-second brushing notifications without loss. Should a model
-turn up whose idle profile genuinely slows polling down, the
-`Conn params` log lines above are the data to collect first.
-
-## Requirements
-
-- **ESP-IDF framework** (not Arduino). Arduino's precompiled Bluedroid has
-  `BTA_GATTC_MAX_CACHE_CHAR=40` and `BTA_GATTC_NOTIF_REG_MAX=5`, both too
-  small for the toothbrush's ~45 attributes and 11 subscriptions per device.
-  The YAMLs set the larger limits via `sdkconfig_options`.
-- An ESP32 within BLE range of the toothbrush (ideally RSSI better than
-  -85 dBm). RSSI around -100 dBm is the noise floor — bonding will fail
-  at that range on models that require it (ExpertClean, HX991M,
-  DiamondClean Prestige).
-
-## Version pinning
-
-The integration enforces a minimum bridge version (`MIN_BRIDGE_VERSION`
-in `custom_components/philips_sonicare_ble/const.py`). On version mismatch
-Home Assistant shows a Repairs notification asking you to reflash. Always
-flash a matching pair — the ref in your YAML's `external_components:`
-should point at the same tag/commit as the integration version.
-
-## Brush identity (integration 0.31.0 and later)
-
-From bridge firmware 1.15.0 the bridge reports the identity a brush handed over during pairing, also for pairings made with older firmware. Integration 0.31.0 keys the entries of brushes with a rotating address by that identity instead of the address the bond is filed under, so the entry keeps working when the brush is paired again under a new address.
-
-- **Existing entries switch on their own.** The integration stores the identity when the brush sends its first event after the update and switches the entry at its next start. So wake the brush once, then restart Home Assistant or reload the entry. Entity IDs and history stay.
-- **Pairing the same brush again** on its slot keeps the entry. On another slot or another ESP the setup stops and undoes the new pairing, because the brush already has an entry.
-- **Bridge firmware older than 1.15.0** keeps working with a switched entry through the stored bond address.
-- **Going back to an integration older than 0.31.0** after the switch leaves the entry without data. Remove the entry and set the brush up again.
+</details>

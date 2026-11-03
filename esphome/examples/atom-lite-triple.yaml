@@ -29,6 +29,12 @@ esp32:
   board: m5stack-atom
   framework:
     type: esp-idf
+    # ESPHome 2026.10.0 defaults to ESP-IDF 5.5.6, which drops the pairing
+    # after the first disconnect (see KNOWN_ISSUES.md, "ESP bridge loses
+    # pairings with ESP-IDF 5.5.6"). ESPHome warns that this is not the
+    # recommended version; that is expected. Remove the line once an ESPHome
+    # release ships an ESP-IDF version with the fix.
+    version: 5.5.5
     sdkconfig_options:
       # ESPHome never touches MAX_CACHE_CHAR — leave this out and the ESP-IDF
       # default of 40 stands. Sonicare tree ~80 entries (services + chars +

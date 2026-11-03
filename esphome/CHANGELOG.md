@@ -292,7 +292,7 @@
   [`esphome/SETUP.md`](SETUP.md#multi-device-setup)
   for board guidance.
 
-- **New sample config: [`atom-lite-triple.yaml`](atom-lite-triple.yaml)**
+- **New sample config: [`atom-lite-triple.yaml`](examples/atom-lite-triple.yaml)**
   for 3-brush setups on Atom Lite. Bumps `CONFIG_BT_GATTC_NOTIF_REG_MAX`
   to 50 (3 × 11 subs + headroom), trims `CONFIG_BT_ACL_CONNECTIONS` and
   `CONFIG_BTDM_CTRL_BLE_MAX_CONN` to 5 (4 wasted ~8 KB heap in our

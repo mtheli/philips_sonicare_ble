@@ -28,6 +28,7 @@ for direct Bluetooth access from the HA host.
 - [Step 3: Verify the Bridge Boots](#step-3-verify-the-bridge-boots)
 - [Step 4: Add the Integration in Home Assistant](#step-4-add-the-integration-in-home-assistant)
   - [Expected pair-mode logs](#expected-pair-mode-logs)
+- [Multi-Device Setup](#multi-device-setup)
 - [Bridge vs. bluetooth_proxy](#bridge-vs-bluetooth_proxy)
   - [Persisted GATT cache (optional)](#persisted-gatt-cache-optional)
 - [Troubleshooting](#troubleshooting)
@@ -38,7 +39,6 @@ for direct Bluetooth access from the HA host.
   - [OTA install aborts with "WebSocket connection closed"](#ota-install-aborts-with-websocket-connection-closed)
   - [No data after OTA update](#no-data-after-ota-update)
 - [Service & event reference](#service--event-reference)
-- [Multi-Device Setup](#multi-device-setup)
 - [Legacy: external `ble_client:`](#legacy-external-ble_client) — deprecated, for existing YAMLs only
 
 ## Tested Hardware
@@ -50,6 +50,7 @@ for direct Bluetooth access from the HA host.
 | [M5Stack AtomS3](https://docs.m5stack.com/en/core/AtomS3) (ESP32-S3) | :white_check_mark: | Community ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)) |
 | [LilyGO T-Dongle-S3](https://lilygo.cc/products/t-dongle-s3) (ESP32-S3) | :white_check_mark: | Community — HX742X with rotating address, with the build option¹ ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
 | SB Components Micro-S3 (ESP32-S3) | :white_check_mark: | Community — two HX742X with rotating address on one bridge, with the build option¹ ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
+| [LCDwiki ES3C35P](https://www.lcdwiki.com/3.5inch_ESP32-S3_Display) / Freenove FNK0104N (ESP32-S3, 3.5" display) | :white_check_mark: | Community — HX960V, `esp32-s3-devkitc-1` ([#47](https://github.com/mtheli/philips_sonicare_ble/issues/47)) |
 | Generic ESP32 dev board (ESP32-WROOM/PICO) | :white_check_mark: | Community — two brushes on one bridge ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)); DOIT ESP32 DevKit v1, `esp32doit-devkit-v1` ([#24](https://github.com/mtheli/philips_sonicare_ble/issues/24)); `esp32dev` ([#1](https://github.com/mtheli/philips_sonicare_ble/issues/1)); AZDelivery ESP32 NodeMCU ([#32](https://github.com/mtheli/philips_sonicare_ble/issues/32)); ESP32-WROOM-32 and a classic dev board, both with brushes that rotate their address ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
 | Heemol ESP32 Mini (classic ESP32, mini form factor) | :white_check_mark: | Community ([#20](https://github.com/mtheli/philips_sonicare_ble/issues/20)) |
 | ESP32-S3 DevKitC-1 | :grey_question: | Should work — same SoC as the confirmed S3 boards. Untested with the build option¹ — on an ESP32-S3-N16R8 two HX6600 paired but did not reconnect without it ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
@@ -62,11 +63,7 @@ for direct Bluetooth access from the HA host.
 - **ESP32 board** — see [Tested Hardware](#tested-hardware) above
 - **ESPHome** — installed as Home Assistant add-on or standalone
 - **Philips Sonicare toothbrush** — see [Tested Models](../README.md#tested-models)
-- **ESPHome 2026.7.1 or newer** if `bluetooth_proxy:` runs on the same
-  ESP — on older builders that combination crashes Bluedroid during
-  service discovery (the component aborts the build); see
-  [ESP32 crashes/reboots when connecting](#esp32-crashesreboots-when-connecting)
-  in Troubleshooting for the patch if you must stay on an old builder.
+- **ESPHome 2026.7.1 or newer** if `bluetooth_proxy:` runs on the same ESP. On older ESPHome versions the ESP crashes as soon as it reads the toothbrush's services after connecting, and then keeps rebooting. The component therefore refuses to build this combination. To stay on an older ESPHome, see [ESP32 crashes/reboots when connecting](#esp32-crashesreboots-when-connecting).
 
 ## Setup overview
 
@@ -86,7 +83,7 @@ component — they only differ in how the brush gets associated with the bridge:
 <sub>⭐ marks the preferred path for new setups.</sub>
 
 > [!IMPORTANT]
-> The most recent Sonicares (e.g. Series 7100 / HX742X) use RPA — their
+> The most recent Sonicares (e.g. Series 7100 / HX742X, Sonicare For Kids HX6600) use RPA — their
 > advertised MAC changes on every power cycle. Pinning a MAC for those models
 > will work until the brush rotates its address, after which the bridge can't
 > reconnect. Auto-Discovery handles RPA transparently via the bond's identity
@@ -95,21 +92,15 @@ component — they only differ in how the brush gets associated with the bridge:
 The walkthrough below uses Auto-Discovery as the primary flow, with the Fixed
 MAC variant called out where the steps differ.
 
-> [!NOTE]
-> A third configuration via an external `ble_client:` block exists for
-> backwards compatibility with older configs.
-> See [Legacy: external `ble_client:`](#legacy-external-ble_client) at the
-> bottom — new setups should not use it; it offers no advantage over Fixed
-> MAC.
-
 ## Step 1: Create the ESPHome Configuration
 
-Use one of the templates as a starting point — copy to your ESPHome
-configuration directory and customize:
+Start from one of the example configs in [`examples/`](examples/): copy it to your ESPHome configuration directory and adjust it. For example:
 
-- [`esphome/atom-lite.yaml`](atom-lite.yaml) — single brush
-- [`esphome/atom-lite-dual.yaml`](atom-lite-dual.yaml) — 2 brushes
-- [`esphome/atom-lite-triple.yaml`](atom-lite-triple.yaml) — 3 brushes (practical limit on Atom Lite)
+- [`atom-lite.yaml`](examples/atom-lite.yaml) — M5Stack Atom Lite, one brush
+- [`atom-s3.yaml`](examples/atom-s3.yaml) — M5Stack AtomS3 / AtomS3R / AtomS3 Lite (ESP32-S3)
+- [`esp32-generic.yaml`](examples/esp32-generic.yaml) — any classic ESP32 dev board
+
+All examples, including configs for two and three brushes, are listed in the [README](README.md#contents).
 
 If you already have an ESP32 running other components (e.g. `ble_adv_proxy`,
 `bluetooth_proxy`), you can add the Sonicare component to your existing config
@@ -117,8 +108,7 @@ instead of using the template.
 
 ### Required changes
 
-1. **Board type** — the template targets the M5Stack Atom Lite. Change to your
-   board if different:
+1. **Board type** — each example targets one board. Change it if yours differs:
    ```yaml
    esp32:
      board: m5stack-atom   # or m5stack-atoms3, esp32dev, esp32-s3-devkitc-1, …
@@ -132,6 +122,23 @@ instead of using the template.
    wifi_password: "<your WiFi password>"
    fallback_password: "<fallback AP password>"
    ```
+
+3. **ESP-IDF 5.5.5 with ESPHome 2026.10** — its default ESP-IDF 5.5.6 makes the bridge lose pairings after the first disconnect. The examples already pin it; in your own config add:
+   ```yaml
+   esp32:
+     framework:
+       type: esp-idf
+       version: 5.5.5
+   ```
+   ESPHome warns that this is not the recommended version; that is expected. See the [known issue](KNOWN_ISSUES.md#esp-bridge-loses-pairings-with-esp-idf-556).
+
+4. **Build option on ESP32-S3, C3, C6 and other newer chips** — needed for brushes with a rotating address (Series 7100, Sonicare For Kids HX6600). Without it the bridge pairs, but loses the brush after the first session. [`atom-s3.yaml`](examples/atom-s3.yaml) already has it; otherwise add:
+   ```yaml
+   esphome:
+     build_flags:
+       - -DCONFIG_BT_BLE_RPA_SUPPORTED=0
+   ```
+   Not needed on the original ESP32. See the [known issue](KNOWN_ISSUES.md#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips).
 
 ### What you should NOT change
 
@@ -149,21 +156,24 @@ instead of using the template.
   really does run against the ESP-IDF default of 40
 - **API flags**: `custom_services: true` and `homeassistant_services: true` — required
   for the bridge component to register its services
-- **external_components**: the component is loaded directly from this GitHub repository.
-  The `refresh: 0s` setting ensures the latest code is fetched on every build
+- **external_components**: the component is loaded directly from this GitHub repository. With `ref: master`, `refresh: 0s` fetches the latest code on every build; to stay on a release, set `ref:` to its tag (see [Version pinning](README.md#version-pinning))
 
 ### Minimal config snippets
 
-If you're adding this to an existing ESPHome config, these are the blocks you
-need. The shared infrastructure (framework, api, ble) is identical — only the
-`philips_sonicare:` entry differs between the two paths.
+If you're adding the bridge to an existing ESPHome config, these are the blocks you need. The shared infrastructure is the same for both paths; only the `philips_sonicare:` entry differs.
 
 #### Shared infrastructure
 
 ```yaml
+esphome:
+  # Uncomment on ESP32-S3, C3, C6 and other newer chips, see Required changes, item 4
+  # build_flags:
+  #   - -DCONFIG_BT_BLE_RPA_SUPPORTED=0
+
 esp32:
   framework:
     type: esp-idf
+    version: 5.5.5   # see Required changes, item 3
     sdkconfig_options:
       CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"
       CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"
@@ -184,7 +194,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/mtheli/philips_sonicare_ble
-      ref: master
+      ref: master   # or a release tag, see Version pinning in the README
       path: esphome/components
     components: [philips_sonicare]
     refresh: 0s
@@ -364,175 +374,6 @@ across reboots (no further pair-mode needed).
 > but no `auth success` line. Bond persistence still works via the saved
 > identity, so reconnect on next boot is the same.
 
-## Bridge vs. bluetooth_proxy
-
-The standard ESPHome `bluetooth_proxy` transparently relays BLE connections
-from Home Assistant through the ESP32. From ESPHome 2026.7.1 (older
-builders need the [Bluedroid NULL-check
-patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy))
-it works for a single Sonicare — but it has real drawbacks:
-
-- **No notification throttling** — the full BLE stream goes over WiFi.
-  With multiple Sonicares on one proxy, this overloads the WiFi socket
-  queue.
-- **Silent-connection failures** in multi-device setups — a brush can
-  stop delivering notifications while the proxy stays reachable,
-  requiring a Home Assistant integration reload to recover.
-- **Bond keys live on the proxy's NVS** — first connect after reboot
-  races service discovery against re-encryption (~5 s extra delay).
-
-This dedicated Bridge component manages the GATT connection directly on
-the ESP32 with its own pairing stack, notification throttle, and
-per-device subscription state — avoiding all three issues. Reconnects
-on a bonded brush also eagerly initiate SMP encryption (rather than
-discovering the need via a probe read), so the handshake overlaps with
-the post-SDP read pass instead of serialising behind it.
-
-### Persisted GATT cache (optional)
-
-Setting `CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"` under `esp32.framework.sdkconfig_options`
-persists the discovered GATT table to NVS keyed by the bonded peer's
-identity. The first connect after a flash or unpair still runs the full
-~4 s SDP; subsequent reconnects to the same brush hit the cache in tens
-of ms and skip discovery entirely. On a brush you reconnect to often,
-this is the biggest single contributor to reconnect latency.
-
-The cache-save path in older Bluedroid has the same NULL deref as the
-`bluetooth_proxy` coexistence bug — fixed from ESPHome 2026.7.1
-(ESP-IDF 5.5.5). On older builders this flag depends on the
-[Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy)
-(the component enforces this at compile time). Disable the flag if
-you'd rather skip the patch — the bridge still works, just runs the
-full SDP on every wake.
-
-## Troubleshooting
-
-Known problems with ESPHome, ESP-IDF and particular chips, with workarounds, are listed in the [ESP bridge known issues](KNOWN_ISSUES.md).
-
-### ESP32 crashes/reboots when connecting
-
-On builds from ESPHome < 2026.7.1 with `bluetooth_proxy:` enabled, the ESP32
-crashes in the Bluedroid GATT cache during service discovery with
-`Fault - LoadProhibited / bta_gattc_cache_save`. Since bridge firmware v1.10.0
-the component refuses to build that crash-prone combination and prints the
-options below instead.
-
-**Fix:** update to ESPHome 2026.7.1 or newer (it bundles ESP-IDF 5.5.5, which
-carries the upstream fix) and rebuild. If you have to stay on an older builder,
-apply the
-[Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy)
-or disable `bluetooth_proxy`.
-
----
-
-### Pair-mode times out without finding the brush
-
-Two distinct causes, and the ESP log tells them apart.
-
-**Cause 1 — the scanner ran passively (only with `bluetooth_proxy:` on the
-same ESP).** Sonicare handles send the service UUID that pair-mode matches on
-only in the scan response, which a passive scan never requests — the bridge
-cannot see the brush at all, however close and awake it is. When
-`bluetooth_proxy:` is compiled in, Home Assistant owns the shared scanner and
-its per-device scanning mode (default **Auto** since HA 2026.6, which scans
-passively) overrides the `esp32_ble_tracker` `scan_parameters` at runtime.
-Firmware v1.11.0 names this case when the window closes:
-
-```
-[W][philips_sonicare:311]: Pair-mode ran its whole window with the BLE scanner PASSIVE — the toothbrush could not be discovered. …
-```
-
-**Fix:** pairing from the integration's setup dialog handles this on its own
-from v0.24.0 — it requests active scan windows for the whole pair window, and
-if none could be had, the timeout dialog says so. If you see the warning
-anyway (older integration, scanning mode pinned to *Passive*, or pair-mode
-armed manually via **Developer tools > Actions**), set the ESP's Bluetooth
-scanning mode to **Active** under **Settings > Devices & Services > ESPHome >
-Configure** and try again. Without `bluetooth_proxy:` in the YAML this cause
-is off the table — `scan_parameters.active: true` applies unconditionally.
-
-**Cause 2 — timing.** No warning in the log, the scanner was active, the
-brush just never advertised into the window: it only advertises for
-~20 seconds after waking up.
-
-**Fix:** work through these, in order:
-
-- Press the power button or pick the brush up from the charger immediately
-  before clicking **Start pairing**, then keep it on
-- Remember the brush is **not reachable** via BLE while on the charging stand
-- Make sure no phone has an active connection to the brush — close or uninstall
-  the Sonicare app
-- Keep the brush within ~1 m of the ESP during pair-mode
-
----
-
-### "No philips_sonicare services found"
-
-**Fix:** add `custom_services: true` and `homeassistant_services: true` under
-the `api:` section of your ESPHome config. Both flags are required since
-ESPHome 2025.7.0.
-
----
-
-### "No ESPHome devices found" in HA config flow
-
-The ESP32 must be fully set up and connected to Home Assistant via the ESPHome
-integration before the config flow can offer it.
-
-**Fix:**
-
-- Check **Settings > Devices & Services > ESPHome** — your device should be
-  listed there
-- On a fresh ESPHome install, wait for the device to come online after flashing
-
----
-
-### OTA install aborts with "WebSocket connection closed"
-
-The build log stops mid-compile (e.g. `[1473/1521] Building CXX object ...`) and
-the dashboard afterwards reports the device as out of sync, still on its
-previously deployed version. Nothing was flashed — the ESP keeps running its old
-binary, so this is safe to retry.
-
-It is most common on the first install after the ESPHome builder itself was
-updated: crossing a builder version forces a near-complete recompile (~1500
-compile units) instead of the usual handful, and the dashboard's log stream is
-an Ingress WebSocket that can be dropped during those minutes of sustained CPU
-and RAM use. A sleeping browser tab or a reverse-proxy timeout produces the same
-symptom.
-
-**Fix:** click **Install** again. The object cache survives, so the retry only
-compiles what was left and completes quickly.
-
----
-
-### No data after OTA update
-
-After an OTA flash, the ESP32 reboots and reconnects to the toothbrush via BLE
-before Home Assistant re-establishes the API stream (~5-10 seconds). The bridge
-automatically re-fires the "ready" event every 15 seconds until HA subscribes to
-notifications.
-
-**Fix:** if data still doesn't flow after that:
-
-- **Reload the integration** in HA (Settings > Devices & Services >
-  Philips Sonicare > ... > Reload)
-- Check ESPHome logs for `BLE connected, no subscriptions — re-firing ready`
-- Check HA logs for `ESP bridge rebooted — forcing re-setup`
-
----
-
-## Service & event reference
-
-The bridge exposes its functionality to Home Assistant as a small set of
-ESPHome services (`ble_read_char`, `ble_subscribe`, `ble_pair_mode`, …) and
-fires events back (`esphome.philips_sonicare_ble_data`,
-`esphome.philips_sonicare_ble_status`, `esphome.philips_sonicare_ble_services`).
-For the architecture diagram, the full per-service signatures, and the event
-field reference, see **[PROTOCOL.md](PROTOCOL.md)**.
-
----
-
 ## Multi-Device Setup
 
 A single ESP32 can bridge **multiple** Sonicare toothbrushes. Each gets its
@@ -579,7 +420,7 @@ turn ignore every advertisement in the meantime.
 
 1. Add one `philips_sonicare:` entry per brush, each with a unique `id` and
    `bridge_id` and no `mac_address:`. Size `sdkconfig_options` for the final
-   brush count right away — see [`atom-lite-triple.yaml`](atom-lite-triple.yaml).
+   brush count right away — see [`atom-lite-triple.yaml`](examples/atom-lite-triple.yaml).
    Running out of notification slots produces no build error, only sensors that
    never update.
 2. Flash, then run the [ESP32 Bridge setup
@@ -606,8 +447,8 @@ that stable identity — the pairing log names it:
 ```
 
 Full examples:
-- [`esphome/atom-lite-dual.yaml`](atom-lite-dual.yaml) — 2 brushes
-- [`esphome/atom-lite-triple.yaml`](atom-lite-triple.yaml) — 3 brushes (Atom Lite limit)
+- [`examples/atom-lite-dual.yaml`](examples/atom-lite-dual.yaml) — 2 brushes
+- [`examples/atom-lite-triple.yaml`](examples/atom-lite-triple.yaml) — 3 brushes (Atom Lite limit)
 
 > [!IMPORTANT]
 > **RAM limit on single-core ESP32 boards.** The M5Stack Atom Lite
@@ -636,6 +477,191 @@ Full examples:
 > [!NOTE]
 > Each toothbrush should only be connected via **one** path — either Direct BLE
 > or ESP Bridge, not both simultaneously.
+
+---
+
+## Bridge vs. bluetooth_proxy
+
+The standard ESPHome `bluetooth_proxy` transparently relays BLE connections
+from Home Assistant through the ESP32. From ESPHome 2026.7.1 (older
+builders need the [Bluedroid NULL-check
+patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy))
+it works for a single Sonicare — but it has real drawbacks:
+
+- **No notification throttling** — the full BLE stream goes over WiFi.
+  With multiple Sonicares on one proxy, this overloads the WiFi socket
+  queue.
+- **Silent-connection failures** in multi-device setups — a brush can
+  stop delivering notifications while the proxy stays reachable,
+  requiring a Home Assistant integration reload to recover.
+- **Bond keys live on the proxy's NVS** — first connect after reboot
+  races service discovery against re-encryption (~5 s extra delay).
+
+This dedicated Bridge component manages the GATT connection directly on
+the ESP32 with its own pairing stack, notification throttle, and
+per-device subscription state — avoiding all three issues. Reconnects
+on a bonded brush also eagerly initiate SMP encryption (rather than
+discovering the need via a probe read), so the handshake overlaps with
+the post-SDP read pass instead of serialising behind it.
+
+### Persisted GATT cache (optional)
+
+Setting `CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"` under `esp32.framework.sdkconfig_options`
+persists the discovered GATT table to NVS keyed by the bonded peer's
+identity. The first connect after a flash or unpair still runs the full
+~4 s SDP; subsequent reconnects to the same brush hit the cache in tens
+of ms and skip discovery entirely. On a brush you reconnect to often,
+this is the biggest single contributor to reconnect latency.
+
+The cache-save path in older Bluedroid has the same NULL deref as the
+`bluetooth_proxy` coexistence bug — fixed from ESPHome 2026.7.1
+(ESP-IDF 5.5.5). On older builders this flag depends on the
+[Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy)
+(the component enforces this at compile time). Disable the flag if
+you'd rather skip the patch — the bridge still works, just runs the
+full SDP on every wake.
+
+## Troubleshooting
+
+Known problems with ESPHome, ESP-IDF and particular chips, with workarounds, are listed in the [ESP bridge known issues](KNOWN_ISSUES.md).
+
+Click a problem to expand it.
+
+<a id="esp32-crashesreboots-when-connecting"></a>
+<details>
+<summary><b>ESP32 crashes/reboots when connecting</b></summary>
+
+> On builds from ESPHome < 2026.7.1 with `bluetooth_proxy:` enabled, the ESP32
+> crashes in the Bluedroid GATT cache during service discovery with
+> `Fault - LoadProhibited / bta_gattc_cache_save`. Since bridge firmware v1.10.0
+> the component refuses to build that crash-prone combination and prints the
+> options below instead.
+>
+> **Fix:** update to ESPHome 2026.7.1 or newer (it bundles ESP-IDF 5.5.5, which
+> carries the upstream fix) and rebuild. If you have to stay on an older ESPHome,
+> set `bluetooth_proxy: cache_services: false`, apply the
+> [Bluedroid NULL-check patch](README.md#bluedroid-null-check-patch-bluedroid_null_fixpy),
+> or disable `bluetooth_proxy`.
+
+</details>
+
+<a id="pair-mode-times-out-without-finding-the-brush"></a>
+<details>
+<summary><b>Pair-mode times out without finding the brush</b></summary>
+
+> Two distinct causes, and the ESP log tells them apart.
+>
+> **Cause 1 — the scanner ran passively (only with `bluetooth_proxy:` on the
+> same ESP).** Sonicare handles send the service UUID that pair-mode matches on
+> only in the scan response, which a passive scan never requests — the bridge
+> cannot see the brush at all, however close and awake it is. When
+> `bluetooth_proxy:` is compiled in, Home Assistant owns the shared scanner and
+> its per-device scanning mode (default **Auto** since HA 2026.6, which scans
+> passively) overrides the `esp32_ble_tracker` `scan_parameters` at runtime.
+> Firmware v1.11.0 names this case when the window closes:
+>
+> ```
+> [W][philips_sonicare:311]: Pair-mode ran its whole window with the BLE scanner PASSIVE — the toothbrush could not be discovered. …
+> ```
+>
+> **Fix:** pairing from the integration's setup dialog handles this on its own
+> from v0.24.0 — it requests active scan windows for the whole pair window, and
+> if none could be had, the timeout dialog says so. If you see the warning
+> anyway (older integration, scanning mode pinned to *Passive*, or pair-mode
+> armed manually via **Developer tools > Actions**), set the ESP's Bluetooth
+> scanning mode to **Active** under **Settings > Devices & Services > ESPHome >
+> Configure** and try again. Without `bluetooth_proxy:` in the YAML this cause
+> is off the table — `scan_parameters.active: true` applies unconditionally.
+>
+> **Cause 2 — timing.** No warning in the log, the scanner was active, the
+> brush just never advertised into the window: it only advertises for
+> ~20 seconds after waking up.
+>
+> **Fix:** work through these, in order:
+>
+> - Press the power button or pick the brush up from the charger immediately
+>   before clicking **Start pairing**, then keep it on
+> - Remember the brush is **not reachable** via BLE while on the charging stand
+> - Make sure no phone has an active connection to the brush — close or uninstall
+>   the Sonicare app
+> - Keep the brush within ~1 m of the ESP during pair-mode
+
+</details>
+
+<a id="no-philips_sonicare-services-found"></a>
+<details>
+<summary><b>"No philips_sonicare services found"</b></summary>
+
+> **Fix:** add `custom_services: true` and `homeassistant_services: true` under
+> the `api:` section of your ESPHome config. Both flags are required since
+> ESPHome 2025.7.0.
+
+</details>
+
+<a id="no-esphome-devices-found-in-ha-config-flow"></a>
+<details>
+<summary><b>"No ESPHome devices found" in HA config flow</b></summary>
+
+> The ESP32 must be fully set up and connected to Home Assistant via the ESPHome
+> integration before the config flow can offer it.
+>
+> **Fix:**
+>
+> - Check **Settings > Devices & Services > ESPHome** — your device should be
+>   listed there
+> - On a fresh ESPHome install, wait for the device to come online after flashing
+
+</details>
+
+<a id="ota-install-aborts-with-websocket-connection-closed"></a>
+<details>
+<summary><b>OTA install aborts with "WebSocket connection closed"</b></summary>
+
+> The build log stops mid-compile (e.g. `[1473/1521] Building CXX object ...`) and
+> the dashboard afterwards reports the device as out of sync, still on its
+> previously deployed version. Nothing was flashed — the ESP keeps running its old
+> binary, so this is safe to retry.
+>
+> It is most common on the first install after the ESPHome builder itself was
+> updated: crossing a builder version forces a near-complete recompile (~1500
+> compile units) instead of the usual handful, and the dashboard's log stream is
+> an Ingress WebSocket that can be dropped during those minutes of sustained CPU
+> and RAM use. A sleeping browser tab or a reverse-proxy timeout produces the same
+> symptom.
+>
+> **Fix:** click **Install** again. The object cache survives, so the retry only
+> compiles what was left and completes quickly.
+
+</details>
+
+<a id="no-data-after-ota-update"></a>
+<details>
+<summary><b>No data after OTA update</b></summary>
+
+> After an OTA flash, the ESP32 reboots and reconnects to the toothbrush via BLE
+> before Home Assistant re-establishes the API stream (~5-10 seconds). The bridge
+> automatically re-fires the "ready" event every 15 seconds until HA subscribes to
+> notifications.
+>
+> **Fix:** if data still doesn't flow after that:
+>
+> - **Reload the integration** in HA (Settings > Devices & Services >
+>   Philips Sonicare > ... > Reload)
+> - Check ESPHome logs for `BLE connected, no subscriptions — re-firing ready`
+> - Check HA logs for `ESP bridge rebooted — forcing re-setup`
+
+</details>
+
+---
+
+## Service & event reference
+
+The bridge exposes its functionality to Home Assistant as a small set of
+ESPHome services (`ble_read_char`, `ble_subscribe`, `ble_pair_mode`, …) and
+fires events back (`esphome.philips_sonicare_ble_data`,
+`esphome.philips_sonicare_ble_status`, `esphome.philips_sonicare_ble_services`).
+For the architecture diagram, the full per-service signatures, and the event
+field reference, see **[PROTOCOL.md](PROTOCOL.md)**.
 
 ---
 

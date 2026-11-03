@@ -304,7 +304,7 @@ For the complete setup guide, see **[ESP32 Bridge Setup Guide](esphome/SETUP.md)
 > Each ESP bridge slot accepts optional `friendly_name:` and `area:` fields that pre-fill the HA setup form and auto-assign the brush to an HA area on first install — convenient for multi-brush setups. See [Per-slot defaults](esphome/README.md#per-slot-defaults-friendly_name-and-area).
 
 > [!NOTE]
-> From integration 0.31.0 with bridge firmware 1.15.0, entries of brushes with a rotating address (Series 7100) are keyed by the brush's identity, so pairing the brush again keeps its entry. Existing entries switch after the brush has sent one event and Home Assistant restarts or the entry reloads. See [Brush identity](esphome/README.md#brush-identity-integration-0310-and-later).
+> From integration 0.31.0 with bridge firmware 1.15.0, entries of brushes with a rotating address (Series 7100) are keyed by the brush's identity, so pairing the brush again keeps its entry. Existing entries switch after the brush has sent one event and Home Assistant restarts or the entry reloads.
 
 ### Option C: Bluetooth Proxy
 

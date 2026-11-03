@@ -8,7 +8,41 @@ The bridge is a thin facade — every action HA wants the ESP to perform is an
 `esphome.<device>_<service>` call, every reply comes back as a Home Assistant
 event the integration listens for. There is no direct return value.
 
-> Component version: **1.7.0**
+> Component version: **1.15.0**
+
+## Contents
+
+- [Architecture](#architecture)
+- [Conventions](#conventions)
+  - [Service names and `bridge_id`](#service-names-and-bridge_id)
+  - [Events and `bridge_id`](#events-and-bridge_id)
+  - [UUID parsing](#uuid-parsing)
+  - [Concurrency (since 1.7.0)](#concurrency-since-170)
+  - [Pipelined vs. sequential reads](#pipelined-vs-sequential-reads)
+  - [Connection-parameter boost (not implemented)](#connection-parameter-boost-not-implemented)
+- [Operation modes](#operation-modes)
+  - [`external` — external `ble_client`](#external--external-ble_client)
+  - [`standalone` — fixed MAC](#standalone--fixed-mac)
+  - [`standalone` — pair-flow (recommended for fresh setups)](#standalone--pair-flow-recommended-for-fresh-setups)
+- [Services](#services)
+  - [`ble_read_char`](#ble_read_char)
+  - [`ble_subscribe`](#ble_subscribe)
+  - [`ble_unsubscribe`](#ble_unsubscribe)
+  - [`ble_write_char`](#ble_write_char)
+  - [`ble_set_throttle`](#ble_set_throttle)
+  - [`ble_get_info`](#ble_get_info)
+  - [`ble_list_services`](#ble_list_services)
+  - [`ble_pair_mode`](#ble_pair_mode)
+  - [`ble_unpair`](#ble_unpair)
+  - [`ble_unpair_mac`](#ble_unpair_mac)
+  - [`ble_scan`](#ble_scan)
+  - [`ble_pair_mac`](#ble_pair_mac)
+- [Events](#events)
+  - [`esphome.philips_sonicare_ble_data`](#esphomephilips_sonicare_ble_data)
+  - [`esphome.philips_sonicare_ble_status`](#esphomephilips_sonicare_ble_status)
+  - [`esphome.philips_sonicare_ble_services`](#esphomephilips_sonicare_ble_services)
+  - [Filtering by `bridge_id`](#filtering-by-bridge_id)
+  - [Heartbeat-driven restart detection](#heartbeat-driven-restart-detection)
 
 ## Architecture
 
@@ -21,9 +55,9 @@ event the integration listens for. There is no direct return value.
 ```
 
 - **HA → ESP32**: ESPHome service calls (`ble_read_char`, `ble_subscribe`,
-  `ble_write_char`, `ble_unsubscribe`, `ble_get_info`, `ble_list_services`,
-  `ble_pair_mode`, `ble_unpair`, `ble_scan`, `ble_pair_mac`) — see
-  [Services](#services).
+  `ble_write_char`, `ble_unsubscribe`, `ble_set_throttle`, `ble_get_info`,
+  `ble_list_services`, `ble_pair_mode`, `ble_unpair`, `ble_unpair_mac`,
+  `ble_scan`, `ble_pair_mac`) — see [Services](#services).
 - **ESP32 → HA**: events on the HA event bus (`_ble_data`, `_ble_status`,
   `_ble_services`) — see [Events](#events).
 - **Heartbeat**: the bridge fires a `_ble_status` event with `status="heartbeat"`
@@ -40,7 +74,9 @@ esphome.<esphome_device_name>_<service>[_<bridge_id>]
 ```
 
 The `bridge_id` suffix is **only present** when the YAML sets a non-empty
-`bridge_id` for the `philips_sonicare:` block. Single-bridge setups omit it:
+`bridge_id` for the `philips_sonicare:` block. Single-bridge setups omit it.
+The one exception is [`ble_unpair_mac`](#ble_unpair_mac), which is registered
+once per node and never carries a suffix.
 
 ```yaml
 philips_sonicare:
@@ -100,9 +136,91 @@ Two consequences for callers:
 On bridges **older than 1.7.0** there is a single response slot —
 overlapping reads silently drop all but the last reply. Callers must wait
 for each `_ble_data` reply before issuing the next read (the integration
-detects the version and does this automatically). See the
-[README](README.md#pipelined-gatt-reads-bridge--170) for the user-facing
-description with timing diagrams.
+detects the version and does this automatically). See
+[Pipelined vs. sequential reads](#pipelined-vs-sequential-reads) below for
+timing diagrams.
+
+### Pipelined vs. sequential reads
+
+How the integration polls characteristics depends on the bridge firmware
+version, which the bridge reports in its status events:
+
+- **Bridge ≥ 1.7.0 (pipelined):** Home Assistant fires the whole poll
+  batch at once. The firmware serialises everything through a single
+  ATT-operation scheduler — only one GATT read/write/subscribe is in
+  flight on the BLE link at any time; the rest wait in the bridge's
+  pending-calls queue and are drained back-to-back as each operation
+  completes. Reads deferred behind connection setup (service discovery,
+  subscription writes, the SMP handshake on bonded brushes) simply wait
+  in the queue instead of timing out individually, so a poll batch
+  completes without lost values. A 10-second ATT watchdog recovers the
+  queue if the BLE stack ever drops a completion event, so a lost read
+  costs one 10 s stall instead of a stuck connection.
+
+  ```text
+  HA                ESP                 Brush
+  │── N reads ─────►│ queue [████ N]      │
+  │                 │── request #1 ──────►│
+  │◄──── event ─────│◄─── response #1 ────│
+  │◄──── event ─────│── request #2 ──────►│  ◄─ back-to-back at radio
+  │◄──── event ─────│── request #3 ──────►│     pace, no HA round-trip
+  ⋮                 ⋮                     ⋮     in between
+
+  • one timeout budgets the whole batch (15 s + 1 s per read)
+  • waiting behind connection setup is safe: the queue holds the reads
+    instead of letting them time out
+  ```
+
+- **Bridge < 1.7.0 (sequential):** older firmware has a single response
+  slot, so overlapping reads would silently drop all but the last reply.
+  The integration detects this from the reported version and falls back
+  to reading one characteristic at a time, waiting for each reply —
+  exactly the previous behavior. Everything keeps working, just with a
+  slower read phase, and a read fired during connection setup can time
+  out on the HA side before the bridge executes it.
+
+  ```text
+  HA                ESP                 Brush
+  │── read #1 ─────►│                     │
+  │                 │── ATT request ─────►│ ╮
+  │                 │◄──── ATT response ──│ ╯ a few conn events
+  │◄──── event ─────│                     │
+  │── read #2 ─────►│                     │  ◄─ next read only after a
+  │                 │──────►              │     full HA↔ESP round-trip
+  ⋮                 ⋮                     ⋮     (× N reads)
+
+  • per read: radio round-trip + HA↔ESP round-trip
+  • each read has its own 5 s timeout → a read fired while the bridge
+    is still subscribing (or mid-SMP on a bonded brush) can expire
+    before it ever executes
+  ```
+
+The "Pipelined GATT reads" toggle in the integration options is a
+runtime opt-out: switch it off to force sequential reads without
+reflashing if a setup misbehaves. It has no effect on bridges older
+than 1.7.0.
+
+How fast a batch completes is bounded by the BLE **connection
+interval**, which the device may renegotiate depending on its state.
+Each GATT read costs a few connection events, so the same batch can
+take a different time on a fresh connection than on a long-idle one —
+in both modes. Pipelining removes the per-read HA→ESP round-trip and
+the timeout risk; it cannot make the radio tick faster. The firmware
+logs `Conn params initial/now: interval=… ms` lines (INFO) whenever
+the parameters change, which makes this directly visible.
+
+### Connection-parameter boost (not implemented)
+
+Unlike the bridge firmware of [philips_shaver](https://github.com/mtheli/philips_shaver)
+(the sister integration for Philips shavers, ≥ 1.11.0), this firmware
+implements no connection-parameter boost. The toothbrushes measured so far have not
+shown a profile that would need one: a Prestige 9900 holds a constant
+15 ms interval for the whole connection, and a Kids HX6340 settles on
+a mild power-save profile (70 ms, slave latency 3) that still
+completes a full poll batch in under 3 s and delivers its
+once-per-second brushing notifications without loss. Should a model
+turn up whose idle profile genuinely slows polling down, the
+`Conn params` log lines above are the data to collect first.
 
 ---
 
@@ -203,9 +321,12 @@ philips_sonicare:
 | 9 | [`ble_unpair`](#ble_unpair) | — | 1.3.0 |
 | 10 | [`ble_scan`](#ble_scan) | `timeout_s` | 1.3.0 |
 | 11 | [`ble_pair_mac`](#ble_pair_mac) | `mac`, `timeout_s` | 1.3.0 |
+| 12 | [`ble_unpair_mac`](#ble_unpair_mac) | `mac` | 1.9.0 |
 
-Services 8–11 are meaningful only in `standalone` mode. Calling them on an
-`external` bridge emits a warning to the log and is otherwise a no-op.
+`ble_pair_mode`, `ble_scan` and `ble_pair_mac` are meaningful only in
+`standalone` mode. Calling them on an `external` bridge emits a warning to the
+log and is otherwise a no-op. `ble_unpair` also works in `external` mode, see
+[below](#ble_unpair).
 
 ### `ble_read_char`
 
@@ -317,7 +438,7 @@ Since 1.4.2 the throttle does not apply to the three Condor transport chars
 
 ### `ble_get_info`
 
-*Available since 1.2.0. Extended with `mode`, `pair_capable`, `pair_mode_active`, `identity_address` in 1.3.0. `identity_source` added in 1.4.0. `peer_identity` added in 1.15.0.*
+*Available since 1.2.0. Extended with `mode`, `pair_capable`, `pair_mode_active`, `identity_address` in 1.3.0. `identity_source` added in 1.4.0. `esphome_version`, `idf_version` added in 1.10.0. `chip`, `addr_res` added in 1.14.2. `peer_identity` added in 1.15.0.*
 
 Snapshot of bridge + brush state. **Primary capability-detection call** for HA
 during config flow.
@@ -345,6 +466,9 @@ during config flow.
 | `model` | string (optional) | DeviceInfo 0x2A24 |
 | `friendly_name` | string | YAML `friendly_name:` for this slot, empty if unset. HA uses it as the default device name in the setup form. |
 | `area` | string | YAML `area:` for this slot, empty if unset. HA uses it as `DeviceInfo.suggested_area` on first install. |
+| `esphome_version`, `idf_version` | string | *Since 1.10.0.* ESPHome and ESP-IDF version the running firmware was built with. |
+| `chip` | string | *Since 1.14.2.* Chip the bridge runs on, e.g. `esp32`, `esp32s3`. |
+| `addr_res` | `"host"` \| `"ctrl"` \| `"ctrl_priv"` | *Since 1.14.2.* Where rotating brush addresses are resolved: `host` on the original ESP32 or with `-DCONFIG_BT_BLE_RPA_SUPPORTED=0`, `ctrl` on newer chips, `ctrl_priv` with local privacy on. |
 | `uptime_s`, `free_heap`, `subscriptions`, `notify_throttle_ms`, `version`, `bridge_id` | misc | Diagnostic |
 
 #### Identity sources
@@ -410,8 +534,8 @@ Arm or cancel the UUID-scan + auto-pair window.
 | `status` | When | Extra fields |
 |---|---|---|
 | `pair_mode_started` | Pair-mode armed | `timeout_s` |
-| `pair_complete` | Pairing succeeded — identity persisted | `identity_address` (deprecated name, see [`ble_get_info`](#ble_get_info)), `peer_identity` (since 1.15.0), `identity_source` (always `"nvs"` post-pair), `bonding` (`"bonded"` \| `"open_gatt"`), `model` (if read), `ble_name` (if read) |
-| `pair_timeout` | Window expired without successful pairing | — |
+| `pair_complete` | Pairing succeeded — identity persisted | `identity_address` (deprecated name, see [`ble_get_info`](#ble_get_info)), `peer_identity` (since 1.15.0), `identity_source` (always `"nvs"` post-pair), `bonding` (`"bonded"` \| `"open_gatt"`), `model` (if read), `ble_name` (if read). When pairing completes before the pairing probe has read the brush: `note="post_auth_no_probe"`, plus `addr_res` and `rpa` (`"true"` \| `"false"`, since 1.14.2) right after the SMP handshake. |
+| `pair_timeout` | Window expired without successful pairing | `scanner_passive` (`"true"` \| `"false"`, since 1.11.0): the BLE scanner stayed passive for the whole window and could not have seen the brush. |
 | `pair_mode_stopped` | Cancelled via `enabled=false` | — |
 
 ### `ble_unpair`
@@ -437,6 +561,24 @@ Remove the BLE bond and clear any persisted identity. Bridge ends up with
 
 In `external` mode, only the BLE bond is removed — the YAML MAC is unaffected
 and the bridge will attempt to re-pair on the next connection.
+
+### `ble_unpair_mac`
+
+*Available since 1.9.0.*
+
+Remove a bond by MAC address from the controller's bond store, independent of
+any slot's identity. Meant for an orphaned bond that no slot can reach through
+[`ble_unpair`](#ble_unpair).
+
+| | |
+|---|---|
+| **Args** | `mac: string` |
+| **Service name** | `esphome.<esphome_device_name>_ble_unpair_mac`. The bond store is shared by all slots, so the service is registered **once per node**, without a `bridge_id` suffix. |
+| **Side-effect** | `esp_ble_remove_bond_device` for that MAC, then a sweep that removes only entries matching it. Bonds of other slots and other components stay. Does not touch any slot's identity or connection. |
+| **Reply** | `_ble_status` event with `status` = `bond_removed` \| `bond_not_found` \| `bond_removal_failed` (with `reason="bad_mac"` when the MAC cannot be parsed). |
+
+These are deliberately not `unpaired`, so a slot-unpair listener never mistakes
+them for its own reply.
 
 ### `ble_scan`
 
@@ -509,7 +651,7 @@ GATT-side traffic — notifications, read results, and read errors.
 | `peer_identity` | Since 1.15.0, only when the brush's identity differs from `mac` (rotating address) | `24:E5:AA:92:32:F9` |
 | `uuid`       | Characteristic UUID                 | `477ea600-a260-11e4-ae37-0002a5d54010`   |
 | `payload`    | Hex-encoded bytes (notify or read)  | `02`                                     |
-| `error`      | Read failure reason (mutually exclusive with `payload`) | `auth_required` |
+| `error`      | Read failure reason, `payload` is then empty. Values: see [`ble_read_char`](#ble_read_char) | `read_failed` |
 | `bridge_id`  | Multi-device setups — identifies which bridge fired the event | `prestige` |
 
 ### `esphome.philips_sonicare_ble_status`
@@ -525,19 +667,21 @@ on the originating service in [Services](#services).
 | `info`              | Bridge + brush state snapshot                               | [`ble_get_info`](#ble_get_info) reply           |
 | `connected`         | BLE link came up (before service discovery completes)       | `OPEN_EVT` succeeded                            |
 | `ready`             | GATT discovery complete on the brush                        | `SEARCH_CMPL_EVT`                               |
-| `disconnected`      | BLE link dropped                                            | `DISCONNECT_EVT`                                |
-| `auth_failed`       | Repeated SMP failure → backoff                              | 3× consecutive `AUTH_CMPL.success=false`        |
+| `disconnected`      | BLE link dropped, `reason` = HCI reason (e.g. `0x13`)       | `DISCONNECT_EVT`                                |
+| `auth_failed`       | Repeated SMP failure → 60 s backoff, `fail_count`, `backoff_s` | 3× consecutive `AUTH_CMPL.success=false`     |
 | `pair_mode_started` | Pair-mode armed                                             | [`ble_pair_mode`](#ble_pair_mode) (enable)      |
 | `pair_mode_stopped` | Pair-mode cancelled                                         | [`ble_pair_mode`](#ble_pair_mode) (disable)     |
 | `pair_complete`     | Pairing succeeded — identity persisted                      | [`ble_pair_mode`](#ble_pair_mode) / [`ble_pair_mac`](#ble_pair_mac) |
 | `pair_timeout`      | Pair-mode window expired without success                    | [`ble_pair_mode`](#ble_pair_mode) / [`ble_pair_mac`](#ble_pair_mac) |
 | `unpaired`          | Bond removed                                                | [`ble_unpair`](#ble_unpair) reply               |
+| `bond_removed`, `bond_not_found`, `bond_removal_failed` | Result of a bond removal by MAC | [`ble_unpair_mac`](#ble_unpair_mac) reply |
 | `scan_started`      | Discovery scan armed                                        | [`ble_scan`](#ble_scan) (start)                 |
 | `scan_result`       | One advertised device seen                                  | [`ble_scan`](#ble_scan)                         |
 | `scan_complete`     | Discovery scan ended                                        | [`ble_scan`](#ble_scan)                         |
 
-Common fields on every `_ble_status` event: `bridge_id` (always),
-`mac` (when relevant), `version` + `uptime_s` (on `heartbeat`, `ready`, `info`).
+Common fields on every `_ble_status` event: `bridge_id` and `mac` (always),
+`version` + `uptime_s` (on `heartbeat`, `ready`, `info`), `ble_connected` (on
+`heartbeat` and `info`).
 
 Since 1.15.0 every event about the slot's brush — data, status, services —
 also carries `peer_identity` when the brush's identity differs from `mac`.
