@@ -575,7 +575,7 @@ any slot's identity. Meant for an orphaned bond that no slot can reach through
 | **Args** | `mac: string` |
 | **Service name** | `esphome.<esphome_device_name>_ble_unpair_mac`. The bond store is shared by all slots, so the service is registered **once per node**, without a `bridge_id` suffix. |
 | **Side-effect** | `esp_ble_remove_bond_device` for that MAC, then a sweep that removes only entries matching it. Bonds of other slots and other components stay. Does not touch any slot's identity or connection. |
-| **Reply** | `_ble_status` event with `status` = `bond_removed` \| `bond_not_found` \| `bond_removal_failed` (with `reason="bad_mac"` when the MAC cannot be parsed). |
+| **Reply** | `_ble_status` event with `status` = `bond_removed` \| `bond_not_found` \| `bond_removal_failed` (with `reason="bad_mac"` when the MAC cannot be parsed). `requested_mac` carries the MAC from the call; `mac` is, as on every status event, the MAC of the slot that registered the service. In 1.15.0 and earlier the requested MAC was lost and `mac` was the only MAC field. |
 
 These are deliberately not `unpaired`, so a slot-unpair listener never mistakes
 them for its own reply.

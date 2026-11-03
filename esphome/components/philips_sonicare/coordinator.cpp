@@ -673,8 +673,10 @@ void SonicareCoordinator::remove_bond_by_mac(const std::string &mac) {
   if (!parse_mac_to_bda(mac, bda)) {
     ESP_LOGW(this->log_tag_.c_str(),
              "unpair_mac: cannot parse MAC '%s' — ignoring", mac.c_str());
+    // emit_status_ sets `mac` to this slot's brush, so the MAC the caller
+    // asked about travels in its own field.
     this->emit_status_("bond_removal_failed",
-                       {{"mac", mac}, {"reason", "bad_mac"}});
+                       {{"requested_mac", mac}, {"reason", "bad_mac"}});
     return;
   }
 
@@ -717,7 +719,7 @@ void SonicareCoordinator::remove_bond_by_mac(const std::string &mac) {
   // Distinct status from the slot-unpair `unpaired` event so the config
   // flow's slot-unpair listener never mistakes this manual call for its own.
   this->emit_status_(removed ? "bond_removed" : "bond_not_found",
-                     {{"mac", mac}});
+                     {{"requested_mac", mac}});
 }
 
 std::string SonicareCoordinator::get_device_mac() {
