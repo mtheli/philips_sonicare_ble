@@ -254,15 +254,15 @@
       "brushing_mode": {
         "name": "Mode de brossage",
         "state": {
-          "clean": "Nettoyage",
+          "clean": "Clean",
           "white_plus": "White+",
           "white": "White",
-          "gum_health": "Santé des gencives",
-          "gum_care": "Soin des gencives",
-          "deep_clean_plus": "Nettoyage en profondeur+",
-          "deep_clean": "Nettoyage en profondeur",
-          "sensitive": "Sensible",
-          "tongue_care": "Soin de la langue"
+          "gum_health": "Gum Health",
+          "gum_care": "Gum Care",
+          "deep_clean_plus": "Deep Clean+",
+          "deep_clean": "Deep Clean",
+          "sensitive": "Sensitive",
+          "tongue_care": "Tongue Care"
         }
       },
       "brushing_state": {
@@ -481,12 +481,12 @@
       "brushing_mode_select": {
         "name": "Mode de brossage",
         "state": {
-          "clean": "Nettoyage",
+          "clean": "Clean",
           "white_plus": "White+",
-          "gum_health": "Santé des gencives",
-          "deep_clean_plus": "Nettoyage en profondeur+",
-          "sensitive": "Sensible",
-          "tongue_care": "Soin de la langue"
+          "gum_health": "Gum Health",
+          "deep_clean_plus": "Deep Clean+",
+          "sensitive": "Sensitive",
+          "tongue_care": "Tongue Care"
         }
       },
       "intensity_select": {
