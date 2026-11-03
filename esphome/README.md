@@ -63,8 +63,13 @@ multi-device setups) see [`SETUP.md`](SETUP.md).
 | [`atom-lite-dual.yaml`](examples/atom-lite-dual.yaml) | M5Stack Atom Lite | 2 |
 | [`atom-lite-triple.yaml`](examples/atom-lite-triple.yaml) | M5Stack Atom Lite | 3 |
 | [`atom-s3.yaml`](examples/atom-s3.yaml) | M5Stack AtomS3 / AtomS3R / AtomS3 Lite (ESP32-S3), with the build option for brushes with a rotating address | 1 |
-| [`es3c35p-display.yaml`](examples/es3c35p-display.yaml) | LCDwiki ES3C35P / Freenove FNK0104N (ESP32-S3, 3.5" display), with a dashboard of the brush values from Home Assistant. Experimental: the display driver comes from an unmerged ESPHome PR (#19011). Community config ([#47](https://github.com/mtheli/philips_sonicare_ble/issues/47)) | 1 |
+| [`es3c35p-display.yaml`](examples/es3c35p-display.yaml) | LCDwiki ES3C35P / Freenove FNK0104N (ESP32-S3, 3.5" display), with a dashboard of the brush values from Home Assistant. Experimental: the display driver comes from an unmerged ESPHome PR (#19011). Community config by [@bvalat](https://github.com/bvalat), tested on hardware ([#47](https://github.com/mtheli/philips_sonicare_ble/issues/47), [photo](#es3c35p-dashboard)) | 1 |
 | [`esp32-generic.yaml`](examples/esp32-generic.yaml) | Generic ESP32 dev board (`esp32dev`), starting point for other boards | 1 |
+
+<a id="es3c35p-dashboard"></a>
+<img src="../screenshots/ES3C35P.jpg" alt="es3c35p-display.yaml on an ES3C35P with an HX960X while brushing" width="480">
+
+*`es3c35p-display.yaml` on the ES3C35P during a session (photo: [@bvalat](https://github.com/bvalat)).*
 
 All example configs pin ESP-IDF 5.5.5 and have `bluetooth_proxy` prepared but switched off. To run a proxy for other BLE devices alongside the bridge, uncomment the `bluetooth_proxy:` block.
 

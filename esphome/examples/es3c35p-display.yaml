@@ -2,9 +2,10 @@
 # Freenove FNK0104N (ESP32-S3, 3.5" 480x320 touch display), one toothbrush.
 #
 # Based on the community config by @bvalat (#47), adapted to the other
-# example configs. Not tested by the maintainer. The display driver is
-# not in an ESPHome release yet: it comes from ESPHome PR #19011
-# (`mipi_spi`, model ES3C35P), see `external_components` below.
+# example configs. Tested on hardware by @bvalat (HX960V), not by the
+# maintainer. The display driver is not in an ESPHome release yet: it
+# comes from ESPHome PR #19011 (`mipi_spi`, model ES3C35P), see
+# `external_components` below.
 #
 # The bridge part is the same as in atom-s3.yaml. The dashboard reads the
 # brush values back from Home Assistant (`homeassistant` sensors), so the
