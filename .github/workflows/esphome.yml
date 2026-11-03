@@ -22,6 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
+        id: py
         with:
           python-version: "3.12"
       - name: Install ESPHome
@@ -37,8 +38,11 @@ jobs:
           path: |
             ~/.platformio
             esphome/tests/.esphome
-          key: esphome-${{ matrix.esphome }}-${{ matrix.board }}-${{ hashFiles('esphome/components/**') }}
-          restore-keys: esphome-${{ matrix.esphome }}-${{ matrix.board }}-
+          # The cached build dir pins absolute tool paths (ninja lives in the
+          # runner's Python toolcache), so a runner image with a newer Python
+          # patch release must not reuse it.
+          key: esphome-${{ steps.py.outputs.python-version }}-${{ matrix.esphome }}-${{ matrix.board }}-${{ hashFiles('esphome/components/**') }}
+          restore-keys: esphome-${{ steps.py.outputs.python-version }}-${{ matrix.esphome }}-${{ matrix.board }}-
       - name: Compile
         working-directory: esphome/tests
         run: |
