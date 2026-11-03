@@ -81,8 +81,9 @@ flowchart TD
     brushes -->|"2"| dual["atom-lite-dual.yaml"]
     brushes -->|"3"| triple["atom-lite-triple.yaml"]
     board -->|"M5Stack AtomS3 / AtomS3R / AtomS3 Lite"| s3["atom-s3.yaml"]
+    board -->|"LCDwiki ES3C35P / Freenove FNK0104N"| disp["es3c35p-display.yaml"]
     board -->|"other ESP32 board"| generic["esp32-generic.yaml<br/>on S3, C3, C6: uncomment the build option"]
-    lite & dual & triple & s3 & generic --> pair{"Does the brush change its address?<br/>Series 7100, Sonicare For Kids HX6600"}
+    lite & dual & triple & s3 & disp & generic --> pair{"Does the brush change its address?<br/>Series 7100, Sonicare For Kids HX6600"}
     pair -->|"yes / not sure"| auto["Auto-Discovery ⭐"]
     pair -->|"no"| either["Auto-Discovery ⭐ or Fixed MAC"]
 ```
