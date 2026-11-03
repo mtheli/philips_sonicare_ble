@@ -1,12 +1,58 @@
+# Philips Sonicare bridge with a dashboard on the LCDwiki ES3C35P /
+# Freenove FNK0104N (ESP32-S3, 3.5" 480x320 touch display), one toothbrush.
+#
+# Based on the community config by @bvalat (#47), adapted to the other
+# example configs. Not tested by the maintainer. The display driver is
+# not in an ESPHome release yet: it comes from ESPHome PR #19011
+# (`mipi_spi`, model ES3C35P), see `external_components` below.
+#
+# The bridge part is the same as in atom-s3.yaml. The dashboard reads the
+# brush values back from Home Assistant (`homeassistant` sensors), so the
+# brush has to be set up in the integration first. Then set `brush` below
+# to the entity prefix of your brush (sensor.<brush>_battery, ...).
+#
+# The screen turns on while the brush is active and off 10 s after it
+# goes off or offline. A tap turns it on for 10 s.
+#
+# The board also has a speaker, a microphone and an RGB LED. They are not
+# needed for the bridge and left out here; bvalat's original config in #47
+# shows how to set them up.
+substitutions:
+  name: es3c35p-sonicare
+  friendly_name: "ES3C35P Sonicare Bridge"
+  # Entity prefix of your brush in Home Assistant
+  brush: sonicare_hx960x_6d3a
+  # Second line in the dashboard header
+  brush_label: "HX960X  |  6D3A"
+  # Display texts, e.g. in French: BATTERIE, PRESSION, TÊTE, INTENSITÉ.
+  # The brushing mode names stay in English, as printed on the brush.
+  txt_battery: "BATTERY"
+  txt_pressure: "PRESSURE"
+  txt_head: "HEAD"
+  txt_mode: "MODE"
+  txt_intensity: "INTENSITY"
+  txt_session: "SESSION"
+  txt_offline: "OFFLINE"
+  txt_initializing: "INITIALIZING..."
+  txt_off: "OFF"
+  txt_standby: "STANDBY"
+  txt_brushing: "BRUSHING"
+  txt_paused: "PAUSED"
+  txt_charging: "CHARGING"
+  txt_low: "LOW"
+  txt_medium: "MEDIUM"
+  txt_high: "HIGH"
+
 esphome:
-  name: esp32-ble-bridge
-  friendly_name: "ESP32 BLE Bridge"
-  #  platformio_options:
-  #    build_flags:
-  #      - -ULV_USE_OBSERVER    
-  #      - -DLV_USE_OBSERVER=1
-  #      - -DLV_USE_SYSMON=1
-  #      - -DLV_USE_PERF_MONITOR=1 # Active le widget FPS et CPU
+  name: ${name}
+  friendly_name: ${friendly_name}
+  # Required on every chip but the original ESP32 for brushes with a rotating
+  # address (Series 7100, Sonicare For Kids HX6600): without it the bridge
+  # pairs, but loses the brush after the first session. Harmless for brushes
+  # with a fixed address. See KNOWN_ISSUES.md, "Brushes with a rotating
+  # address stop reconnecting on newer ESP32 chips".
+  build_flags:
+    - -DCONFIG_BT_BLE_RPA_SUPPORTED=0
   on_boot:
     - priority: 600
       then:
@@ -14,13 +60,19 @@ esphome:
             id: backlight
             brightness: 100%
 
+# ESP-IDF is required (not Arduino) because Bluedroid's notification limit
+# is only configurable via sdkconfig.
 esp32:
   board: esp32-s3-devkitc-1
   variant: esp32s3
   flash_size: 16MB
   framework:
     type: esp-idf
-    #Bluetooth bug in 5.5.6->Forcing 5.5.5 until ESPHome released with the fix
+    # ESPHome 2026.10.0 defaults to ESP-IDF 5.5.6, which drops the pairing
+    # after the first disconnect (see KNOWN_ISSUES.md, "ESP bridge loses
+    # pairings with ESP-IDF 5.5.6"). ESPHome warns that this is not the
+    # recommended version; that is expected. Remove the line once an ESPHome
+    # release ships an ESP-IDF version with the fix.
     version: 5.5.5
     sdkconfig_options:
       CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"
@@ -29,7 +81,6 @@ esp32:
 psram:
   mode: octal
   speed: 80MHz
-  ignore_not_found: false
 
 logger:
   level: DEBUG
@@ -43,20 +94,19 @@ api:
 
 ota:
   - platform: esphome
-    encryption:
+    password: !secret ota_password
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
   ap:
-    ssid: "ESP32-BLE-Bridge-Fallback"
+    ssid: "ES3C35P-Fallback"
     password: !secret fallback_password
 
 captive_portal:
 
-# -----------------------------------------------------------------------------
-# BLE configuration
-# -----------------------------------------------------------------------------
+# --- BLE ---
+
 esp32_ble:
   io_capability: none
   max_notifications: 20
@@ -67,42 +117,31 @@ esp32_ble_tracker:
     interval: 211ms
     window: 120ms
 
-# -----------------------------------------------------------------------------
-# Philips Sonicare bridge
-# -----------------------------------------------------------------------------
-# The component scans for the Sonicare service UUID, bonds with the brush
-# you put into pair-mode via the HA setup flow, and stores the bond identity
-# in NVS. After bonding, the controller resolves rotating BLE addresses
-# (RPA) back to the same brush automatically — no MAC pinning needed.
+# --- Philips Sonicare Component (Auto-Discovery — no MAC required) ---
 #
 # To pair:
 #   1. Flash this firmware
 #   2. In Home Assistant, add the Philips Sonicare integration → ESP32 Bridge
 #   3. Walk through "Pair toothbrush with bridge" — switch on the brush when
 #      prompted, the ESP scans, bonds, and finishes setup.
-#
-# BLE bonding is handled automatically. Models that require bonding (e.g.
-# Prestige 9900, ExpertClean, HX991M) are paired via SMP after service
-# discovery; models with open GATT (e.g. DiamondClean) work without pairing.
+
 external_components:
-  #Sonicare
   - source:
       type: git
       url: https://github.com/mtheli/philips_sonicare_ble
       ref: master
       path: esphome/components
     components: [philips_sonicare]
-    refresh: 0s # always fetch latest code on build
-  #Screen diver. Since it's not in main branch yet, use pr for activating model : ES3C35P
+    refresh: 0s
+  # Display driver with the ES3C35P model, not in an ESPHome release yet.
+  # Remove this entry once an ESPHome release includes PR #19011.
   - source: github://pr#19011
     components: [mipi_spi]
     refresh: 1h
 
 philips_sonicare:
   - id: philips_sonicare_ble
-    # Optional: pre-fill the HA setup form. `friendly_name` becomes the
-    # default device name; `area` auto-assigns the brush to an HA area on
-    # first install. One-shot defaults — edit names in HA after that.
+    # Optional: pre-fill the HA setup form (one-shot defaults).
     # friendly_name: "My Sonicare"
     # area: "Bathroom"
     on_connect:
@@ -112,23 +151,11 @@ philips_sonicare:
       then:
         - logger.log: "Disconnected from Sonicare"
 
-# Optional: Bluetooth proxy
-# Uncomment to relay BLE for other devices through this ESP. On
-# ESPHome < 2026.7.1 (ESP-IDF < 5.5.5) this additionally requires the
-# bluedroid_null_fix.py patch (uncomment platformio_options at the top of
-# this file) to dodge ESP-IDF bug https://github.com/esphome/esphome/issues/15783
-# — without the patch, every GATT service discovery crashes the chip and the
-# component refuses to build. From ESPHome 2026.7.1 the fix ships upstream.
-bluetooth_proxy:
-  active: true
-
-# -----------------------------------------------------------------------------
-# Hardware and display
-# https://github.com/jlmeredith/ES3C35P/tree/main
-# https://github.com/esphome/esphome/pull/19011
-# https://www.lcdwiki.com/3.5inch_ESP32-S3_Display#Product_Specifications
+# --- Hardware: ES3C35P / FNK0104N ---
+# https://www.lcdwiki.com/3.5inch_ESP32-S3_Display
 # https://docs.freenove.com/projects/fnk0104/en/latest/fnk0104/codes/MAIN/Freenove_ESP32S3_Display.html
-# -----------------------------------------------------------------------------
+# https://github.com/jlmeredith/ES3C35P
+
 spi:
   - id: lcd_bus
     type: quad
@@ -144,7 +171,7 @@ i2c:
 output:
   - platform: ledc
     id: backlight_pwm
-    pin: GPIO41 # active HIGH
+    pin: GPIO41
     frequency: 1000Hz
 
 light:
@@ -152,25 +179,21 @@ light:
     id: backlight
     name: "Backlight"
     output: backlight_pwm
-    restore_mode: ALWAYS_OFF #On/Off backlight is on Brush status or touch screen
-  - platform: esp32_rmt_led_strip
-    id: status_led
-    name: "LED RGB Carte"
-    pin: GPIO40
-    num_leds: 1
-    chipset: WS2812
-    channel_colors: GRB
+    # Switched by the brush activity and by touch, see below
     restore_mode: ALWAYS_OFF
 
 display:
   - platform: mipi_spi
     id: lcd
     spi_id: lcd_bus
-    model: ES3C35P # Profile from PR #19011
+    model: ES3C35P
     bus_mode: quad
     cs_pin: GPIO10
-    data_rate: 40MHz # Can do 80Mhz if needed, but 40Mhz is more stable and sufficient for now
+    # 80 MHz works too, 40 MHz is more stable
+    data_rate: 40MHz
 
+# A tap turns the screen on for 10 s, or off again before that. While the
+# brush is active, the screen stays on.
 touchscreen:
   - platform: st7123
     id: touch
@@ -182,89 +205,39 @@ touchscreen:
       then:
         - if:
             condition:
-              script.is_running: temporisation_ecran
+              script.is_running: screen_timeout
             then:
-              - logger.log: "Touch direct : Écran allumé -> Extinction demandée."
-              - script.stop: temporisation_ecran
+              - script.stop: screen_timeout
               - light.turn_off: backlight
             else:
               - if:
                   condition:
                     light.is_off: backlight
                   then:
-                    - logger.log: "Touch direct : Écran éteint -> Allumage immédiat."
                     - light.turn_on:
                         id: backlight
                         brightness: 100%
-                    - script.execute: temporisation_ecran
+                    - script.execute: screen_timeout
 
-# -----------------------------------------------------------------------------
-# Audio configuration
-# -----------------------------------------------------------------------------
-i2s_audio:
-  - id: i2s_bus
-    i2s_bclk_pin: GPIO18 
-    i2s_lrclk_pin: GPIO21
-    i2s_mclk_pin: GPIO17 
-audio_dac:
-  - platform: es8311
-    id: es8311_dac
-    i2c_id: bus_a
-    address: 0x18
-    use_mclk: true
+script:
+  - id: screen_timeout
+    mode: restart
+    then:
+      - delay: 10s
+      - light.turn_off: backlight
 
-speaker:
-  - platform: i2s_audio
-    id: board_speaker_hardware
-    dac_type: external
-    i2s_dout_pin: GPIO15
-    i2s_mode: primary
-    channel: mono
+button:
+  - platform: restart
+    name: "Restart"
 
-  - platform: mixer
-    id: mixer_speaker_id
-    output_speaker: board_speaker_hardware
-    source_speakers:
-      - id: announcement_spk_input
-      - id: media_spk_input
-#Untested MIC. Potential conflict with speaker on i2S bus?
-microphone:
-  - platform: i2s_audio
-    id: board_microphone_hardware
-    i2s_din_pin: GPIO16 
-    adc_type: external
-    pdm: false
+# --- Bluetooth Proxy (optional) ---
+# Uncomment to relay BLE for other devices through this ESP.
+#
+# bluetooth_proxy:
+#   active: true
 
-media_player:
-  - platform: speaker
-    name: "Haut-Parleur ES3C35P"
-    id: board_media_player
-    volume_initial: 100%
-    announcement_pipeline:
-      speaker: announcement_spk_input
-      format: MP3
-    media_pipeline:
-      speaker: media_spk_input
-      format: MP3
+# --- Dashboard ---
 
-switch:
-  - platform: gpio
-    pin:
-      number: GPIO1
-      inverted: true
-    id: amp_enable
-    name: "Amplificateur Audio"
-    restore_mode: ALWAYS_ON
-
-voice_assistant:
-  id: assistant_vocal_local
-  microphone: board_microphone_hardware
-  speaker: board_speaker_hardware
-
-
-# -----------------------------------------------------------------------------
-# Display fonts
-# -----------------------------------------------------------------------------
 font:
   - file: gfonts://Orbitron
     id: font_lg
@@ -276,267 +249,237 @@ font:
     id: font_md
     bpp: 4
     size: 18
-    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+éèàçùâêîôûëïü"
+    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+|ÀÂÇÉÈÊËÎÏÔÙÛÜàâçéèêëîïôùûü"
 
   - file: gfonts://Outfit
     id: font_sm
     bpp: 4
     size: 12
-    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+|éèàçùâêîôûëïü"
+    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+|ÀÂÇÉÈÊËÎÏÔÙÛÜàâçéèêëîïôùûü"
 
   - file: gfonts://Outfit
     id: font_value
     bpp: 4
     size: 24
-    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+|éèàçùâêîôûëïü"
+    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+|ÀÂÇÉÈÊËÎÏÔÙÛÜàâçéèêëîïôùûü"
 
   - file: gfonts://Outfit
     id: font_xs
     bpp: 4
     size: 10
-    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+|éèàçùâêîôûëïü"
+    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+|ÀÂÇÉÈÊËÎÏÔÙÛÜàâçéèêëîïôùûü"
 
-# -----------------------------------------------------------------------------
-# Home Assistant sensors
-# -----------------------------------------------------------------------------
+# Brush values from Home Assistant. HA sends the raw states of the
+# integration (lowercase, untranslated, e.g. `brushing`, `gum_health`,
+# `medium`), or `unavailable` / `unknown`. Numbers arrive as NaN while the
+# entity is unavailable.
 sensor:
   - platform: homeassistant
-    id: brosse_temps
-    entity_id: sensor.sonicare_hx960x_6d3a_brushing_time
+    id: brush_time
+    entity_id: sensor.${brush}_brushing_time
     internal: true
     on_value:
       - lvgl.label.update:
-          id: label_temps
+          id: label_time
           text: !lambda |-
-            if (!(x == x) || x < 0) return std::string("--:--");
+            if (std::isnan(x) || x < 0) return std::string("--:--");
             const int seconds = static_cast<int>(x);
             return str_sprintf("%d:%02d", seconds / 60, seconds % 60);
       - lvgl.arc.update:
           id: arc_session
           value: !lambda |-
-            if (!(x == x) || x < 0) return 0;
-            if (x > 120) return 120;
-            return static_cast<int>(x);
+            return std::isnan(x) ? 0 : static_cast<int>(std::clamp(x, 0.0f, 120.0f));
 
   - platform: homeassistant
-    id: brosse_batterie
-    entity_id: sensor.sonicare_hx960x_6d3a_battery
+    id: brush_battery
+    entity_id: sensor.${brush}_battery
     internal: true
     on_value:
       - lvgl.label.update:
-          id: label_batterie
+          id: label_battery
           text: !lambda |-
-            if (!(x == x)) return std::string("--%");
-            return str_sprintf("%.0f%%", x);
+            return std::isnan(x) ? std::string("--%") : str_sprintf("%.0f%%", x);
       - lvgl.bar.update:
-          id: barre_batterie
+          id: bar_battery
           value: !lambda |-
-            if (!(x == x) || x < 0) return 0;
-            if (x > 100) return 100;
-            return static_cast<int>(x);
+            return std::isnan(x) ? 0 : static_cast<int>(std::clamp(x, 0.0f, 100.0f));
+      # Red at 0 %, green at 100 %
       - lambda: |-
-          if (!(x == x)) {
-            lv_obj_set_style_bg_color(id(barre_batterie), lv_color_hex(0x666666), LV_PART_INDICATOR);
+          if (std::isnan(x)) {
+            lv_obj_set_style_bg_color(id(bar_battery), lv_color_hex(0x666666), LV_PART_INDICATOR);
             return;
           }
-          const float ratio = x <= 0 ? 0.0f : (x >= 100 ? 1.0f : x / 100.0f);
-          const uint8_t red = static_cast<uint8_t>(255.0f * (1.0f - ratio));
-          const uint8_t green = static_cast<uint8_t>(255.0f * ratio);
-          lv_obj_set_style_bg_color(id(barre_batterie), lv_color_make(red, green, 0), LV_PART_INDICATOR);
+          const float ratio = std::clamp(x / 100.0f, 0.0f, 1.0f);
+          lv_obj_set_style_bg_color(id(bar_battery), lv_color_make(static_cast<uint8_t>(255 * (1 - ratio)), static_cast<uint8_t>(255 * ratio), 0), LV_PART_INDICATOR);
 
   - platform: homeassistant
-    id: brosse_usure
-    entity_id: sensor.sonicare_hx960x_6d3a_brush_head_wear
+    id: brush_head_wear
+    entity_id: sensor.${brush}_brush_head_wear
     internal: true
     on_value:
       - lvgl.label.update:
-          id: label_usure
+          id: label_wear
           text: !lambda |-
-            if (!(x == x)) return std::string("--%");
-            return str_sprintf("%.0f%%", x);
+            return std::isnan(x) ? std::string("--%") : str_sprintf("%.0f%%", x);
       - lvgl.bar.update:
-          id: barre_usure
+          id: bar_wear
           value: !lambda |-
-            if (!(x == x) || x < 0) return 0;
-            if (x > 100) return 100;
-            return static_cast<int>(x);
+            return std::isnan(x) ? 0 : static_cast<int>(std::clamp(x, 0.0f, 100.0f));
+      # Green at 0 %, red at 100 %
       - lambda: |-
-          if (!(x == x)) {
-            lv_obj_set_style_bg_color(id(barre_usure), lv_color_hex(0x666666), LV_PART_INDICATOR);
+          if (std::isnan(x)) {
+            lv_obj_set_style_bg_color(id(bar_wear), lv_color_hex(0x666666), LV_PART_INDICATOR);
             return;
           }
-          const float ratio = x <= 0 ? 0.0f : (x >= 100 ? 1.0f : x / 100.0f);
-          const uint8_t red = static_cast<uint8_t>(255.0f * ratio);
-          const uint8_t green = static_cast<uint8_t>(255.0f * (1.0f - ratio));
-          lv_obj_set_style_bg_color(id(barre_usure), lv_color_make(red, green, 0), LV_PART_INDICATOR);
+          const float ratio = std::clamp(x / 100.0f, 0.0f, 1.0f);
+          lv_obj_set_style_bg_color(id(bar_wear), lv_color_make(static_cast<uint8_t>(255 * ratio), static_cast<uint8_t>(255 * (1 - ratio)), 0), LV_PART_INDICATOR);
 
   - platform: homeassistant
-    id: brosse_pression
-    entity_id: sensor.sonicare_hx960x_6d3a_pressure
+    id: brush_pressure
+    entity_id: sensor.${brush}_pressure
     internal: true
     on_value:
       - lvgl.bar.update:
-          id: barre_pression_blanche
+          id: bar_pressure
           value: !lambda |-
-            if (!(x == x) || x < 0) return 0;
-            if (x > 300) return 300;
-            return static_cast<int>(x);
+            return std::isnan(x) ? 0 : static_cast<int>(std::clamp(x, 0.0f, 300.0f));
       - lvgl.bar.update:
-          id: barre_pression_rouge
+          id: bar_pressure_alert
           value: !lambda |-
-            if (!(x == x) || x < 0) return 0;
-            if (x > 300) return 300;
-            return static_cast<int>(x);
+            return std::isnan(x) ? 0 : static_cast<int>(std::clamp(x, 0.0f, 300.0f));
+      # Green at 0 g, red at 300 g
       - lambda: |-
-          if (!(x == x)) {
-            lv_obj_set_style_bg_color(id(barre_pression_blanche), lv_color_hex(0x666666), LV_PART_INDICATOR);
+          if (std::isnan(x)) {
+            lv_obj_set_style_bg_color(id(bar_pressure), lv_color_hex(0x666666), LV_PART_INDICATOR);
             return;
           }
-          const float ratio = x <= 0 ? 0.0f : (x >= 300 ? 1.0f : x / 300.0f);
-          const uint8_t red = static_cast<uint8_t>(255.0f * ratio);
-          const uint8_t green = static_cast<uint8_t>(255.0f * (1.0f - ratio));
-          lv_obj_set_style_bg_color(id(barre_pression_blanche), lv_color_make(red, green, 0), LV_PART_INDICATOR);
+          const float ratio = std::clamp(x / 300.0f, 0.0f, 1.0f);
+          lv_obj_set_style_bg_color(id(bar_pressure), lv_color_make(static_cast<uint8_t>(255 * ratio), static_cast<uint8_t>(255 * (1 - ratio)), 0), LV_PART_INDICATOR);
       - lvgl.label.update:
-          id: label_pression_valeur
+          id: label_pressure
           text: !lambda |-
-            if (!(x == x)) return std::string("-- g");
-            return str_sprintf("%.0f g", x);
-
-script:
-  - id: temporisation_ecran
-    mode: restart
-    then:
-      - delay: 10s
-      - logger.log: "Automatisme : Fin des 10s post-brossage. Extinction de l'écran."
-      - light.turn_off: backlight
+            return std::isnan(x) ? std::string("-- g") : str_sprintf("%.0f g", x);
 
 text_sensor:
   - platform: homeassistant
-    id: brosse_statut
-    entity_id: sensor.sonicare_hx960x_6d3a_activity
+    id: brush_activity
+    entity_id: sensor.${brush}_activity
     internal: true
     on_value:
       - lvgl.label.update:
-          id: label_statut_off
+          id: label_status
           text: !lambda |-
-            std::string s = x;
-            std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-            if (s.empty() || s == "unknown" || s == "unavailable" || s == "none" || s.rfind("initializ", 0) == 0 || s.rfind("initialis", 0) == 0) return std::string("INITIALISING...");
-            if (s == "off") return std::string("OFF");
-            return x;
+            static const char *const names[][2] = {
+              {"initializing", "${txt_initializing}"},
+              {"off", "${txt_off}"},
+              {"standby", "${txt_standby}"},
+              {"brushing", "${txt_brushing}"},
+              {"paused", "${txt_paused}"},
+              {"charging", "${txt_charging}"},
+            };
+            for (const auto &n : names) {
+              if (x == n[0]) return std::string(n[1]);
+            }
+            return std::string("${txt_offline}");
+      # Amber while starting up, grey when off or offline, green otherwise
       - lambda: |-
-          std::string s = x;
-          std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-          const bool initializing = s.empty() || s == "unknown" || s == "unavailable" || s == "none" || s.rfind("initializ", 0) == 0 || s.rfind("initialis", 0) == 0;
-          const auto color = initializing
-              ? lv_color_hex(0xF59E0B)
-              : ((s == "off") ? lv_color_hex(0x9AA3AF) : lv_color_hex(0x22C55E));
-          lv_obj_set_style_text_color(id(label_statut_off), color, LV_PART_MAIN);
+          lv_color_t color = lv_color_hex(0x22C55E);
+          if (x == "initializing") color = lv_color_hex(0xF59E0B);
+          else if (x == "off" || x == "unavailable" || x == "unknown" || x.empty()) color = lv_color_hex(0x9AA3AF);
+          lv_obj_set_style_text_color(id(label_status), color, LV_PART_MAIN);
+      # Screen on while the brush is active, off 10 s after it stops
       - if:
           condition:
             lambda: |-
-              std::string s = x;
-              std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-              return s.empty() || s == "off" || s == "unavailable" || s == "unknown" || s == "none" || s.rfind("initializ", 0) == 0 || s.rfind("initialis", 0) == 0;
+              return x == "off" || x == "initializing" || x == "unavailable" || x == "unknown" || x.empty();
           then:
-            - logger.log: "Automatisme : Brosse détectée comme inactive. Lancement des 10s de veille."
-            - script.execute: temporisation_ecran
+            - script.execute: screen_timeout
           else:
-            - script.stop: temporisation_ecran
-            - logger.log: "Automatisme : Brosse active ! Allumage immédiat."
+            - script.stop: screen_timeout
             - light.turn_on:
                 id: backlight
                 brightness: 100%
 
   - platform: homeassistant
-    id: brosse_mode
-    entity_id: sensor.sonicare_hx960x_6d3a_brushing_mode
+    id: brush_mode
+    entity_id: sensor.${brush}_brushing_mode
     internal: true
     on_value:
       - lvgl.label.update:
           id: label_mode
           text: !lambda |-
-            std::string mode = x;
-            std::transform(mode.begin(), mode.end(), mode.begin(), ::tolower);
-            std::replace(mode.begin(), mode.end(), '_', ' ');
-            if (mode == "deep clean plus" || mode == "deep clean+") return std::string("Deep Clean+");
-            if (mode == "gum health") return std::string("Gum Health");
-            return x;
+            static const char *const names[][2] = {
+              {"clean", "Clean"},
+              {"white", "White"},
+              {"white_plus", "White+"},
+              {"gum_care", "Gum Care"},
+              {"gum_health", "Gum Health"},
+              {"deep_clean", "Deep Clean"},
+              {"deep_clean_plus", "Deep Clean+"},
+              {"sensitive", "Sensitive"},
+              {"tongue_care", "Tongue Care"},
+            };
+            for (const auto &n : names) {
+              if (x == n[0]) return std::string(n[1]);
+            }
+            return std::string("--");
 
   - platform: homeassistant
-    id: brosse_type_tete
-    entity_id: sensor.sonicare_hx960x_6d3a_brush_head_type
+    id: brush_head_type
+    entity_id: sensor.${brush}_brush_head_type
     internal: true
     on_value:
       - lvgl.label.update:
-          id: label_type_tete
+          id: label_head_type
           text: !lambda |-
-            std::string type = x;
-            std::transform(type.begin(), type.end(), type.begin(), ::tolower);
-            if (type.empty() || type == "unknown" || type == "unavailable" || type == "none") return std::string("--");
-            std::replace(type.begin(), type.end(), '_', ' ');
-            if (type == "adaptive clean") return std::string("Clean (C)");
-            if (type == "adaptive white") return std::string("White (W)");
-            if (type == "adaptive gums") return std::string("Gum Care (G)");
-            if (type == "tongue clean") return std::string("TongueCare+");
-            if (type == "premium all in one") return std::string("All-in-One (A)");
-            if (type == "sensitive") return std::string("Sensitive (S)");
-            if (type == "non rfid") return std::string("Non-RFID");
-            return x;
+            static const char *const names[][2] = {
+              {"adaptive_clean", "Clean (C)"},
+              {"adaptive_white", "White (W)"},
+              {"adaptive_gums", "Gums (G)"},
+              {"tongue_clean", "TongueCare+"},
+              {"premium_all_in_one", "All-in-One (A)"},
+              {"sensitive", "Sensitive (S)"},
+              {"non_rfid", "Non-RFID"},
+            };
+            for (const auto &n : names) {
+              if (x == n[0]) return std::string(n[1]);
+            }
+            return std::string("--");
 
   - platform: homeassistant
-    id: brosse_intensite
-    entity_id: sensor.sonicare_hx960x_6d3a_intensity
+    id: brush_intensity
+    entity_id: sensor.${brush}_intensity
     internal: true
     on_value:
       - lvgl.label.update:
-          id: label_intensite
+          id: label_intensity
           text: !lambda |-
-            std::string intensity = x;
-            std::transform(intensity.begin(), intensity.end(), intensity.begin(), ::tolower);
-            if (intensity.find("low") != std::string::npos || intensity == "1") return std::string("LOW");
-            if (intensity.find("medium") != std::string::npos || intensity.find("med") != std::string::npos || intensity == "2") return std::string("MEDIUM");
-            if (intensity.find("high") != std::string::npos || intensity == "3") return std::string("HIGH");
-            return x;
+            if (x == "low") return std::string("${txt_low}");
+            if (x == "medium") return std::string("${txt_medium}");
+            if (x == "high") return std::string("${txt_high}");
+            return std::string("--");
+      # Light up one, two or three bars
       - lambda: |-
-          std::string intensity = x;
-          std::transform(intensity.begin(), intensity.end(), intensity.begin(), ::tolower);
-          int level = 0;
-          if (intensity.find("low") != std::string::npos || intensity == "1") level = 1;
-          else if (intensity.find("medium") != std::string::npos || intensity.find("med") != std::string::npos || intensity == "2") level = 2;
-          else if (intensity.find("high") != std::string::npos || intensity == "3") level = 3;
+          const int level = x == "low" ? 1 : x == "medium" ? 2 : x == "high" ? 3 : 0;
           const auto inactive = lv_color_hex(0x303741);
           const auto active = lv_color_hex(0x4F8CFF);
-          lv_obj_set_style_bg_color(id(barre_intensite_1), level >= 1 ? active : inactive, LV_PART_MAIN);
-          lv_obj_set_style_bg_color(id(barre_intensite_2), level >= 2 ? active : inactive, LV_PART_MAIN);
-          lv_obj_set_style_bg_color(id(barre_intensite_3), level >= 3 ? active : inactive, LV_PART_MAIN);
+          lv_obj_set_style_bg_color(id(bar_intensity_1), level >= 1 ? active : inactive, LV_PART_MAIN);
+          lv_obj_set_style_bg_color(id(bar_intensity_2), level >= 2 ? active : inactive, LV_PART_MAIN);
+          lv_obj_set_style_bg_color(id(bar_intensity_3), level >= 3 ? active : inactive, LV_PART_MAIN);
 
+# The pressure bar turns red while the pressure alert is on
 binary_sensor:
   - platform: homeassistant
-    id: brosse_alerte_pression
-    entity_id: binary_sensor.sonicare_hx960x_6d3a_pressure_alert
+    id: brush_pressure_alert
+    entity_id: binary_sensor.${brush}_pressure_alert
     internal: true
     on_press:
-      - lvgl.widget.hide: barre_pression_blanche
-      - lvgl.widget.show: barre_pression_rouge
+      - lvgl.widget.hide: bar_pressure
+      - lvgl.widget.show: bar_pressure_alert
     on_release:
-      - lvgl.widget.show: barre_pression_blanche
-      - lvgl.widget.hide: barre_pression_rouge
+      - lvgl.widget.show: bar_pressure
+      - lvgl.widget.hide: bar_pressure_alert
 
-  - platform: gpio
-    pin:
-      number: GPIO0
-      inverted: true
-      mode: INPUT_PULLUP
-    name: "Bouton Action Vocal"
-    on_press:
-      - voice_assistant.start:
-    on_release:
-      - voice_assistant.stop:
-
-# -----------------------------------------------------------------------------
-# LVGL display
-# -----------------------------------------------------------------------------
 lvgl:
   displays: [lcd]
   touchscreens: [touch]
@@ -587,17 +530,17 @@ lvgl:
                   width: 250
                   height: 14
                   text_font: font_sm
-                  text: "HX960X  |  6D3A"
+                  text: "${brush_label}"
                   text_color: 0x8B95A3
               - label:
-                  id: label_statut_off
+                  id: label_status
                   x: 280
                   y: 12
                   width: 186
                   height: 24
                   text_align: right
                   text_font: font_md
-                  text: "INITIALISING..."
+                  text: "${txt_initializing}"
                   text_color: 0x9AA3AF
 
               - obj:
@@ -632,10 +575,10 @@ lvgl:
                   width: 92
                   height: 14
                   text_font: font_sm
-                  text: "BATTERIE"
+                  text: "${txt_battery}"
                   text_color: 0x8B95A3
               - label:
-                  id: label_batterie
+                  id: label_battery
                   x: 56
                   y: 75
                   width: 92
@@ -644,7 +587,7 @@ lvgl:
                   text: "--%"
                   text_color: 0xF4F6F8
               - bar:
-                  id: barre_batterie
+                  id: bar_battery
                   x: 25
                   y: 109
                   width: 122
@@ -697,10 +640,10 @@ lvgl:
                   width: 96
                   height: 14
                   text_font: font_sm
-                  text: "PRESSION"
+                  text: "${txt_pressure}"
                   text_color: 0x8B95A3
               - label:
-                  id: label_pression_valeur
+                  id: label_pressure
                   x: 207
                   y: 75
                   width: 96
@@ -709,7 +652,7 @@ lvgl:
                   text: "-- g"
                   text_color: 0xF4F6F8
               - bar:
-                  id: barre_pression_blanche
+                  id: bar_pressure
                   x: 180
                   y: 109
                   width: 121
@@ -723,7 +666,7 @@ lvgl:
                     bg_color: 0x32C5D2
                     radius: 2
               - bar:
-                  id: barre_pression_rouge
+                  id: bar_pressure_alert
                   x: 180
                   y: 109
                   width: 121
@@ -794,7 +737,7 @@ lvgl:
                   height: 14
                   text_align: center
                   text_font: font_sm
-                  text: "MODE"
+                  text: "${txt_mode}"
                   text_color: 0x8B95A3
               - label:
                   id: label_mode
@@ -823,10 +766,10 @@ lvgl:
                   height: 16
                   text_align: center
                   text_font: font_sm
-                  text: "INTENSITE"
+                  text: "${txt_intensity}"
                   text_color: 0x8B95A3
               - obj:
-                  id: barre_intensite_1
+                  id: bar_intensity_1
                   x: 52
                   y: 217
                   width: 10
@@ -835,7 +778,7 @@ lvgl:
                   border_width: 0
                   radius: 2
               - obj:
-                  id: barre_intensite_2
+                  id: bar_intensity_2
                   x: 70
                   y: 205
                   width: 10
@@ -844,7 +787,7 @@ lvgl:
                   border_width: 0
                   radius: 2
               - obj:
-                  id: barre_intensite_3
+                  id: bar_intensity_3
                   x: 88
                   y: 193
                   width: 10
@@ -853,7 +796,7 @@ lvgl:
                   border_width: 0
                   radius: 2
               - label:
-                  id: label_intensite
+                  id: label_intensity
                   x: 20
                   y: 258
                   width: 110
@@ -881,7 +824,7 @@ lvgl:
                     arc_color: 0x32C5D2
                     arc_width: 10
               - label:
-                  id: label_temps
+                  id: label_time
                   x: 166
                   y: 184
                   width: 148
@@ -897,7 +840,7 @@ lvgl:
                   height: 16
                   text_align: center
                   text_font: font_sm
-                  text: "SESSION"
+                  text: "${txt_session}"
                   text_color: 0x8B95A3
 
               - obj:
@@ -956,10 +899,10 @@ lvgl:
                   height: 16
                   text_align: center
                   text_font: font_sm
-                  text: "TETE"
+                  text: "${txt_head}"
                   text_color: 0x8B95A3
               - label:
-                  id: label_type_tete
+                  id: label_head_type
                   x: 350
                   y: 204
                   width: 110
@@ -969,7 +912,7 @@ lvgl:
                   text: "--"
                   text_color: 0x8B95A3
               - label:
-                  id: label_usure
+                  id: label_wear
                   x: 356
                   y: 231
                   width: 98
@@ -979,7 +922,7 @@ lvgl:
                   text: "--%"
                   text_color: 0xF4F6F8
               - bar:
-                  id: barre_usure
+                  id: bar_wear
                   x: 356
                   y: 265
                   width: 98
