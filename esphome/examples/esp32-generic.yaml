@@ -8,24 +8,9 @@ esphome:
   # stop reconnecting on newer ESP32 chips".
   # build_flags:
   #   - -DCONFIG_BT_BLE_RPA_SUPPORTED=0
-  # Optional: bluedroid_null_fix.py cherry-picks the NULL pointer guards
-  # from ESP-IDF commit d4f3517 into the build. Only needed on
-  # ESPHome < 2026.7.1 (ESP-IDF < 5.5.5) when you opt into either:
-  #   - CONFIG_BT_GATTC_CACHE_NVS_FLASH (see sdkconfig_options below)
-  #   - bluetooth_proxy: (see end of file)
-  # On those older builds both crash the bluedroid GATT cache path without
-  # the patch — the component aborts the build with instructions if you
-  # try. From ESPHome 2026.7.1 the fix ships upstream and this block can
-  # stay commented out. Place the script next to this YAML in your
-  # ESPHome config dir.
-  #
-  # platformio_options:
-  #   extra_scripts:
-  #     - pre:/config/esphome/bluedroid_null_fix.py
 
-# ESP-IDF is required (not Arduino) because Bluedroid's notification limit
-# is only configurable via sdkconfig.  Arduino uses precompiled libbt.a with
-# BTA_GATTC_NOTIF_REG_MAX=5 — Sonicare needs 11 subscriptions.
+# ESP-IDF is required (not Arduino): only it can raise the Bluetooth limits
+# set below. See SETUP.md, "What you should NOT change".
 esp32:
   board: esp32dev
   framework:
@@ -33,27 +18,17 @@ esp32:
     # ESPHome 2026.10.0 defaults to ESP-IDF 5.5.6, which drops the pairing
     # after the first disconnect (see KNOWN_ISSUES.md, "ESP bridge loses
     # pairings with ESP-IDF 5.5.6"). ESPHome warns that this is not the
-    # recommended version; that is expected. Remove the line once an ESPHome
-    # release ships an ESP-IDF version with the fix.
+    # recommended version; that is expected. On ESPHome versions that already
+    # ship 5.5.5 the line changes nothing. Keep it until KNOWN_ISSUES.md says
+    # the issue is fixed.
     version: 5.5.5
     sdkconfig_options:
-      # ESPHome never touches MAX_CACHE_CHAR — leave this out and the ESP-IDF
-      # default of 40 stands.
+      # Services and characteristics per brush (default 40 is too few).
       CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"
-      # NOTIF_REG_MAX is written by esp32_ble from its max_notifications option
-      # (default 12), so our 11 subscriptions would fit even without this line —
-      # with a single slot to spare. Set explicitly and matched to
-      # max_notifications below, so adding a bluetooth_proxy or a second
-      # ble_client cannot push it over.
+      # Notification slots: 11 per brush plus headroom. Matched to
+      # max_notifications under esp32_ble.
       CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"
-      # Optional: persist discovered GATT DB to NVS keyed by bonded peer
-      # identity. First connect still does a full ~4s SDP; subsequent
-      # reconnects to the same brush hit the cache in tens of ms. On
-      # ESPHome < 2026.7.1 (ESP-IDF < 5.5.5) this additionally requires
-      # the bluedroid_null_fix.py pre-script (uncomment platformio_options
-      # at the top of this file) — without it the cache-save path crashes
-      # inside bta_gattc_cache_save, so the component refuses to build.
-      # From ESPHome 2026.7.1 the fix ships upstream.
+      # Optional, faster reconnects: see README.md, "Persisted GATT cache".
       # CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"
 
 logger:
@@ -147,13 +122,7 @@ philips_sonicare:
 #     pin: GPIO2
 
 # --- Bluetooth Proxy (optional) ---
-# Uncomment to relay BLE for other devices through this ESP. On
-# ESPHome < 2026.7.1 (ESP-IDF < 5.5.5) this additionally requires the
-# bluedroid_null_fix.py patch (uncomment platformio_options at the top of
-# this file) to dodge ESP-IDF bug
-# https://github.com/esphome/esphome/issues/15783 — without the patch,
-# every GATT service discovery crashes the chip and the component refuses
-# to build. From ESPHome 2026.7.1 the fix ships upstream.
+# Uncomment to relay BLE for other devices through this ESP.
 #
 # bluetooth_proxy:
 #   active: true

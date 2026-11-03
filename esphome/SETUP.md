@@ -30,6 +30,7 @@ flowchart LR
   - [Expected pair-mode logs](#expected-pair-mode-logs)
 - [Multi-Device Setup](#multi-device-setup)
 - [Troubleshooting](#troubleshooting)
+  - [Device stays offline after flashing](#device-stays-offline-after-flashing)
   - [ESP32 crashes/reboots when connecting](#esp32-crashesreboots-when-connecting)
   - [Pair-mode times out without finding the brush](#pair-mode-times-out-without-finding-the-brush)
   - ["No philips_sonicare services found"](#no-philips_sonicare-services-found)
@@ -80,9 +81,9 @@ flowchart TD
     brushes -->|"1"| lite["atom-lite.yaml"]
     brushes -->|"2"| dual["atom-lite-dual.yaml"]
     brushes -->|"3"| triple["atom-lite-triple.yaml"]
-    board -->|"M5Stack AtomS3 / AtomS3R / AtomS3 Lite"| s3["atom-s3.yaml"]
+    board -->|"M5Stack AtomS3 / AtomS3R / AtomS3 Lite"| s3["atom-s3.yaml<br/>one brush; more: Multi-Device Setup"]
     board -->|"LCDwiki ES3C35P / Freenove FNK0104N"| disp["es3c35p-display.yaml"]
-    board -->|"other ESP32 board"| generic["esp32-generic.yaml<br/>on S3, C3, C6: uncomment the build option"]
+    board -->|"other ESP32 board"| generic["esp32-generic.yaml<br/>set board: to your board;<br/>on S3, C3, C6 also uncomment the build option"]
     lite & dual & triple & s3 & disp & generic --> pair{"Does the brush change its address?<br/>Series 7100, Sonicare For Kids HX6600"}
     pair -->|"yes / not sure"| auto["Auto-Discovery ⭐"]
     pair -->|"no"| either["Auto-Discovery ⭐ or Fixed MAC"]
@@ -101,8 +102,8 @@ All examples, including configs for two and three brushes, are listed in the [RE
 To get it into the ESPHome dashboard:
 
 1. In the ESPHome dashboard, click **+ New Device**, give it a name and pick your board type. When it offers to install, choose **Skip**.
-2. The dashboard has created a config with a fresh API encryption key. Click **Edit** on the new device and copy that key (the value under `api: encryption: key:`), you need it for `secrets.yaml` below.
-3. Replace the whole content with the example config, set `name:` to the name you chose, then make the changes below and click **Save**.
+2. The dashboard has created a config for your board. Click **Edit** on the new device and note two values from it: the `board:` under `esp32:`, and the API encryption key under `api: encryption: key:` (you need it for `secrets.yaml` below).
+3. Open the example on GitHub and copy it with the **Copy raw file** button (top right of the file). Replace the whole content in the dashboard editor with it, set `name:` to the name you chose and `board:` to the value you noted, then make the changes below and click **Save**.
 
 The examples load the component with `ref: master`, which is fine to start with. To stay on a fixed release instead, see [Version pinning](README.md#version-pinning).
 
@@ -112,7 +113,7 @@ instead of using the template.
 
 ### Required changes
 
-1. **Board type** — each example targets one board. Change it if yours differs:
+1. **Board type** — each example targets one board. Use the `board:` value the dashboard created for your device (step 2 above):
    ```yaml
    esp32:
      board: m5stack-atom   # or m5stack-atoms3, esp32dev, esp32-s3-devkitc-1, …
@@ -135,7 +136,7 @@ instead of using the template.
        type: esp-idf
        version: 5.5.5
    ```
-   ESPHome warns that this is not the recommended version; that is expected. See the [known issue](KNOWN_ISSUES.md#esp-bridge-loses-pairings-with-esp-idf-556).
+   ESPHome warns that this is not the recommended version; that is expected. Keep the line until the [known issue](KNOWN_ISSUES.md#esp-bridge-loses-pairings-with-esp-idf-556) says it is fixed.
 
 4. **Build option on ESP32-S3, C3, C6 and other newer chips** — needed for brushes with a rotating address (Series 7100, Sonicare For Kids HX6600). Without it the bridge pairs, but loses the brush after the first session. [`atom-s3.yaml`](examples/atom-s3.yaml) already has it; otherwise add:
    ```yaml
@@ -302,15 +303,16 @@ After a successful pair, subsequent boots show the brush reconnecting on its own
 ```
 
 > [!NOTE]
-> Some models (DiamondClean Smart HX992X, Sonicare For Kids HX63xx) connect without pairing, so no `auth success` line appears. Models that pair (Prestige HX999X, ExpertClean HX962X, HX991M, Series 7100 HX742X, Sonicare For Kids HX6600) log `auth success` after a successful pair-mode run.
+> Not every brush pairs. The DiamondClean Smart HX992X and the older Sonicare For Kids HX63xx connect without pairing, so no `auth success` line appears. Brushes that pair (Prestige HX999X, ExpertClean HX962X, HX991M, Series 7100 HX742X and the newer Sonicare For Kids HX6600) log `auth success` after a successful pair-mode run. Either way the bridge reconnects on its own after a reboot.
 
 ## Step 4: Add the Integration in Home Assistant
 
-1. Install the **Philips Sonicare** integration in Home Assistant
+1. **Add the ESP32 to Home Assistant.** After its first boot it shows up under **Settings > Devices & Services** as a discovered ESPHome device. Click **Add** (or **Configure**) and confirm. If you are asked for the encryption key, enter the `api_encryption_key` from your `secrets.yaml`. The Philips Sonicare setup can only offer ESPs that are added here.
+2. Install the **Philips Sonicare** integration in Home Assistant
    (via [HACS](../README.md#installation) or manually)
-2. Go to **Settings > Devices & Services > + Add Integration** and search for **Philips Sonicare**
-3. Select **"ESP32 Bridge (ESPHome)"** → pick your ESP32 from the list
-4. If the ESP exposes multiple bridge slots (multi-device setup), pick the one
+3. Go to **Settings > Devices & Services > + Add Integration** and search for **Philips Sonicare**
+4. Select **"ESP32 Bridge (ESPHome)"** → pick your ESP32 from the list
+5. If the ESP exposes multiple bridge slots (multi-device setup), pick the one
    you want to bond
 
 > [!TIP]
@@ -357,11 +359,7 @@ HX742X / Series 7100 framed transport. After `Bonded — saving identity`
 the bridge writes the bond to NVS and the brush will reconnect on its own
 across reboots (no further pair-mode needed).
 
-> [!NOTE]
-> Models with **open GATT** (DiamondClean Smart HX992X) skip the SMP / auth
-> dance — you'll see `Connected to Sonicare …` and `Service discovery complete`
-> but no `auth success` line. Bond persistence still works via the saved
-> identity, so reconnect on next boot is the same.
+Brushes that connect without pairing show no `auth success` line here, see the note in [Step 3](#step-3-verify-the-bridge-boots).
 
 ## Multi-Device Setup
 
@@ -475,6 +473,21 @@ Known problems with ESPHome, ESP-IDF and particular chips, with workarounds, are
 
 Click a problem to expand it.
 
+<a id="device-stays-offline-after-flashing"></a>
+<details>
+<summary><b>Device stays offline after flashing</b></summary>
+
+> The dashboard shows the device as offline and it does not show up in Home Assistant. Almost always the ESP cannot join your Wi-Fi.
+>
+> **Fix:**
+>
+> - Check `wifi_ssid` and `wifi_password` in `secrets.yaml` (exact spelling, case-sensitive), then install again by USB.
+> - The ESP only supports 2.4 GHz Wi-Fi. A network that is 5 GHz only does not work.
+> - When it cannot connect, the ESP opens its own hotspot after about a minute, named like the `ap: ssid:` in the config (e.g. `Atom-Lite-Fallback`). Join it with your phone using the `fallback_password`, and the page that opens lets you pick your Wi-Fi and enter the password.
+> - To see what the ESP is doing, connect it by USB and open **Logs** in the dashboard.
+
+</details>
+
 <a id="esp32-crashesreboots-when-connecting"></a>
 <details>
 <summary><b>ESP32 crashes/reboots when connecting</b></summary>
@@ -497,10 +510,23 @@ Click a problem to expand it.
 <details>
 <summary><b>Pair-mode times out without finding the brush</b></summary>
 
-> Two distinct causes, and the ESP log tells them apart.
+> Two possible causes. Start with the first.
 >
-> **Cause 1 — the scanner ran passively (only with `bluetooth_proxy:` on the
-> same ESP).** Sonicare handles send the service UUID that pair-mode matches on
+> **Cause 1 — timing.** No warning in the log, the scanner was active, the
+> brush just never advertised into the window: it only advertises for
+> ~20 seconds after waking up.
+>
+> **Fix:** work through these, in order:
+>
+> - Press the power button or pick the brush up from the charger immediately
+>   before clicking **Start pairing**, then keep it on
+> - Remember the brush is **not reachable** via BLE while on the charging stand
+> - Make sure no phone has an active connection to the brush — close or uninstall
+>   the Sonicare app
+> - Keep the brush within ~1 m of the ESP during pair-mode
+>
+> **Cause 2 — only if `bluetooth_proxy:` is in your YAML: the scanner ran
+> passively.** Sonicare handles send the service UUID that pair-mode matches on
 > only in the scan response, which a passive scan never requests — the bridge
 > cannot see the brush at all, however close and awake it is. When
 > `bluetooth_proxy:` is compiled in, Home Assistant owns the shared scanner and
@@ -520,19 +546,6 @@ Click a problem to expand it.
 > scanning mode to **Active** under **Settings > Devices & Services > ESPHome >
 > Configure** and try again. Without `bluetooth_proxy:` in the YAML this cause
 > is off the table — `scan_parameters.active: true` applies unconditionally.
->
-> **Cause 2 — timing.** No warning in the log, the scanner was active, the
-> brush just never advertised into the window: it only advertises for
-> ~20 seconds after waking up.
->
-> **Fix:** work through these, in order:
->
-> - Press the power button or pick the brush up from the charger immediately
->   before clicking **Start pairing**, then keep it on
-> - Remember the brush is **not reachable** via BLE while on the charging stand
-> - Make sure no phone has an active connection to the brush — close or uninstall
->   the Sonicare app
-> - Keep the brush within ~1 m of the ESP during pair-mode
 
 </details>
 

@@ -71,8 +71,9 @@ esp32:
     # ESPHome 2026.10.0 defaults to ESP-IDF 5.5.6, which drops the pairing
     # after the first disconnect (see KNOWN_ISSUES.md, "ESP bridge loses
     # pairings with ESP-IDF 5.5.6"). ESPHome warns that this is not the
-    # recommended version; that is expected. Remove the line once an ESPHome
-    # release ships an ESP-IDF version with the fix.
+    # recommended version; that is expected. On ESPHome versions that already
+    # ship 5.5.5 the line changes nothing. Keep it until KNOWN_ISSUES.md says
+    # the issue is fixed.
     version: 5.5.5
     sdkconfig_options:
       CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"
