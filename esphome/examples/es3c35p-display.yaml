@@ -1,0 +1,994 @@
+esphome:
+  name: esp32-ble-bridge
+  friendly_name: "ESP32 BLE Bridge"
+  #  platformio_options:
+  #    build_flags:
+  #      - -ULV_USE_OBSERVER    
+  #      - -DLV_USE_OBSERVER=1
+  #      - -DLV_USE_SYSMON=1
+  #      - -DLV_USE_PERF_MONITOR=1 # Active le widget FPS et CPU
+  on_boot:
+    - priority: 600
+      then:
+        - light.turn_on:
+            id: backlight
+            brightness: 100%
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    #Bluetooth bug in 5.5.6->Forcing 5.5.5 until ESPHome released with the fix
+    version: 5.5.5
+    sdkconfig_options:
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"
+      CONFIG_BT_GATTC_NOTIF_REG_MAX: "20"
+
+psram:
+  mode: octal
+  speed: 80MHz
+  ignore_not_found: false
+
+logger:
+  level: DEBUG
+  hardware_uart: USB_SERIAL_JTAG
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  custom_services: true
+  homeassistant_services: true
+
+ota:
+  - platform: esphome
+    encryption:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "ESP32-BLE-Bridge-Fallback"
+    password: !secret fallback_password
+
+captive_portal:
+
+# -----------------------------------------------------------------------------
+# BLE configuration
+# -----------------------------------------------------------------------------
+esp32_ble:
+  io_capability: none
+  max_notifications: 20
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+    interval: 211ms
+    window: 120ms
+
+# -----------------------------------------------------------------------------
+# Philips Sonicare bridge
+# -----------------------------------------------------------------------------
+# The component scans for the Sonicare service UUID, bonds with the brush
+# you put into pair-mode via the HA setup flow, and stores the bond identity
+# in NVS. After bonding, the controller resolves rotating BLE addresses
+# (RPA) back to the same brush automatically — no MAC pinning needed.
+#
+# To pair:
+#   1. Flash this firmware
+#   2. In Home Assistant, add the Philips Sonicare integration → ESP32 Bridge
+#   3. Walk through "Pair toothbrush with bridge" — switch on the brush when
+#      prompted, the ESP scans, bonds, and finishes setup.
+#
+# BLE bonding is handled automatically. Models that require bonding (e.g.
+# Prestige 9900, ExpertClean, HX991M) are paired via SMP after service
+# discovery; models with open GATT (e.g. DiamondClean) work without pairing.
+external_components:
+  #Sonicare
+  - source:
+      type: git
+      url: https://github.com/mtheli/philips_sonicare_ble
+      ref: master
+      path: esphome/components
+    components: [philips_sonicare]
+    refresh: 0s # always fetch latest code on build
+  #Screen diver. Since it's not in main branch yet, use pr for activating model : ES3C35P
+  - source: github://pr#19011
+    components: [mipi_spi]
+    refresh: 1h
+
+philips_sonicare:
+  - id: philips_sonicare_ble
+    # Optional: pre-fill the HA setup form. `friendly_name` becomes the
+    # default device name; `area` auto-assigns the brush to an HA area on
+    # first install. One-shot defaults — edit names in HA after that.
+    # friendly_name: "My Sonicare"
+    # area: "Bathroom"
+    on_connect:
+      then:
+        - logger.log: "Connected to Sonicare"
+    on_disconnect:
+      then:
+        - logger.log: "Disconnected from Sonicare"
+
+# Optional: Bluetooth proxy
+# Uncomment to relay BLE for other devices through this ESP. On
+# ESPHome < 2026.7.1 (ESP-IDF < 5.5.5) this additionally requires the
+# bluedroid_null_fix.py patch (uncomment platformio_options at the top of
+# this file) to dodge ESP-IDF bug https://github.com/esphome/esphome/issues/15783
+# — without the patch, every GATT service discovery crashes the chip and the
+# component refuses to build. From ESPHome 2026.7.1 the fix ships upstream.
+bluetooth_proxy:
+  active: true
+
+# -----------------------------------------------------------------------------
+# Hardware and display
+# https://github.com/jlmeredith/ES3C35P/tree/main
+# https://github.com/esphome/esphome/pull/19011
+# https://www.lcdwiki.com/3.5inch_ESP32-S3_Display#Product_Specifications
+# https://docs.freenove.com/projects/fnk0104/en/latest/fnk0104/codes/MAIN/Freenove_ESP32S3_Display.html
+# -----------------------------------------------------------------------------
+spi:
+  - id: lcd_bus
+    type: quad
+    clk_pin: GPIO12
+    data_pins: [GPIO11, GPIO13, GPIO14, GPIO9]
+
+i2c:
+  - id: bus_a
+    sda: GPIO38
+    scl: GPIO39
+    frequency: 400kHz
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: GPIO41 # active HIGH
+    frequency: 1000Hz
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: "Backlight"
+    output: backlight_pwm
+    restore_mode: ALWAYS_OFF #On/Off backlight is on Brush status or touch screen
+  - platform: esp32_rmt_led_strip
+    id: status_led
+    name: "LED RGB Carte"
+    pin: GPIO40
+    num_leds: 1
+    chipset: WS2812
+    channel_colors: GRB
+    restore_mode: ALWAYS_OFF
+
+display:
+  - platform: mipi_spi
+    id: lcd
+    spi_id: lcd_bus
+    model: ES3C35P # Profile from PR #19011
+    bus_mode: quad
+    cs_pin: GPIO10
+    data_rate: 40MHz # Can do 80Mhz if needed, but 40Mhz is more stable and sufficient for now
+
+touchscreen:
+  - platform: st7123
+    id: touch
+    i2c_id: bus_a
+    address: 0x55
+    reset_pin: GPIO48
+    display: lcd
+    on_touch:
+      then:
+        - if:
+            condition:
+              script.is_running: temporisation_ecran
+            then:
+              - logger.log: "Touch direct : Écran allumé -> Extinction demandée."
+              - script.stop: temporisation_ecran
+              - light.turn_off: backlight
+            else:
+              - if:
+                  condition:
+                    light.is_off: backlight
+                  then:
+                    - logger.log: "Touch direct : Écran éteint -> Allumage immédiat."
+                    - light.turn_on:
+                        id: backlight
+                        brightness: 100%
+                    - script.execute: temporisation_ecran
+
+# -----------------------------------------------------------------------------
+# Audio configuration
+# -----------------------------------------------------------------------------
+i2s_audio:
+  - id: i2s_bus
+    i2s_bclk_pin: GPIO18 
+    i2s_lrclk_pin: GPIO21
+    i2s_mclk_pin: GPIO17 
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    i2c_id: bus_a
+    address: 0x18
+    use_mclk: true
+
+speaker:
+  - platform: i2s_audio
+    id: board_speaker_hardware
+    dac_type: external
+    i2s_dout_pin: GPIO15
+    i2s_mode: primary
+    channel: mono
+
+  - platform: mixer
+    id: mixer_speaker_id
+    output_speaker: board_speaker_hardware
+    source_speakers:
+      - id: announcement_spk_input
+      - id: media_spk_input
+#Untested MIC. Potential conflict with speaker on i2S bus?
+microphone:
+  - platform: i2s_audio
+    id: board_microphone_hardware
+    i2s_din_pin: GPIO16 
+    adc_type: external
+    pdm: false
+
+media_player:
+  - platform: speaker
+    name: "Haut-Parleur ES3C35P"
+    id: board_media_player
+    volume_initial: 100%
+    announcement_pipeline:
+      speaker: announcement_spk_input
+      format: MP3
+    media_pipeline:
+      speaker: media_spk_input
+      format: MP3
+
+switch:
+  - platform: gpio
+    pin:
+      number: GPIO1
+      inverted: true
+    id: amp_enable
+    name: "Amplificateur Audio"
+    restore_mode: ALWAYS_ON
+
+voice_assistant:
+  id: assistant_vocal_local
+  microphone: board_microphone_hardware
+  speaker: board_speaker_hardware
+
+
+# -----------------------------------------------------------------------------
+# Display fonts
+# -----------------------------------------------------------------------------
+font:
+  - file: gfonts://Orbitron
+    id: font_lg
+    size: 42
+    bpp: 4
+    glyphs: "0123456789:-"
+
+  - file: gfonts://Outfit
+    id: font_md
+    bpp: 4
+    size: 18
+    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+éèàçùâêîôûëïü"
+
+  - file: gfonts://Outfit
+    id: font_sm
+    bpp: 4
+    size: 12
+    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+|éèàçùâêîôûëïü"
+
+  - file: gfonts://Outfit
+    id: font_value
+    bpp: 4
+    size: 24
+    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+|éèàçùâêîôûëïü"
+
+  - file: gfonts://Outfit
+    id: font_xs
+    bpp: 4
+    size: 10
+    glyphs: " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,_-/():%+|éèàçùâêîôûëïü"
+
+# -----------------------------------------------------------------------------
+# Home Assistant sensors
+# -----------------------------------------------------------------------------
+sensor:
+  - platform: homeassistant
+    id: brosse_temps
+    entity_id: sensor.sonicare_hx960x_6d3a_brushing_time
+    internal: true
+    on_value:
+      - lvgl.label.update:
+          id: label_temps
+          text: !lambda |-
+            if (!(x == x) || x < 0) return std::string("--:--");
+            const int seconds = static_cast<int>(x);
+            return str_sprintf("%d:%02d", seconds / 60, seconds % 60);
+      - lvgl.arc.update:
+          id: arc_session
+          value: !lambda |-
+            if (!(x == x) || x < 0) return 0;
+            if (x > 120) return 120;
+            return static_cast<int>(x);
+
+  - platform: homeassistant
+    id: brosse_batterie
+    entity_id: sensor.sonicare_hx960x_6d3a_battery
+    internal: true
+    on_value:
+      - lvgl.label.update:
+          id: label_batterie
+          text: !lambda |-
+            if (!(x == x)) return std::string("--%");
+            return str_sprintf("%.0f%%", x);
+      - lvgl.bar.update:
+          id: barre_batterie
+          value: !lambda |-
+            if (!(x == x) || x < 0) return 0;
+            if (x > 100) return 100;
+            return static_cast<int>(x);
+      - lambda: |-
+          if (!(x == x)) {
+            lv_obj_set_style_bg_color(id(barre_batterie), lv_color_hex(0x666666), LV_PART_INDICATOR);
+            return;
+          }
+          const float ratio = x <= 0 ? 0.0f : (x >= 100 ? 1.0f : x / 100.0f);
+          const uint8_t red = static_cast<uint8_t>(255.0f * (1.0f - ratio));
+          const uint8_t green = static_cast<uint8_t>(255.0f * ratio);
+          lv_obj_set_style_bg_color(id(barre_batterie), lv_color_make(red, green, 0), LV_PART_INDICATOR);
+
+  - platform: homeassistant
+    id: brosse_usure
+    entity_id: sensor.sonicare_hx960x_6d3a_brush_head_wear
+    internal: true
+    on_value:
+      - lvgl.label.update:
+          id: label_usure
+          text: !lambda |-
+            if (!(x == x)) return std::string("--%");
+            return str_sprintf("%.0f%%", x);
+      - lvgl.bar.update:
+          id: barre_usure
+          value: !lambda |-
+            if (!(x == x) || x < 0) return 0;
+            if (x > 100) return 100;
+            return static_cast<int>(x);
+      - lambda: |-
+          if (!(x == x)) {
+            lv_obj_set_style_bg_color(id(barre_usure), lv_color_hex(0x666666), LV_PART_INDICATOR);
+            return;
+          }
+          const float ratio = x <= 0 ? 0.0f : (x >= 100 ? 1.0f : x / 100.0f);
+          const uint8_t red = static_cast<uint8_t>(255.0f * ratio);
+          const uint8_t green = static_cast<uint8_t>(255.0f * (1.0f - ratio));
+          lv_obj_set_style_bg_color(id(barre_usure), lv_color_make(red, green, 0), LV_PART_INDICATOR);
+
+  - platform: homeassistant
+    id: brosse_pression
+    entity_id: sensor.sonicare_hx960x_6d3a_pressure
+    internal: true
+    on_value:
+      - lvgl.bar.update:
+          id: barre_pression_blanche
+          value: !lambda |-
+            if (!(x == x) || x < 0) return 0;
+            if (x > 300) return 300;
+            return static_cast<int>(x);
+      - lvgl.bar.update:
+          id: barre_pression_rouge
+          value: !lambda |-
+            if (!(x == x) || x < 0) return 0;
+            if (x > 300) return 300;
+            return static_cast<int>(x);
+      - lambda: |-
+          if (!(x == x)) {
+            lv_obj_set_style_bg_color(id(barre_pression_blanche), lv_color_hex(0x666666), LV_PART_INDICATOR);
+            return;
+          }
+          const float ratio = x <= 0 ? 0.0f : (x >= 300 ? 1.0f : x / 300.0f);
+          const uint8_t red = static_cast<uint8_t>(255.0f * ratio);
+          const uint8_t green = static_cast<uint8_t>(255.0f * (1.0f - ratio));
+          lv_obj_set_style_bg_color(id(barre_pression_blanche), lv_color_make(red, green, 0), LV_PART_INDICATOR);
+      - lvgl.label.update:
+          id: label_pression_valeur
+          text: !lambda |-
+            if (!(x == x)) return std::string("-- g");
+            return str_sprintf("%.0f g", x);
+
+script:
+  - id: temporisation_ecran
+    mode: restart
+    then:
+      - delay: 10s
+      - logger.log: "Automatisme : Fin des 10s post-brossage. Extinction de l'écran."
+      - light.turn_off: backlight
+
+text_sensor:
+  - platform: homeassistant
+    id: brosse_statut
+    entity_id: sensor.sonicare_hx960x_6d3a_activity
+    internal: true
+    on_value:
+      - lvgl.label.update:
+          id: label_statut_off
+          text: !lambda |-
+            std::string s = x;
+            std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+            if (s.empty() || s == "unknown" || s == "unavailable" || s == "none" || s.rfind("initializ", 0) == 0 || s.rfind("initialis", 0) == 0) return std::string("INITIALISING...");
+            if (s == "off") return std::string("OFF");
+            return x;
+      - lambda: |-
+          std::string s = x;
+          std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+          const bool initializing = s.empty() || s == "unknown" || s == "unavailable" || s == "none" || s.rfind("initializ", 0) == 0 || s.rfind("initialis", 0) == 0;
+          const auto color = initializing
+              ? lv_color_hex(0xF59E0B)
+              : ((s == "off") ? lv_color_hex(0x9AA3AF) : lv_color_hex(0x22C55E));
+          lv_obj_set_style_text_color(id(label_statut_off), color, LV_PART_MAIN);
+      - if:
+          condition:
+            lambda: |-
+              std::string s = x;
+              std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+              return s.empty() || s == "off" || s == "unavailable" || s == "unknown" || s == "none" || s.rfind("initializ", 0) == 0 || s.rfind("initialis", 0) == 0;
+          then:
+            - logger.log: "Automatisme : Brosse détectée comme inactive. Lancement des 10s de veille."
+            - script.execute: temporisation_ecran
+          else:
+            - script.stop: temporisation_ecran
+            - logger.log: "Automatisme : Brosse active ! Allumage immédiat."
+            - light.turn_on:
+                id: backlight
+                brightness: 100%
+
+  - platform: homeassistant
+    id: brosse_mode
+    entity_id: sensor.sonicare_hx960x_6d3a_brushing_mode
+    internal: true
+    on_value:
+      - lvgl.label.update:
+          id: label_mode
+          text: !lambda |-
+            std::string mode = x;
+            std::transform(mode.begin(), mode.end(), mode.begin(), ::tolower);
+            std::replace(mode.begin(), mode.end(), '_', ' ');
+            if (mode == "deep clean plus" || mode == "deep clean+") return std::string("Deep Clean+");
+            if (mode == "gum health") return std::string("Gum Health");
+            return x;
+
+  - platform: homeassistant
+    id: brosse_type_tete
+    entity_id: sensor.sonicare_hx960x_6d3a_brush_head_type
+    internal: true
+    on_value:
+      - lvgl.label.update:
+          id: label_type_tete
+          text: !lambda |-
+            std::string type = x;
+            std::transform(type.begin(), type.end(), type.begin(), ::tolower);
+            if (type.empty() || type == "unknown" || type == "unavailable" || type == "none") return std::string("--");
+            std::replace(type.begin(), type.end(), '_', ' ');
+            if (type == "adaptive clean") return std::string("Clean (C)");
+            if (type == "adaptive white") return std::string("White (W)");
+            if (type == "adaptive gums") return std::string("Gum Care (G)");
+            if (type == "tongue clean") return std::string("TongueCare+");
+            if (type == "premium all in one") return std::string("All-in-One (A)");
+            if (type == "sensitive") return std::string("Sensitive (S)");
+            if (type == "non rfid") return std::string("Non-RFID");
+            return x;
+
+  - platform: homeassistant
+    id: brosse_intensite
+    entity_id: sensor.sonicare_hx960x_6d3a_intensity
+    internal: true
+    on_value:
+      - lvgl.label.update:
+          id: label_intensite
+          text: !lambda |-
+            std::string intensity = x;
+            std::transform(intensity.begin(), intensity.end(), intensity.begin(), ::tolower);
+            if (intensity.find("low") != std::string::npos || intensity == "1") return std::string("LOW");
+            if (intensity.find("medium") != std::string::npos || intensity.find("med") != std::string::npos || intensity == "2") return std::string("MEDIUM");
+            if (intensity.find("high") != std::string::npos || intensity == "3") return std::string("HIGH");
+            return x;
+      - lambda: |-
+          std::string intensity = x;
+          std::transform(intensity.begin(), intensity.end(), intensity.begin(), ::tolower);
+          int level = 0;
+          if (intensity.find("low") != std::string::npos || intensity == "1") level = 1;
+          else if (intensity.find("medium") != std::string::npos || intensity.find("med") != std::string::npos || intensity == "2") level = 2;
+          else if (intensity.find("high") != std::string::npos || intensity == "3") level = 3;
+          const auto inactive = lv_color_hex(0x303741);
+          const auto active = lv_color_hex(0x4F8CFF);
+          lv_obj_set_style_bg_color(id(barre_intensite_1), level >= 1 ? active : inactive, LV_PART_MAIN);
+          lv_obj_set_style_bg_color(id(barre_intensite_2), level >= 2 ? active : inactive, LV_PART_MAIN);
+          lv_obj_set_style_bg_color(id(barre_intensite_3), level >= 3 ? active : inactive, LV_PART_MAIN);
+
+binary_sensor:
+  - platform: homeassistant
+    id: brosse_alerte_pression
+    entity_id: binary_sensor.sonicare_hx960x_6d3a_pressure_alert
+    internal: true
+    on_press:
+      - lvgl.widget.hide: barre_pression_blanche
+      - lvgl.widget.show: barre_pression_rouge
+    on_release:
+      - lvgl.widget.show: barre_pression_blanche
+      - lvgl.widget.hide: barre_pression_rouge
+
+  - platform: gpio
+    pin:
+      number: GPIO0
+      inverted: true
+      mode: INPUT_PULLUP
+    name: "Bouton Action Vocal"
+    on_press:
+      - voice_assistant.start:
+    on_release:
+      - voice_assistant.stop:
+
+# -----------------------------------------------------------------------------
+# LVGL display
+# -----------------------------------------------------------------------------
+lvgl:
+  displays: [lcd]
+  touchscreens: [touch]
+  rotation: 90
+  pages:
+    - id: main_page
+      bg_color: 0x0B0E13
+      widgets:
+        - obj:
+            width: 480
+            height: 320
+            bg_color: 0x0B0E13
+            border_width: 0
+            radius: 0
+            scrollbar_mode: "OFF"
+            pad_left: 0
+            pad_right: 0
+            pad_top: 0
+            pad_bottom: 0
+            widgets:
+              - obj:
+                  x: 0
+                  y: 0
+                  width: 480
+                  height: 48
+                  bg_color: 0x151A21
+                  border_width: 0
+                  radius: 0
+              - obj:
+                  x: 14
+                  y: 10
+                  width: 4
+                  height: 20
+                  bg_color: 0x22C55E
+                  border_width: 0
+                  radius: 2
+              - label:
+                  x: 28
+                  y: 6
+                  width: 250
+                  height: 18
+                  text_font: font_md
+                  text: "Philips Sonicare"
+                  text_color: 0xF4F6F8
+              - label:
+                  x: 28
+                  y: 27
+                  width: 250
+                  height: 14
+                  text_font: font_sm
+                  text: "HX960X  |  6D3A"
+                  text_color: 0x8B95A3
+              - label:
+                  id: label_statut_off
+                  x: 280
+                  y: 12
+                  width: 186
+                  height: 24
+                  text_align: right
+                  text_font: font_md
+                  text: "INITIALISING..."
+                  text_color: 0x9AA3AF
+
+              - obj:
+                  x: 14
+                  y: 56
+                  width: 144
+                  height: 64
+                  bg_color: 0x151A21
+                  border_color: 0x28313B
+                  border_width: 1
+                  radius: 10
+              - obj:
+                  x: 25
+                  y: 76
+                  width: 19
+                  height: 12
+                  bg_color: 0x151A21
+                  border_color: 0x22C55E
+                  border_width: 2
+                  radius: 3
+              - obj:
+                  x: 44
+                  y: 79
+                  width: 3
+                  height: 6
+                  bg_color: 0x22C55E
+                  border_width: 0
+                  radius: 1
+              - label:
+                  x: 56
+                  y: 60
+                  width: 92
+                  height: 14
+                  text_font: font_sm
+                  text: "BATTERIE"
+                  text_color: 0x8B95A3
+              - label:
+                  id: label_batterie
+                  x: 56
+                  y: 75
+                  width: 92
+                  height: 28
+                  text_font: font_value
+                  text: "--%"
+                  text_color: 0xF4F6F8
+              - bar:
+                  id: barre_batterie
+                  x: 25
+                  y: 109
+                  width: 122
+                  height: 5
+                  min_value: 0
+                  max_value: 100
+                  value: 0
+                  radius: 2
+                  bg_color: 0x303741
+                  indicator:
+                    bg_color: 0x22C55E
+                    radius: 2
+
+              - obj:
+                  x: 168
+                  y: 56
+                  width: 144
+                  height: 64
+                  bg_color: 0x151A21
+                  border_color: 0x28313B
+                  border_width: 1
+                  radius: 10
+              - obj:
+                  x: 180
+                  y: 91
+                  width: 4
+                  height: 8
+                  bg_color: 0x32C5D2
+                  border_width: 0
+                  radius: 2
+              - obj:
+                  x: 187
+                  y: 86
+                  width: 4
+                  height: 13
+                  bg_color: 0x32C5D2
+                  border_width: 0
+                  radius: 2
+              - obj:
+                  x: 194
+                  y: 80
+                  width: 4
+                  height: 19
+                  bg_color: 0x32C5D2
+                  border_width: 0
+                  radius: 2
+              - label:
+                  x: 207
+                  y: 60
+                  width: 96
+                  height: 14
+                  text_font: font_sm
+                  text: "PRESSION"
+                  text_color: 0x8B95A3
+              - label:
+                  id: label_pression_valeur
+                  x: 207
+                  y: 75
+                  width: 96
+                  height: 28
+                  text_font: font_value
+                  text: "-- g"
+                  text_color: 0xF4F6F8
+              - bar:
+                  id: barre_pression_blanche
+                  x: 180
+                  y: 109
+                  width: 121
+                  height: 5
+                  min_value: 0
+                  max_value: 300
+                  value: 0
+                  radius: 2
+                  bg_color: 0x303741
+                  indicator:
+                    bg_color: 0x32C5D2
+                    radius: 2
+              - bar:
+                  id: barre_pression_rouge
+                  x: 180
+                  y: 109
+                  width: 121
+                  height: 5
+                  min_value: 0
+                  max_value: 300
+                  value: 0
+                  radius: 2
+                  bg_color: 0x303741
+                  indicator:
+                    bg_color: 0xEF4444
+                    radius: 2
+                  hidden: true
+
+              - obj:
+                  x: 322
+                  y: 56
+                  width: 144
+                  height: 64
+                  bg_color: 0x151A21
+                  border_color: 0x28313B
+                  border_width: 1
+                  radius: 10
+              - obj:
+                  x: 338
+                  y: 72
+                  width: 5
+                  height: 23
+                  bg_color: 0x4F8CFF
+                  border_width: 0
+                  radius: 3
+              - obj:
+                  x: 334
+                  y: 68
+                  width: 13
+                  height: 5
+                  bg_color: 0x4F8CFF
+                  border_width: 0
+                  radius: 2
+              - obj:
+                  x: 335
+                  y: 64
+                  width: 2
+                  height: 4
+                  bg_color: 0x4F8CFF
+                  border_width: 0
+                  radius: 1
+              - obj:
+                  x: 340
+                  y: 64
+                  width: 2
+                  height: 4
+                  bg_color: 0x4F8CFF
+                  border_width: 0
+                  radius: 1
+              - obj:
+                  x: 344
+                  y: 64
+                  width: 2
+                  height: 4
+                  bg_color: 0x4F8CFF
+                  border_width: 0
+                  radius: 1
+              - label:
+                  x: 357
+                  y: 60
+                  width: 74
+                  height: 14
+                  text_align: center
+                  text_font: font_sm
+                  text: "MODE"
+                  text_color: 0x8B95A3
+              - label:
+                  id: label_mode
+                  x: 350
+                  y: 76
+                  width: 108
+                  height: 28
+                  text_align: center
+                  text_font: font_md
+                  text: "--"
+                  text_color: 0x4F8CFF
+
+              - obj:
+                  x: 14
+                  y: 136
+                  width: 122
+                  height: 168
+                  bg_color: 0x151A21
+                  border_color: 0x28313B
+                  border_width: 1
+                  radius: 12
+              - label:
+                  x: 26
+                  y: 150
+                  width: 98
+                  height: 16
+                  text_align: center
+                  text_font: font_sm
+                  text: "INTENSITE"
+                  text_color: 0x8B95A3
+              - obj:
+                  id: barre_intensite_1
+                  x: 52
+                  y: 217
+                  width: 10
+                  height: 28
+                  bg_color: 0x303741
+                  border_width: 0
+                  radius: 2
+              - obj:
+                  id: barre_intensite_2
+                  x: 70
+                  y: 205
+                  width: 10
+                  height: 40
+                  bg_color: 0x303741
+                  border_width: 0
+                  radius: 2
+              - obj:
+                  id: barre_intensite_3
+                  x: 88
+                  y: 193
+                  width: 10
+                  height: 52
+                  bg_color: 0x303741
+                  border_width: 0
+                  radius: 2
+              - label:
+                  id: label_intensite
+                  x: 20
+                  y: 258
+                  width: 110
+                  height: 30
+                  text_align: center
+                  text_font: font_value
+                  text: "--"
+                  text_color: 0xF4F6F8
+
+              - arc:
+                  id: arc_session
+                  x: 150
+                  y: 126
+                  width: 180
+                  height: 180
+                  min_value: 0
+                  max_value: 120
+                  value: 0
+                  start_angle: 135
+                  end_angle: 45
+                  adjustable: false
+                  arc_color: 0x29303A
+                  arc_width: 10
+                  indicator:
+                    arc_color: 0x32C5D2
+                    arc_width: 10
+              - label:
+                  id: label_temps
+                  x: 166
+                  y: 184
+                  width: 148
+                  height: 54
+                  text_align: center
+                  text_font: font_lg
+                  text: "0:00"
+                  text_color: 0xF4F6F8
+              - label:
+                  x: 190
+                  y: 240
+                  width: 100
+                  height: 16
+                  text_align: center
+                  text_font: font_sm
+                  text: "SESSION"
+                  text_color: 0x8B95A3
+
+              - obj:
+                  x: 344
+                  y: 136
+                  width: 122
+                  height: 168
+                  bg_color: 0x151A21
+                  border_color: 0x28313B
+                  border_width: 1
+                  radius: 12
+              - obj:
+                  x: 403
+                  y: 174
+                  width: 5
+                  height: 21
+                  bg_color: 0xF59E0B
+                  border_width: 0
+                  radius: 3
+              - obj:
+                  x: 399
+                  y: 170
+                  width: 13
+                  height: 5
+                  bg_color: 0xF59E0B
+                  border_width: 0
+                  radius: 2
+              - obj:
+                  x: 400
+                  y: 166
+                  width: 2
+                  height: 4
+                  bg_color: 0xF59E0B
+                  border_width: 0
+                  radius: 1
+              - obj:
+                  x: 404
+                  y: 166
+                  width: 2
+                  height: 4
+                  bg_color: 0xF59E0B
+                  border_width: 0
+                  radius: 1
+              - obj:
+                  x: 408
+                  y: 166
+                  width: 2
+                  height: 4
+                  bg_color: 0xF59E0B
+                  border_width: 0
+                  radius: 1
+              - label:
+                  x: 376
+                  y: 150
+                  width: 58
+                  height: 16
+                  text_align: center
+                  text_font: font_sm
+                  text: "TETE"
+                  text_color: 0x8B95A3
+              - label:
+                  id: label_type_tete
+                  x: 350
+                  y: 204
+                  width: 110
+                  height: 20
+                  text_align: center
+                  text_font: font_md
+                  text: "--"
+                  text_color: 0x8B95A3
+              - label:
+                  id: label_usure
+                  x: 356
+                  y: 231
+                  width: 98
+                  height: 32
+                  text_align: center
+                  text_font: font_value
+                  text: "--%"
+                  text_color: 0xF4F6F8
+              - bar:
+                  id: barre_usure
+                  x: 356
+                  y: 265
+                  width: 98
+                  height: 8
+                  min_value: 0
+                  max_value: 100
+                  value: 0
+                  radius: 3
+                  bg_color: 0x303741
+                  indicator:
+                    bg_color: 0xF59E0B
+                    radius: 3
