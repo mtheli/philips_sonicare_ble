@@ -8,6 +8,13 @@ for direct Bluetooth access from the HA host.
 > [!NOTE]
 > This is a dedicated ESPHome component, not a standard [ESPHome Bluetooth Proxy](https://esphome.io/components/bluetooth_proxy.html). The differences are explained in [Bridge vs. bluetooth_proxy](README.md#bridge-vs-bluetooth_proxy).
 
+The setup takes four steps:
+
+```mermaid
+flowchart LR
+    s1["1. Create the config"] --> s2["2. Flash the ESP32"] --> s3["3. Check the logs"] --> s4["4. Add the integration<br/>and pair the brush"]
+```
+
 ## Contents
 
 - [Tested Hardware](#tested-hardware)
@@ -63,6 +70,22 @@ There are two ways to tell the bridge which brush it belongs to:
 - **Fixed MAC** — you write the brush's MAC address into the YAML and the bridge connects to it on its own. Only for brushes whose address never changes. The Series 7100 (HX742X) and Sonicare For Kids HX6600 change their address, so do not use Fixed MAC for them.
 
 The walkthrough below uses Auto-Discovery, with the Fixed MAC variant called out where the steps differ.
+
+Which example config and which path fit your setup:
+
+```mermaid
+flowchart TD
+    board{"Which board?"}
+    board -->|"M5Stack Atom Lite"| brushes{"How many brushes?"}
+    brushes -->|"1"| lite["atom-lite.yaml"]
+    brushes -->|"2"| dual["atom-lite-dual.yaml"]
+    brushes -->|"3"| triple["atom-lite-triple.yaml"]
+    board -->|"M5Stack AtomS3 / AtomS3R / AtomS3 Lite"| s3["atom-s3.yaml"]
+    board -->|"other ESP32 board"| generic["esp32-generic.yaml<br/>on S3, C3, C6: uncomment the build option"]
+    lite & dual & triple & s3 & generic --> pair{"Does the brush change its address?<br/>Series 7100, Sonicare For Kids HX6600"}
+    pair -->|"yes / not sure"| auto["Auto-Discovery ⭐"]
+    pair -->|"no"| either["Auto-Discovery ⭐ or Fixed MAC"]
+```
 
 ## Step 1: Create the ESPHome Configuration
 
@@ -288,6 +311,9 @@ After a successful pair, subsequent boots show the brush reconnecting on its own
 3. Select **"ESP32 Bridge (ESPHome)"** → pick your ESP32 from the list
 4. If the ESP exposes multiple bridge slots (multi-device setup), pick the one
    you want to bond
+
+> [!TIP]
+> Want to see the dialogs before you start? The [interactive config-flow walkthrough](https://mtheli.github.io/philips_sonicare_ble/config_flow_walkthrough.html) lets you click through every setup screen with example data.
 
 What happens next depends on the configuration path:
 
