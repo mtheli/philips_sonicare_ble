@@ -68,6 +68,8 @@ See [Configuration](#configuration) for setup instructions.
 | HX991X | :white_check_mark: | :white_check_mark: | Community ([#25](https://github.com/mtheli/philips_sonicare_ble/issues/25), [#32](https://github.com/mtheli/philips_sonicare_ble/issues/32), [#35](https://github.com/mtheli/philips_sonicare_ble/issues/35), [#39](https://github.com/mtheli/philips_sonicare_ble/issues/39)) |
 | **DiamondClean Prestige** | | | |
 | [HX999X](https://www.usa.philips.com/c-p/HX9990_11/sonicare-9900-prestige-power-toothbrush-with-senseiq) | :white_check_mark: | :white_check_mark: | Maintainer, Community ([forum](https://community.home-assistant.io/t/philips-sonicare-ble-toothbrush-integration-with-30-sensors/999515/5)) |
+| **Series 6500** | | | |
+| [HX741B](https://www.philips.de/c-p/HX7411_02/6500-wiederaufladbare-schallzahnbuerste) | *not yet tested* | :white_check_mark: | Community |
 | **Series 7100** | | | |
 | [HX742X](https://www.usa.philips.com/c-p/HX7423_43/sonicare-7100) | :white_check_mark: | :white_check_mark: | Maintainer, Community ([#4](https://github.com/mtheli/philips_sonicare_ble/issues/4), [#13](https://github.com/mtheli/philips_sonicare_ble/issues/13), [#27](https://github.com/mtheli/philips_sonicare_ble/issues/27), [#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
 
