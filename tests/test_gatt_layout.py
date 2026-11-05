@@ -35,6 +35,7 @@ CLASSIC_FIXTURES = [
     "classic_hx992x.json",
     "classic_hx993x_lightblue.json",
     "classic_hx999x_prestige.json",
+    "classic_hx999x_premium_head.json",
 ]
 
 # Present on every Classic brush seen so far, from Kids to Prestige. A capture

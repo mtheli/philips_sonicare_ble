@@ -6,6 +6,9 @@ Inputs are real snapshots captured with ``scripts/sonicare_scan.py --json``:
   minimal brush: no brush-head NFC, no diagnostics.
 * ``classic_hx992x.json`` — DiamondClean HX992X (firmware 2.15.1), a premium
   brush exercising brush-head NFC, diagnostics and settings.
+* ``classic_hx999x_premium_head.json`` — DiamondClean Prestige HX999X
+  (firmware 1.15.4) with a Premium All-in-One head and a non-default routine,
+  contributed by a user in PR #28 (handle serial and address replaced).
 
 Each characteristic's ``value_hex`` is the raw GATT payload, so these
 assertions pin ``parse_results`` against real device bytes.
@@ -144,11 +147,46 @@ EXPECTED_HX960X = {
     "settings_bitmask": 0,
 }
 
+EXPECTED_HX999X_PREMIUM_HEAD = {
+    "battery": 94,
+    "brushhead_date": "260423 33K",
+    "brushhead_lifetime_limit": 21600,
+    "brushhead_lifetime_usage": 2588,
+    "brushhead_nfc_version": 258,
+    "brushhead_payload": "https://www.philips.com/nfcbrushheadtap",
+    "brushhead_ring_id": 17,
+    "brushhead_serial": "04:F2:0C:B2:96:22:95",
+    "brushhead_type": "premium_all_in_one",
+    "brushing_mode": "deep_clean_plus",
+    "brushing_mode_value": 4,
+    "brushing_state": "on",
+    "brushing_state_value": 1,
+    "brushing_time": 58,
+    "error_persistent": 8,
+    "error_volatile": 8,
+    "firmware": "1.15.4",
+    "handle_state": "run",
+    "handle_state_value": 2,
+    "handle_time": 13423960,
+    "intensity": "high",
+    "intensity_value": 2,
+    "latest_session_id": 50,
+    "manufacturer_name": "Philips OHC",
+    "model_number": "HX999X",
+    "motor_runtime": 5616,
+    "routine_length": 180,
+    "serial_number": "0000000000",
+    "session_count": 51,
+    "session_id": 51,
+    "settings_bitmask": 6656,
+}
+
 GOLDEN = {
     "classic_hx6340_kids.json": EXPECTED_HX6340,
     "classic_hx992x.json": EXPECTED_HX992X,
     "classic_hx999x_prestige.json": EXPECTED_HX999X,
     "classic_hx960x_expertclean.json": EXPECTED_HX960X,
+    "classic_hx999x_premium_head.json": EXPECTED_HX999X_PREMIUM_HEAD,
 }
 
 
@@ -197,6 +235,25 @@ def test_mode_decoded_via_4022_routine_id():
     out = _decode("classic_hx999x_prestige.json")
     assert out["brushing_mode"] == "clean"
     assert out["brushing_mode_value"] == 0
+
+
+def test_routine_id_mode_decodes_non_default_routine():
+    """A second HX999X capture with a non-default routine selected: routine
+    id 4 on 0x4022 decodes to deep_clean_plus, so the routine-id table is
+    exercised beyond index 0.
+    """
+    out = _decode("classic_hx999x_premium_head.json")
+    assert out["brushing_mode"] == "deep_clean_plus"
+    assert out["brushing_mode_value"] == 4
+
+
+def test_premium_head_type_and_ring_id():
+    """An A3 Premium All-in-One head reports type 0x04 and ring id 0x0011
+    (17, little-endian), values the other captures do not carry.
+    """
+    out = _decode("classic_hx999x_premium_head.json")
+    assert out["brushhead_type"] == "premium_all_in_one"
+    assert out["brushhead_ring_id"] == 17
 
 
 def test_uint16_le_decoding():
