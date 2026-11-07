@@ -10,6 +10,7 @@ the GATT service table for bonded devices, speeding up reconnects.
 import asyncio
 import logging
 import os
+import time
 
 from dbus_fast import BusType, Variant
 from dbus_fast.aio import MessageBus
@@ -405,6 +406,22 @@ async def _wait_for_device_path(
     return None
 
 
+async def _adapter_address(bus: MessageBus, adapter_path: str) -> str | None:
+    """MAC of the adapter at ``adapter_path`` (upper case); None on error.
+
+    Only for log lines — never raises.
+    """
+    try:
+        intro = await bus.introspect("org.bluez", adapter_path)
+        props = bus.get_proxy_object("org.bluez", adapter_path, intro).get_interface(
+            "org.freedesktop.DBus.Properties"
+        )
+        address = await props.call_get("org.bluez.Adapter1", "Address")
+        return str(_value(address)).upper() or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def _async_cancel_and_check_paired(device_iface, props_iface, mac: str) -> bool:
     """After a Pair() timeout: cancel it; True if the bond exists anyway."""
     try:
@@ -508,42 +525,61 @@ async def async_pair_and_trust(
             )
 
         # --- pair ---
-        _LOGGER.info("Starting BLE pairing with %s ...", mac)
+        # Which adapter, and how long: "Authentication Canceled" after half
+        # a second (the brush refuses) and a 30-s timeout (no link at all)
+        # point to different causes.
+        adapter_path = device_path.rsplit("/", 1)[0]
+        via = adapter_path.rsplit("/", 1)[-1]
+        adapter_mac = await _adapter_address(bus, adapter_path)
+        if adapter_mac:
+            via = f"{via} ({adapter_mac})"
+        _LOGGER.info("Starting BLE pairing with %s via %s ...", mac, via)
+        started = time.monotonic()
         try:
-            await asyncio.wait_for(
-                device_iface.call_pair(), timeout=PAIR_TIMEOUT
+            try:
+                await asyncio.wait_for(
+                    device_iface.call_pair(), timeout=PAIR_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                # Only our wait ends here — BlueZ keeps pairing and may still
+                # finish. Stop it, then take a bond that made it after all.
+                if not await _async_cancel_and_check_paired(
+                    device_iface, props_iface, mac
+                ):
+                    raise PairingError(
+                        f"Pairing timed out after {PAIR_TIMEOUT}s — "
+                        "ensure the toothbrush is powered on and not connected "
+                        "to another device"
+                    ) from None
+            except DBusError as err:
+                msg = str(err)
+                if "AuthenticationFailed" in msg:
+                    # A stale bond is already removed before this pair attempt,
+                    # so an auth failure here is a fresh rejection — usually the
+                    # brush was not awake/in range, or the host needs the pairing
+                    # agent the bundled script registers.
+                    raise PairingError(
+                        "Authentication failed while pairing — make sure the "
+                        "toothbrush is awake (press the power button and take it "
+                        "off the charger) and retry. If it keeps failing, run the "
+                        "pairing script shown on the next screen; it registers "
+                        "the pairing agent some hosts need."
+                    ) from err
+                if "AlreadyExists" in msg:
+                    _LOGGER.info("Device %s already paired", mac)
+                else:
+                    raise PairingError(f"BlueZ pairing error: {msg}") from err
+        except PairingError as err:
+            _LOGGER.warning(
+                "Pairing with %s via %s failed after %.1fs: %s",
+                mac, via, time.monotonic() - started, err,
             )
-        except asyncio.TimeoutError:
-            # Only our wait ends here — BlueZ keeps pairing and may still
-            # finish. Stop it, then take a bond that made it after all.
-            if not await _async_cancel_and_check_paired(
-                device_iface, props_iface, mac
-            ):
-                raise PairingError(
-                    f"Pairing timed out after {PAIR_TIMEOUT}s — "
-                    "ensure the toothbrush is powered on and not connected "
-                    "to another device"
-                ) from None
-        except DBusError as err:
-            msg = str(err)
-            if "AuthenticationFailed" in msg:
-                # A stale bond is already removed before this pair attempt,
-                # so an auth failure here is a fresh rejection — usually the
-                # brush was not awake/in range, or the host needs the pairing
-                # agent the bundled script registers.
-                raise PairingError(
-                    "Authentication failed while pairing — make sure the "
-                    "toothbrush is awake (press the power button and take it "
-                    "off the charger) and retry. If it keeps failing, run the "
-                    "pairing script shown on the next screen; it registers "
-                    "the pairing agent some hosts need."
-                ) from err
-            if "AlreadyExists" in msg:
-                _LOGGER.info("Device %s already paired", mac)
-            else:
-                raise PairingError(f"BlueZ pairing error: {msg}") from err
+            raise
 
-        _LOGGER.info("Pairing successful for %s", mac)
+        _LOGGER.info(
+            "Pairing successful for %s via %s (%.1fs)",
+            mac, via, time.monotonic() - started,
+        )
 
         # --- trust ---
         await props_iface.call_set(

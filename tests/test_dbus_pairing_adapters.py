@@ -95,8 +95,8 @@ class _FakeProxy:
                 return bluez.objects
             return SimpleNamespace(call_get_managed_objects=managed)
         if iface == "org.freedesktop.DBus.Properties":
-            async def get(_iface, prop):
-                return bluez.objects[path]["org.bluez.Device1"][prop]
+            async def get(iface_name, prop):
+                return bluez.objects[path][iface_name][prop]
             return SimpleNamespace(call_get=get, call_set=_noop)
         if iface == "org.bluez.Adapter1":
             async def remove(device_path):
@@ -220,3 +220,30 @@ async def test_remove_device_continues_after_one_adapter_refuses(bluez, monkeypa
     monkeypatch.setattr(_FakeProxy, "get_interface", get_interface)
     assert await dp.async_remove_device(MAC) is False
     assert bluez.removed == [f"/org/bluez/hci1/{DEV}"]
+
+
+async def test_pairing_log_names_adapter_and_duration(bluez, caplog) -> None:
+    caplog.set_level("INFO", logger=dp.__name__)
+    await dp.async_pair_and_trust(MAC, HCI0)
+    assert f"Starting BLE pairing with {MAC} via hci0 ({HCI0})" in caplog.text
+    assert f"Pairing successful for {MAC} via hci0 ({HCI0}) (" in caplog.text
+
+
+async def test_failed_pairing_logs_adapter_and_duration(bluez, caplog) -> None:
+    async def refuse(*_args, **_kwargs):
+        raise dp.DBusError("org.bluez.Error.AuthenticationCanceled", "Canceled")
+
+    original = _FakeProxy.get_interface
+
+    def get_interface(self, iface):
+        result = original(self, iface)
+        if iface == "org.bluez.Device1":
+            result.call_pair = refuse
+        return result
+
+    caplog.set_level("INFO", logger=dp.__name__)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(_FakeProxy, "get_interface", get_interface)
+        with pytest.raises(dp.PairingError):
+            await dp.async_pair_and_trust(MAC, HCI0)
+    assert f"Pairing with {MAC} via hci0 ({HCI0}) failed after " in caplog.text
