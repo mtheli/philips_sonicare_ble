@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover — older cores + the pinned CI
     from homeassistant.config_entries import OptionsFlow as OptionsFlowWithReload
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import Event, callback
-from homeassistant.data_entry_flow import AbortFlow, FlowResult
+from homeassistant.data_entry_flow import AbortFlow, FlowResult, section
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import http as ha_http
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
@@ -125,6 +125,23 @@ _LOGGER = logging.getLogger(__name__)
 def _is_hassio(hass) -> bool:
     """Check if Home Assistant is running on HAOS / Supervised."""
     return "hassio" in hass.config.components
+
+
+_ADAPTER_SECTION = "adapter"
+
+
+def _adapter_from_input(
+    user_input: dict[str, Any], fallback: str = BLUETOOTH_ADAPTER_AUTO
+) -> str:
+    """Adapter choice from a setup form — nested in its section, or flat.
+
+    ``fallback`` when the form had no adapter field (a single adapter, or
+    a re-entry with empty input): keep what was chosen before.
+    """
+    nested = user_input.get(_ADAPTER_SECTION)
+    if isinstance(nested, dict):
+        return nested.get(CONF_BLUETOOTH_ADAPTER, fallback)
+    return user_input.get(CONF_BLUETOOTH_ADAPTER, fallback)
 
 
 def _bluetooth_adapter_options(
@@ -423,6 +440,36 @@ _CONDOR_FLOW_STALE_SECONDS = 120
 # prove the device is reachable; the brush only advertises every ~1-2 s while
 # awake, so a stricter window cleanly separates "awake now" from "asleep".
 _STALE_ADV_MAX_SECONDS = 15.0
+# How long setup waits for a sleeping brush to be switched on before it
+# reports "asleep" (same as the options flow's PAIR_ADVERTISEMENT_WAIT).
+SETUP_ADVERTISEMENT_WAIT = 45  # seconds
+# A progress task that fails at once (asleep, adapter not receiving, D-Bus
+# down) finishes before the progress dialog is up; the frontend then never
+# leaves the spinner.
+_PROGRESS_MIN_SECONDS = 1.0
+
+
+async def _at_least(start, seconds: float = _PROGRESS_MIN_SECONDS):
+    """Await ``start()``, but take at least ``seconds``.
+
+    Takes a callable, so no coroutine exists before the task runs.
+    """
+    started = time.monotonic()
+    try:
+        result = await start()
+    except asyncio.CancelledError:
+        raise  # the flow is gone — no reason to linger
+    except BaseException:
+        await _sleep_rest(started, seconds)
+        raise
+    await _sleep_rest(started, seconds)
+    return result
+
+
+async def _sleep_rest(started: float, seconds: float) -> None:
+    remaining = seconds - (time.monotonic() - started)
+    if remaining > 0:
+        await asyncio.sleep(remaining)
 
 # Standard BLE services to hide from display
 _STANDARD_BLE_SERVICES = {
@@ -630,6 +677,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # One-shot marker: wait_pair just bonded the bridge, so the next
         # esp_bridge_status render acknowledges the success.
         self._just_paired: bool = False
+        # Set right after a successful D-Bus Pair(): skip the advertisement-age
+        # gate of the follow-up probe once (see _async_ensure_awake). Not the
+        # ESP bridge's _just_paired.
+        self._ble_just_paired: bool = False
         # Set with _just_paired when the bridge reported a bond under a
         # rotating address on a chip that cannot follow it (addr_res=ctrl).
         self._paired_rpa_unsupported: bool = False
@@ -901,8 +952,113 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             if frac >= 1.0:
                 return
 
-    async def _async_fetch_capabilities(self, address: str) -> dict[str, Any]:
-        """Connect to the device and read capabilities via direct BLE."""
+    def _stale_advertisement(self, address: str) -> str | None:
+        """Why the last connectable advertisement is too old; None if fresh."""
+        last = async_last_service_info(self.hass, address, connectable=True)
+        # A BlueZ RSSI-invalidation event (RSSI -127) also bumps the history
+        # timestamp without a packet on the air — treat it as "not seen", or
+        # the sentinel keeps the entry fresh and a stale BLEDevice slips past
+        # the gate (seen after an adapter power-cycle, where the doomed
+        # connects were then misread as a stale bond). The timestamp is
+        # updated on every received advertisement (including deduplicated
+        # identical ones — dedup only suppresses callback dispatch, not the
+        # history write), so an awake brush is never misread as asleep.
+        if last is None:
+            return "never seen"
+        if last.rssi is not None and last.rssi <= -127:
+            return "stale RSSI -127"
+        age = time.monotonic() - last.time
+        if age > _STALE_ADV_MAX_SECONDS:
+            return f"{age:.0f}s ago"
+        return None
+
+    async def _async_ensure_awake(self, address: str, wait: bool = True) -> str:
+        """``awake`` once the brush advertises; waits for it to be switched on.
+
+        Asleep is its normal state: rather than failing at once, wait for
+        the next advertisement (the progress text asks to switch it on).
+        A connect to a silent brush only runs into its timeout. Returns
+        ``awake``, ``asleep``, or ``adapter`` when the fixed adapter stayed
+        silent while another scanner does receive the brush.
+        """
+        if self._ble_just_paired:
+            # Pair() just talked to it; while connected for pairing it sent
+            # no advertisements, so the age check would misread it as
+            # asleep and wait for nothing.
+            self._ble_just_paired = False
+            return "awake"
+        seen = self._stale_advertisement(address)
+        if seen is None:
+            return "awake"
+        if wait:
+            woke = await self._async_wait_for_wake(address, seen)
+            if woke == "awake":
+                return "awake"
+            if woke == "other":
+                _LOGGER.info(
+                    "%s: fixed Bluetooth adapter %s did not receive the "
+                    "toothbrush within %ss, other scanners do",
+                    address, self._bluetooth_adapter, SETUP_ADVERTISEMENT_WAIT,
+                )
+                return "adapter"
+        _LOGGER.info(
+            "%s: no recent connectable advertisement (%s%s) — device asleep",
+            address, seen,
+            f", none within {SETUP_ADVERTISEMENT_WAIT}s" if wait else "",
+        )
+        return "asleep"
+
+    async def _async_wait_for_wake(self, address: str, seen: str) -> str:
+        """Wait for the next advertisement on the chosen adapter (or any).
+
+        ``awake`` when it arrived; ``other`` when a fixed adapter stayed
+        silent but another scanner heard the brush *during the wait* (old
+        entries of other scanners prove nothing — the brush may just be
+        asleep); ``none`` otherwise, also when this core cannot watch
+        advertisements.
+        """
+        fixed = self._bluetooth_adapter != BLUETOOTH_ADAPTER_AUTO
+        try:
+            heard, stop_watching = watch_advertisements(
+                address, self._bluetooth_adapter if fixed else None
+            )
+        except LookupError:
+            return "none"
+        heard_any, stop_any = None, None
+        if fixed:
+            try:
+                heard_any, stop_any = watch_advertisements(address, None)
+            except LookupError:
+                pass
+        _LOGGER.info(
+            "%s: last advertisement %s — waiting up to %ss for the "
+            "toothbrush to be switched on",
+            address, seen, SETUP_ADVERTISEMENT_WAIT,
+        )
+        try:
+            await asyncio.wait_for(heard.wait(), SETUP_ADVERTISEMENT_WAIT)
+        except TimeoutError:
+            # An advertisement right at the timeout may have set both.
+            if heard.is_set():
+                return "awake"
+            if heard_any is not None and heard_any.is_set():
+                return "other"
+            return "none"
+        finally:
+            stop_watching()
+            if stop_any is not None:
+                stop_any()
+        _LOGGER.debug("%s: advertisement received — toothbrush awake", address)
+        return "awake"
+
+    async def _async_fetch_capabilities(
+        self, address: str, wait_for_wake: bool = True
+    ) -> dict[str, Any]:
+        """Connect to the device and read capabilities via direct BLE.
+
+        ``wait_for_wake``: wait for a sleeping brush to be switched on
+        (progress steps); False fails at once (plain form submits).
+        """
         self._probe_needed_encryption = False
         # Pre-fill services from advertisement data (available before connect)
         adv_services: list[str] = []
@@ -919,29 +1075,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         # whose connect just drops mid-handshake — surfacing to the user as
         # five "device disconnected" retries and a confusing "Authentication
         # Canceled". The brush advertises every ~1-2 s while awake and stops
-        # when it sleeps, so a stale last-ADV means it is asleep: bail out early
-        # with an actionable signal instead. The history timestamp is updated on
-        # every received advertisement (including deduplicated identical ones —
-        # dedup only suppresses callback dispatch, not the history write), so an
-        # awake brush is never misread as asleep here.
-        last = async_last_service_info(self.hass, address, connectable=True)
-        # A BlueZ RSSI-invalidation event (RSSI -127) also bumps the history
-        # timestamp without a packet on the air — treat it as "not seen", or
-        # the sentinel keeps the entry fresh and a stale BLEDevice slips past
-        # the gate (seen after an adapter power-cycle, where the doomed
-        # connects were then misread as a stale bond).
-        stale_rssi = (
-            last is not None and last.rssi is not None and last.rssi <= -127
-        )
-        age = None if last is None else (time.monotonic() - last.time)
-        if last is None or stale_rssi or age > _STALE_ADV_MAX_SECONDS:
-            _LOGGER.info(
-                "%s: no recent connectable advertisement (%s) — device asleep",
-                address,
-                "never seen" if last is None
-                else "stale RSSI -127" if stale_rssi
-                else f"{age:.0f}s ago",
-            )
+        # when it sleeps, so a stale last-ADV means it is asleep: wait for it
+        # to be switched on (the progress text asks for it), then go ahead.
+        awake = await self._async_ensure_awake(address, wait=wait_for_wake)
+        if awake == "adapter":
+            raise AdapterNotReceivingException
+        if awake != "awake":
             raise DeviceAsleepException
 
         device = async_ble_device_from_address(self.hass, address)
@@ -1282,6 +1421,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         # No bond, or a stale one — auto-pair (RemoveDevice + fresh pair)
         if await self._try_auto_pair(address):
+            self._ble_just_paired = True
             try:
                 result = await self._async_fetch_capabilities(address)
                 result["pairing"] = "bonded"
@@ -2014,8 +2154,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self._esp_bridge_health_check()
 
         if user_input is not None:
-            self._bluetooth_adapter = user_input.get(
-                CONF_BLUETOOTH_ADAPTER, BLUETOOTH_ADAPTER_AUTO
+            self._bluetooth_adapter = _adapter_from_input(
+                user_input, self._bluetooth_adapter
             )
             return self._start_ble_probe("bluetooth_confirm", self._address)
 
@@ -2171,7 +2311,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         """Kick off the capabilities probe as a background progress task."""
         self._ble_probe_origin = step_id
         self._ble_probe_task = self.hass.async_create_task(
-            self._async_ble_probe(address or "")
+            _at_least(lambda: self._async_ble_probe(address or ""))
         )
         return self.async_show_progress(
             step_id=step_id,
@@ -2305,8 +2445,12 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             raw = user_input[CONF_ADDRESS]
             if raw == _MANUAL_ADDRESS:
                 # User picked the "enter manually" sentinel — re-render the
-                # step as a free-text field, keep prior errors empty.
+                # step as a free-text field, keep prior errors empty, and
+                # keep the adapter chosen alongside.
                 self._manual_address_entry = True
+                self._bluetooth_adapter = _adapter_from_input(
+                    user_input, self._bluetooth_adapter
+                )
             else:
                 address = raw.upper()
                 await self.async_set_unique_id(address)
@@ -2314,8 +2458,8 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
                 self._address = address
                 self._name = address
-                self._bluetooth_adapter = user_input.get(
-                    CONF_BLUETOOTH_ADAPTER, BLUETOOTH_ADAPTER_AUTO
+                self._bluetooth_adapter = _adapter_from_input(
+                    user_input, self._bluetooth_adapter
                 )
                 return self._start_ble_probe("user_bleak", address)
 
@@ -2788,7 +2932,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
 
         # "Read capabilities" clicked → run the read as a background task.
         if user_input is not None:
-            self._esp_caps_task = self.hass.async_create_task(self._async_esp_read())
+            self._esp_caps_task = self.hass.async_create_task(
+                _at_least(self._async_esp_read)
+            )
             return self.async_show_progress(
                 step_id="esp_bridge_status",
                 progress_action="esp_reading",
@@ -3581,14 +3727,21 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         if len(options) < 3 and self._bluetooth_adapter == BLUETOOTH_ADAPTER_AUTO:
             return {}
+        # Wrapped in a section: a plain field label cannot be formatted, a
+        # section header stands out with its own title and icon.
         return {
-            vol.Required(
-                CONF_BLUETOOTH_ADAPTER, default=self._bluetooth_adapter
-            ): SelectSelector(
-                SelectSelectorConfig(
-                    options=options,
-                    translation_key=CONF_BLUETOOTH_ADAPTER,
-                )
+            vol.Required(_ADAPTER_SECTION): section(
+                vol.Schema({
+                    vol.Required(
+                        CONF_BLUETOOTH_ADAPTER, default=self._bluetooth_adapter
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=options,
+                            translation_key=CONF_BLUETOOTH_ADAPTER,
+                        )
+                    )
+                }),
+                {"collapsed": False},
             )
         }
 
@@ -3679,8 +3832,9 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             # User clicked retry after manual pairing
             errors: dict[str, str] = {}
             try:
+                # A form submit, not a progress step: no waiting here.
                 self._fetched_data = await self._async_fetch_capabilities(
-                    self._address
+                    self._address, wait_for_wake=False
                 )
                 has_device_info = any(
                     self._fetched_data.get(k)
@@ -3835,7 +3989,7 @@ class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
 
         if user_input is not None:
             self._pair_task = self.hass.async_create_task(
-                self._async_pair_on_adapter()
+                _at_least(self._async_pair_on_adapter)
             )
             return self.async_show_progress(
                 step_id="pair_adapter",
@@ -3980,6 +4134,14 @@ class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
     ) -> FlowResult:
         if self._pair_error:
             # Back to the form: Submit retries, closing keeps the old options.
+            # Run the entry again meanwhile (old settings) — a dialog left
+            # open or a closed browser tab must not keep it unloaded; the
+            # retry pauses it again.
+            if self._reload_pending:
+                self._reload_pending = False
+                self.hass.config_entries.async_schedule_reload(
+                    self.config_entry.entry_id
+                )
             return await self.async_step_pair_adapter()
         return await self._async_finish_adapter_change("paired")
 
@@ -3990,8 +4152,6 @@ class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
         dropped, failed, kept = await self._async_drop_other_bonds(adapter)
         name = self._adapter_name(adapter)
         rows: list[tuple[str, dict[str, str]]] = [
-            ("adapter_auto" if adapter == BLUETOOTH_ADAPTER_AUTO else "adapter",
-             {"adapter": name}),
             (f"pair_{pairing}", {"adapter": name}),
         ]
         # One row per adapter: each line starts with what it is about.
@@ -4008,7 +4168,15 @@ class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
             for placeholder, value in values.items():
                 line = line.replace("{" + placeholder + "}", value)
             if line:
-                lines.append(f"- {line}")
+                # Numbered: the steps ran in this order.
+                lines.append(f"{len(lines) + 1}. {line}")
+        # The outcome goes on top as a coloured box; the list below says
+        # what was done for it. Yellow when an old pairing stayed behind.
+        headline = text.get(
+            "error.headline_adapter_auto" if adapter == BLUETOOTH_ADAPTER_AUTO
+            else "error.headline_adapter", ""
+        ).replace("{adapter}", name)
+        headline = _alert("warning" if failed else "success", headline)
 
         # The options dialog's own success page cannot carry text of ours,
         # but its abort page can: save here and end with the checklist.
@@ -4027,7 +4195,10 @@ class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
         self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
         return self.async_abort(
             reason="adapter_changed",
-            description_placeholders={"summary": "\n".join(lines)},
+            description_placeholders={
+                "headline": headline,
+                "summary": "\n".join(lines),
+            },
         )
 
     async def _async_drop_other_bonds(

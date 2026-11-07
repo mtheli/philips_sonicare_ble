@@ -150,10 +150,22 @@ def _options_flow(monkeypatch, transport_type: str, options: dict | None = None)
 
 
 def _field(result, key):
+    """Find a field, also inside a section (setup puts the adapter in one)."""
     for marker, value in result["data_schema"].schema.items():
         if marker.schema == key:
             return marker, value
+        inner = getattr(value, "schema", None)
+        if isinstance(value, cf.section) and inner is not None:
+            for sub_marker, sub_value in inner.schema.items():
+                if sub_marker.schema == key:
+                    return sub_marker, sub_value
     return None, None
+
+
+def test_adapter_from_input_reads_section_and_flat() -> None:
+    assert cf._adapter_from_input({"adapter": {CONF_BLUETOOTH_ADAPTER: HCI0}}) == HCI0
+    assert cf._adapter_from_input({CONF_BLUETOOTH_ADAPTER: HCI0}) == HCI0
+    assert cf._adapter_from_input({}) == BLUETOOTH_ADAPTER_AUTO
 
 
 async def test_direct_ble_form_offers_auto_and_scanners(monkeypatch, scanners) -> None:

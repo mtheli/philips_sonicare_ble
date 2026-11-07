@@ -203,9 +203,11 @@ def describe_available_paths(
 
 
 def register_advertisements(
-    address: str, source: str, cb: Callable[[Any], None]
+    address: str, source: str | None, cb: Callable[[Any], None]
 ) -> Callable[[], None]:
     """Call ``cb`` for every packet of ``address`` received via ``source``.
+
+    ``source`` None: via any scanner.
 
     Returns the cancel callable. Uses habluetooth's per-address callback,
     which fires for every packet and every scanner — local adapters
@@ -219,17 +221,17 @@ def register_advertisements(
         register = get_manager().async_register_advertisement_callback
     except Exception as err:  # noqa: BLE001 — older habluetooth
         raise LookupError(str(err) or type(err).__name__) from err
-    wanted = source.upper()
+    wanted = source.upper() if source else None
 
     def _on_advertisement(service_info) -> None:
-        if str(getattr(service_info, "source", "")).upper() == wanted:
+        if wanted is None or str(getattr(service_info, "source", "")).upper() == wanted:
             cb(service_info)
 
     return register(_on_advertisement, address.upper())
 
 
 def watch_advertisements(
-    address: str, source: str
+    address: str, source: str | None
 ) -> tuple[asyncio.Event, Callable[[], None]]:
     """Set an event on the next advertisement of ``address`` via ``source``.
 

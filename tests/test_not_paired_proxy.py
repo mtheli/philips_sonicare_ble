@@ -143,7 +143,7 @@ async def test_retry_follows_transport_flip_to_host() -> None:
     flow._probe_via_proxy = True
     flow._probe_proxy_name = "athom-proxy-1"
 
-    async def probe(_address):
+    async def probe(_address, **_kwargs):
         flow._probe_via_proxy = False
         flow._probe_proxy_name = None
         raise NotPairedException()

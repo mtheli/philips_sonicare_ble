@@ -23,11 +23,16 @@
       "bluetooth_confirm": {
         "title": "Confirm Philips Sonicare",
         "description": "{alert}{warn}**{name}** discovered at `{address}`{via}.\n\n**Switch on your Sonicare** (press the power button or pick it up from the charger), then click **Submit**.",
-        "data": {
-          "bluetooth_adapter": "Bluetooth adapter"
-        },
-        "data_description": {
-          "bluetooth_adapter": "Adapter or Bluetooth proxy the toothbrush connects through, starting with this first connection. With “Chosen by Home Assistant”, Home Assistant picks the adapter by its own rules (usually the strongest signal); this integration has no say in it. With a fixed adapter, Home Assistant connects only through it: if it does not receive the toothbrush, there is no connection. You can change this later in the options."
+        "sections": {
+          "adapter": {
+            "name": "Bluetooth adapter",
+            "data": {
+              "bluetooth_adapter": "Connect through"
+            },
+            "data_description": {
+              "bluetooth_adapter": "Adapter or Bluetooth proxy the toothbrush connects through, starting with this first connection. With “Chosen by Home Assistant”, Home Assistant picks the adapter by its own rules (usually the strongest signal); this integration has no say in it. With a fixed adapter, Home Assistant connects only through it: if it does not receive the toothbrush, there is no connection. You can change this later in the options."
+            }
+          }
         }
       },
       "user": {
@@ -42,11 +47,18 @@
         "title": "Direct Bluetooth",
         "description": "Select or enter BLE address of your Sonicare toothbrush.\n\n**Important:** **Switch on your Sonicare** (press the power button or pick it up from the charger) before clicking Submit — it must stay on so its services can be read.",
         "data": {
-          "address": "BLE Address",
-          "bluetooth_adapter": "Bluetooth adapter"
+          "address": "BLE Address"
         },
-        "data_description": {
-          "bluetooth_adapter": "Adapter or Bluetooth proxy the toothbrush connects through, starting with this first connection. With “Chosen by Home Assistant”, Home Assistant picks the adapter by its own rules (usually the strongest signal); this integration has no say in it. With a fixed adapter, Home Assistant connects only through it: if it does not receive the toothbrush, there is no connection. You can change this later in the options."
+        "sections": {
+          "adapter": {
+            "name": "Bluetooth adapter",
+            "data": {
+              "bluetooth_adapter": "Connect through"
+            },
+            "data_description": {
+              "bluetooth_adapter": "Adapter or Bluetooth proxy the toothbrush connects through, starting with this first connection. With “Chosen by Home Assistant”, Home Assistant picks the adapter by its own rules (usually the strongest signal); this integration has no say in it. With a fixed adapter, Home Assistant connects only through it: if it does not receive the toothbrush, there is no connection. You can change this later in the options."
+            }
+          }
         }
       },
       "esp_bridge": {
@@ -143,7 +155,7 @@
       "adapter_not_receiving": "The selected Bluetooth adapter does not receive the toothbrush right now. Wake the toothbrush and bring it within range of that adapter, or choose another adapter."
     },
     "progress": {
-      "ble_probing": "Connecting to {name} and reading its data — usually a few seconds; if several connection attempts are needed (weak signal, first contact after a pairing problem) this can take up to two minutes…",
+      "ble_probing": "💡 **Tip:** if the toothbrush is off, switch it on now — press the power button or lift it off the charger.\n\nConnecting to {name} and reading its data — usually a few seconds; if the toothbrush has to be switched on first or several connection attempts are needed (weak signal, first contact after a pairing problem), this can take up to three minutes…",
       "pair_arming": "Arming pair-mode on {target}…",
       "pair_scanning": "Looking for your Sonicare and bonding — switch it on and hold it within ~1 m of the bridge. This can take up to a minute.",
       "unpairing": "Removing the bond on {target}…",
@@ -214,8 +226,8 @@
       "pair_adapter_failed": "Pairing with {adapter} failed: {error}\n\nWake the toothbrush and click Submit to try again, or close this dialog to keep the previous settings.",
       "pair_adapter_no_advertisement": "{adapter} did not receive the toothbrush within {seconds} seconds. After a disconnect the toothbrush often stays silent until its power button is pressed.\n\nPlace it close to {adapter}, press the power button so it runs, then click Submit right away — or close this dialog to keep the previous settings.",
       "pair_adapter_weak": "{adapter} receives the toothbrush only weakly ({rssi} dBm) — pairing may time out. Bring the toothbrush closer to {adapter}.",
-      "summary_adapter": "✅ **{adapter}**: set as fixed Bluetooth adapter",
-      "summary_adapter_auto": "✅ **Chosen by Home Assistant**: Home Assistant picks the Bluetooth adapter by its own rules",
+      "headline_adapter": "**Bluetooth adapter changed.** From now on the toothbrush connects only through **{adapter}**.",
+      "headline_adapter_auto": "**Bluetooth adapter set to “Chosen by Home Assistant”.** Home Assistant picks the adapter by its own rules.",
       "summary_pair_paired": "✅ **{adapter}**: paired",
       "summary_pair_already": "🔲 **{adapter}**: pairing not needed — already paired",
       "summary_pair_not_needed": "🔲 **{adapter}**: pairing not needed — this toothbrush works without pairing",
@@ -231,7 +243,7 @@
       "summary_reload": "✅ **Integration**: reloaded — the toothbrush reconnects as soon as it is switched on. If it does not, switch it on with the power button."
     },
     "abort": {
-      "adapter_changed": "Options saved.\n\n{summary}"
+      "adapter_changed": "{headline}The following steps were performed:\n\n{summary}"
     }
   },
   "entity": {

@@ -23,11 +23,16 @@
       "bluetooth_confirm": {
         "title": "Confirmer la Philips Sonicare",
         "description": "{alert}{warn}**{name}** détectée à l'adresse `{address}`{via}.\n\n**Allumez votre Sonicare** (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur), puis cliquez sur **Valider**.",
-        "data": {
-          "bluetooth_adapter": "Adaptateur Bluetooth"
-        },
-        "data_description": {
-          "bluetooth_adapter": "Adaptateur ou proxy Bluetooth par lequel la brosse à dents se connecte, dès cette première connexion. Avec « Choisi par Home Assistant », Home Assistant choisit l'adaptateur selon ses propres règles (généralement le signal le plus fort) ; cette intégration n'a aucune influence sur ce choix. Avec un adaptateur fixe, Home Assistant se connecte uniquement par celui-ci : s'il ne reçoit pas la brosse à dents, il n'y a pas de connexion. Vous pourrez modifier ce choix plus tard dans les options."
+        "sections": {
+          "adapter": {
+            "name": "Adaptateur Bluetooth",
+            "data": {
+              "bluetooth_adapter": "Se connecter via"
+            },
+            "data_description": {
+              "bluetooth_adapter": "Adaptateur ou proxy Bluetooth par lequel la brosse à dents se connecte, dès cette première connexion. Avec « Choisi par Home Assistant », Home Assistant choisit l'adaptateur selon ses propres règles (généralement le signal le plus fort) ; cette intégration n'a aucune influence sur ce choix. Avec un adaptateur fixe, Home Assistant se connecte uniquement par celui-ci : s'il ne reçoit pas la brosse à dents, il n'y a pas de connexion. Vous pourrez modifier ce choix plus tard dans les options."
+            }
+          }
         }
       },
       "user": {
@@ -42,11 +47,18 @@
         "title": "Bluetooth direct",
         "description": "Sélectionnez ou saisissez l'adresse BLE de votre brosse à dents Sonicare.\n\n**Important :** **allumez votre Sonicare** (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur) avant de cliquer sur Valider — elle doit rester allumée pour que ses services puissent être lus.",
         "data": {
-          "address": "Adresse BLE",
-          "bluetooth_adapter": "Adaptateur Bluetooth"
+          "address": "Adresse BLE"
         },
-        "data_description": {
-          "bluetooth_adapter": "Adaptateur ou proxy Bluetooth par lequel la brosse à dents se connecte, dès cette première connexion. Avec « Choisi par Home Assistant », Home Assistant choisit l'adaptateur selon ses propres règles (généralement le signal le plus fort) ; cette intégration n'a aucune influence sur ce choix. Avec un adaptateur fixe, Home Assistant se connecte uniquement par celui-ci : s'il ne reçoit pas la brosse à dents, il n'y a pas de connexion. Vous pourrez modifier ce choix plus tard dans les options."
+        "sections": {
+          "adapter": {
+            "name": "Adaptateur Bluetooth",
+            "data": {
+              "bluetooth_adapter": "Se connecter via"
+            },
+            "data_description": {
+              "bluetooth_adapter": "Adaptateur ou proxy Bluetooth par lequel la brosse à dents se connecte, dès cette première connexion. Avec « Choisi par Home Assistant », Home Assistant choisit l'adaptateur selon ses propres règles (généralement le signal le plus fort) ; cette intégration n'a aucune influence sur ce choix. Avec un adaptateur fixe, Home Assistant se connecte uniquement par celui-ci : s'il ne reçoit pas la brosse à dents, il n'y a pas de connexion. Vous pourrez modifier ce choix plus tard dans les options."
+            }
+          }
         }
       },
       "esp_bridge": {
@@ -143,7 +155,7 @@
       "adapter_not_receiving": "L'adaptateur Bluetooth sélectionné ne reçoit pas la brosse à dents en ce moment. Réveillez la brosse à dents et rapprochez-la de cet adaptateur, ou choisissez un autre adaptateur."
     },
     "progress": {
-      "ble_probing": "Connexion à {name} et lecture de ses données — généralement quelques secondes ; si plusieurs tentatives de connexion sont nécessaires (signal faible, premier contact après un problème d'appairage), cela peut prendre jusqu'à deux minutes…",
+      "ble_probing": "💡 **Astuce :** si la brosse à dents est éteinte, allumez-la maintenant — appuyez sur le bouton marche/arrêt ou retirez-la du chargeur.\n\nConnexion à {name} et lecture de ses données — généralement quelques secondes ; si la brosse à dents doit d'abord être allumée ou si plusieurs tentatives de connexion sont nécessaires (signal faible, premier contact après un problème d'appairage), cela peut prendre jusqu'à trois minutes…",
       "pair_arming": "Activation du mode appairage sur {target}…",
       "pair_scanning": "Recherche de votre Sonicare et liaison — allumez-la et tenez-la à environ 1 m du pont. Cela peut prendre jusqu'à une minute.",
       "unpairing": "Suppression de la liaison sur {target}…",
@@ -214,8 +226,8 @@
       "pair_adapter_failed": "L'appairage avec {adapter} a échoué : {error}\n\nRéveillez la brosse à dents et cliquez sur Valider pour réessayer, ou fermez cette fenêtre pour conserver les paramètres précédents.",
       "pair_adapter_no_advertisement": "{adapter} n'a pas reçu la brosse à dents en {seconds} secondes. Après une déconnexion, la brosse à dents reste souvent silencieuse jusqu'à ce que son bouton marche/arrêt soit pressé.\n\nPlacez-la près de {adapter}, appuyez sur le bouton marche/arrêt pour qu'elle fonctionne, puis cliquez immédiatement sur Valider — ou fermez cette fenêtre pour conserver les paramètres précédents.",
       "pair_adapter_weak": "{adapter} ne reçoit la brosse à dents que faiblement ({rssi} dBm) — l'appairage risque d'expirer. Rapprochez la brosse à dents de {adapter}.",
-      "summary_adapter": "✅ **{adapter}** : défini comme adaptateur Bluetooth fixe",
-      "summary_adapter_auto": "✅ **Choisi par Home Assistant** : Home Assistant choisit l'adaptateur Bluetooth selon ses propres règles",
+      "headline_adapter": "**Adaptateur Bluetooth modifié.** Désormais, la brosse à dents se connecte uniquement via **{adapter}**.",
+      "headline_adapter_auto": "**Adaptateur Bluetooth réglé sur « Choisi par Home Assistant ».** Home Assistant choisit l'adaptateur selon ses propres règles.",
       "summary_pair_paired": "✅ **{adapter}** : appairé",
       "summary_pair_already": "🔲 **{adapter}** : appairage inutile — déjà appairé",
       "summary_pair_not_needed": "🔲 **{adapter}** : appairage inutile — cette brosse à dents fonctionne sans appairage",
@@ -231,7 +243,7 @@
       "summary_reload": "✅ **Intégration** : rechargée — la brosse à dents se reconnecte dès qu'elle est allumée. Sinon, allumez-la avec le bouton marche/arrêt."
     },
     "abort": {
-      "adapter_changed": "Options enregistrées.\n\n{summary}"
+      "adapter_changed": "{headline}Les étapes suivantes ont été effectuées :\n\n{summary}"
     }
   },
   "entity": {

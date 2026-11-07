@@ -86,12 +86,14 @@ def adapters(monkeypatch):
 
     async def _blocks(hass, category="config"):
         keys = [
-            "adapter", "adapter_auto", "pair_paired", "pair_already",
+            "pair_paired", "pair_already",
             "pair_not_needed", "pair_proxy", "pair_auto", "pair_unknown",
             "drop_done", "drop_failed", "drop_none", "drop_auto", "drop_proxy",
             "drop_unknown", "reload",
         ]
         blocks = {f"error.summary_{k}": f"{k}:{{adapter}}" for k in keys}
+        blocks["error.headline_adapter"] = "fixed:{adapter}"
+        blocks["error.headline_adapter_auto"] = "auto"
         blocks["error.pair_adapter_failed"] = "{error}"
         return blocks
 
@@ -153,7 +155,7 @@ def _checklist(result) -> list[str]:
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "adapter_changed"
     return [
-        line[2:].split(":")[0]
+        line.split(". ", 1)[1].split(":")[0]
         for line in result["description_placeholders"]["summary"].split("\n")
     ]
 
@@ -161,8 +163,8 @@ def _checklist(result) -> list[str]:
 @pytest.mark.parametrize(
     ("adapter", "rows"),
     [
-        (BLUETOOTH_ADAPTER_AUTO, ["adapter_auto", "pair_auto", "drop_auto", "reload"]),
-        (PROXY, ["adapter", "pair_proxy", "drop_proxy", "reload"]),
+        (BLUETOOTH_ADAPTER_AUTO, ["pair_auto", "drop_auto", "reload"]),
+        (PROXY, ["pair_proxy", "drop_proxy", "reload"]),
     ],
 )
 async def test_no_pair_step_when_not_needed(monkeypatch, adapters, adapter, rows):
@@ -189,7 +191,7 @@ async def test_open_gatt_brush_never_gets_pair_step(monkeypatch, adapters):
     adapters.paired.return_value = []
     flow = _flow(monkeypatch)
     result = await flow.async_step_adapter({**USER_INPUT, CONF_BLUETOOTH_ADAPTER: HCI0})
-    assert _checklist(result) == ["adapter", "pair_not_needed", "drop_none", "reload"]
+    assert _checklist(result) == ["pair_not_needed", "drop_none", "reload"]
 
 
 async def test_condor_without_any_bond_gets_pair_step(monkeypatch, adapters):
@@ -206,8 +208,10 @@ async def test_successful_pairing_saves_and_reloads(monkeypatch, adapters):
 
     result = await _run_pairing(flow)
 
-    assert _checklist(result) == ["adapter", "pair_paired", "drop_done", "reload"]
+    assert _checklist(result) == ["pair_paired", "drop_done", "reload"]
     assert "hci1" in result["description_placeholders"]["summary"]
+    headline = result["description_placeholders"]["headline"]
+    assert 'alert-type="success"' in headline and "fixed:" in headline
     saved = flow.hass.config_entries.async_update_entry.call_args.kwargs["options"]
     assert saved[CONF_BLUETOOTH_ADAPTER] == HCI0
     flow.hass.config_entries.async_unload.assert_awaited_once_with("entry-1")
@@ -249,9 +253,10 @@ async def test_failed_pairing_shows_reason_and_close_restores(monkeypatch, adapt
     assert result["step_id"] == "pair_adapter"
     alert = result["description_placeholders"]["alert"]
     assert "ha-alert" in alert and "hci0" in alert and "timed out" in alert
-    flow.hass.config_entries.async_schedule_reload.assert_not_called()
+    # The entry runs again (old settings) while the dialog stays open.
+    flow.hass.config_entries.async_schedule_reload.assert_called_once_with("entry-1")
 
-    # User gives up and closes the dialog: the entry must come back.
+    # User gives up and closes the dialog: nothing left to bring back.
     flow.async_remove()
     flow.hass.config_entries.async_schedule_reload.assert_called_once_with("entry-1")
 
@@ -263,7 +268,7 @@ async def test_auto_to_fixed_drops_bonds_on_other_adapters(monkeypatch, adapters
     flow = _flow(monkeypatch, options={})
     result = await flow.async_step_adapter({**USER_INPUT, CONF_BLUETOOTH_ADAPTER: HCI0})
 
-    assert _checklist(result) == ["adapter", "pair_already", "drop_done", "reload"]
+    assert _checklist(result) == ["pair_already", "drop_done", "reload"]
     adapters.pair.assert_not_called()
     flow.hass.config_entries.async_unload.assert_awaited_once_with("entry-1")
     adapters.remove.assert_awaited_once_with(ADDRESS, HCI1)
@@ -276,7 +281,8 @@ async def test_failed_removal_is_reported(monkeypatch, adapters):
     adapters.remove.return_value = False
     flow = _flow(monkeypatch, options={})
     result = await flow.async_step_adapter({**USER_INPUT, CONF_BLUETOOTH_ADAPTER: HCI0})
-    assert _checklist(result) == ["adapter", "pair_already", "drop_failed", "reload"]
+    assert _checklist(result) == ["pair_already", "drop_failed", "reload"]
+    assert 'alert-type="warning"' in result["description_placeholders"]["headline"]
 
 
 @pytest.mark.parametrize(
@@ -324,11 +330,10 @@ async def test_one_row_per_removed_adapter(monkeypatch, adapters):
 
     lines = result["description_placeholders"]["summary"].split("\n")
     assert lines == [
-        "- adapter:hci0",
-        "- pair_already:hci0",
-        "- drop_done:hci1",
-        "- drop_done:hci2",
-        "- reload:{adapter}",  # row without values; test text keeps the marker
+        "1. pair_already:hci0",
+        "2. drop_done:hci1",
+        "3. drop_done:hci2",
+        "4. reload:{adapter}",  # row without values; test text keeps the marker
     ]
 
 

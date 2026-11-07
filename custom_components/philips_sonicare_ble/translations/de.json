@@ -23,11 +23,16 @@
       "bluetooth_confirm": {
         "title": "Philips Sonicare bestätigen",
         "description": "{alert}{warn}**{name}** gefunden unter `{address}`{via}.\n\n**Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), dann klicke auf **Senden**.",
-        "data": {
-          "bluetooth_adapter": "Bluetooth-Adapter"
-        },
-        "data_description": {
-          "bluetooth_adapter": "Adapter oder Bluetooth-Proxy, über den sich die Zahnbürste verbindet, schon bei dieser ersten Verbindung. Bei „Auswahl durch Home Assistant“ wählt Home Assistant den Adapter nach seinen eigenen Regeln (meist das stärkste Signal); darauf hat diese Integration keinen Einfluss. Bei einem festen Adapter verbindet Home Assistant nur über ihn: Empfängt er die Zahnbürste nicht, gibt es keine Verbindung. Du kannst das später in den Optionen ändern."
+        "sections": {
+          "adapter": {
+            "name": "Bluetooth-Adapter",
+            "data": {
+              "bluetooth_adapter": "Verbinden über"
+            },
+            "data_description": {
+              "bluetooth_adapter": "Adapter oder Bluetooth-Proxy, über den sich die Zahnbürste verbindet, schon bei dieser ersten Verbindung. Bei „Auswahl durch Home Assistant“ wählt Home Assistant den Adapter nach seinen eigenen Regeln (meist das stärkste Signal); darauf hat diese Integration keinen Einfluss. Bei einem festen Adapter verbindet Home Assistant nur über ihn: Empfängt er die Zahnbürste nicht, gibt es keine Verbindung. Du kannst das später in den Optionen ändern."
+            }
+          }
         }
       },
       "user": {
@@ -42,11 +47,18 @@
         "title": "Direktes Bluetooth",
         "description": "Wähle die BLE-Adresse deiner Sonicare aus oder gib sie ein.\n\n**Wichtig:** **Schalte deine Sonicare ein** (Power-Knopf drücken oder von der Ladestation nehmen), bevor du auf Senden klickst — sie muss eingeschaltet bleiben, damit ihre Dienste gelesen werden können.",
         "data": {
-          "address": "BLE-Adresse",
-          "bluetooth_adapter": "Bluetooth-Adapter"
+          "address": "BLE-Adresse"
         },
-        "data_description": {
-          "bluetooth_adapter": "Adapter oder Bluetooth-Proxy, über den sich die Zahnbürste verbindet, schon bei dieser ersten Verbindung. Bei „Auswahl durch Home Assistant“ wählt Home Assistant den Adapter nach seinen eigenen Regeln (meist das stärkste Signal); darauf hat diese Integration keinen Einfluss. Bei einem festen Adapter verbindet Home Assistant nur über ihn: Empfängt er die Zahnbürste nicht, gibt es keine Verbindung. Du kannst das später in den Optionen ändern."
+        "sections": {
+          "adapter": {
+            "name": "Bluetooth-Adapter",
+            "data": {
+              "bluetooth_adapter": "Verbinden über"
+            },
+            "data_description": {
+              "bluetooth_adapter": "Adapter oder Bluetooth-Proxy, über den sich die Zahnbürste verbindet, schon bei dieser ersten Verbindung. Bei „Auswahl durch Home Assistant“ wählt Home Assistant den Adapter nach seinen eigenen Regeln (meist das stärkste Signal); darauf hat diese Integration keinen Einfluss. Bei einem festen Adapter verbindet Home Assistant nur über ihn: Empfängt er die Zahnbürste nicht, gibt es keine Verbindung. Du kannst das später in den Optionen ändern."
+            }
+          }
         }
       },
       "esp_bridge": {
@@ -143,7 +155,7 @@
       "adapter_not_receiving": "Der gewählte Bluetooth-Adapter empfängt die Zahnbürste gerade nicht. Wecke die Zahnbürste und bring sie in Reichweite dieses Adapters, oder wähle einen anderen Adapter."
     },
     "progress": {
-      "ble_probing": "Verbinde mit {name} und lese die Daten aus — normalerweise wenige Sekunden; falls mehrere Verbindungsversuche nötig sind (schwaches Signal, erster Kontakt nach einem Pairing-Problem), kann es bis zu zwei Minuten dauern…",
+      "ble_probing": "💡 **Tipp:** Ist die Zahnbürste aus, schalte sie jetzt ein — Power-Knopf drücken oder von der Ladestation nehmen.\n\nVerbinde mit {name} und lese die Daten aus — normalerweise wenige Sekunden; muss die Zahnbürste erst eingeschaltet werden oder sind mehrere Verbindungsversuche nötig (schwaches Signal, erster Kontakt nach einem Pairing-Problem), kann es bis zu drei Minuten dauern…",
       "pair_arming": "Aktiviere den Pair-Modus auf {target}…",
       "pair_scanning": "Suche deine Sonicare und bonde sie — schalte sie ein und halte sie innerhalb von ~1 m zur Bridge. Das kann bis zu einer Minute dauern.",
       "unpairing": "Entferne den Bond auf {target}…",
@@ -214,8 +226,8 @@
       "pair_adapter_failed": "Kopplung mit {adapter} fehlgeschlagen: {error}\n\nWecke die Zahnbürste und klicke auf Senden für einen neuen Versuch, oder schließe den Dialog, um die bisherigen Einstellungen zu behalten.",
       "pair_adapter_no_advertisement": "{adapter} hat die Zahnbürste innerhalb von {seconds} Sekunden nicht empfangen. Nach einer Trennung bleibt die Zahnbürste oft stumm, bis ihr Einschaltknopf gedrückt wird.\n\nLege sie nahe an {adapter}, drücke den Einschaltknopf, sodass sie läuft, und klicke dann sofort auf Senden — oder schließe den Dialog, um die bisherigen Einstellungen zu behalten.",
       "pair_adapter_weak": "{adapter} empfängt die Zahnbürste nur schwach ({rssi} dBm) — die Kopplung kann daran scheitern. Bring die Zahnbürste näher an {adapter}.",
-      "summary_adapter": "✅ **{adapter}**: als fester Bluetooth-Adapter gesetzt",
-      "summary_adapter_auto": "✅ **Auswahl durch Home Assistant**: Home Assistant wählt den Bluetooth-Adapter nach seinen eigenen Regeln",
+      "headline_adapter": "**Bluetooth-Adapter geändert.** Die Zahnbürste verbindet sich ab jetzt nur noch über **{adapter}**.",
+      "headline_adapter_auto": "**Bluetooth-Adapter auf „Auswahl durch Home Assistant“ gestellt.** Home Assistant wählt den Adapter nach seinen eigenen Regeln.",
       "summary_pair_paired": "✅ **{adapter}**: gekoppelt",
       "summary_pair_already": "🔲 **{adapter}**: Kopplung nicht nötig — bereits gekoppelt",
       "summary_pair_not_needed": "🔲 **{adapter}**: Kopplung nicht nötig — diese Zahnbürste funktioniert ohne Kopplung",
@@ -231,7 +243,7 @@
       "summary_reload": "✅ **Integration**: neu geladen — die Zahnbürste verbindet sich, sobald sie eingeschaltet ist. Falls nicht, schalte sie mit dem Einschaltknopf ein."
     },
     "abort": {
-      "adapter_changed": "Optionen gespeichert.\n\n{summary}"
+      "adapter_changed": "{headline}Folgende Schritte wurden ausgeführt:\n\n{summary}"
     }
   },
   "entity": {
