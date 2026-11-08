@@ -10,6 +10,7 @@
 
 ## Unreleased
 
+- **Builds with ESPHome 2026.11.** ESPHome 2026.5 moved `format_hex` and the other heap-allocating helpers to `alloc_helpers.h`; from 2026.11 on `helpers.h` no longer brings them along, and the build failed with `'format_hex' was not declared in this scope`. The bridge includes the new header where it exists, so older ESPHome versions keep building as well. Reported by @bvalat in [#50](https://github.com/mtheli/philips_sonicare_ble/issues/50).
 - **`ble_unpair_mac` replies name the MAC they were asked about.** `bond_removed`, `bond_not_found` and `bond_removal_failed` carry the new field `requested_mac`. Until now the MAC from the call was meant to travel in `mac`, but every status event overwrites `mac` with the slot's brush, so the reply named the wrong device. `mac` keeps its meaning. The integration does not use this service, so nothing changes for it.
 
 ## v1.15.0 — 2026-10-27
