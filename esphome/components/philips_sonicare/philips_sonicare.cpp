@@ -1,6 +1,11 @@
 #include "philips_sonicare.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
+// ESPHome 2026.5 moved the heap-allocating helpers (format_hex, ...) to
+// alloc_helpers.h; helpers.h stops re-exporting them in 2026.11.
+#if __has_include("esphome/core/alloc_helpers.h")
+#include "esphome/core/alloc_helpers.h"
+#endif
 #include "esphome/components/esp32_ble/ble.h"
 #include <esp_heap_caps.h>
 

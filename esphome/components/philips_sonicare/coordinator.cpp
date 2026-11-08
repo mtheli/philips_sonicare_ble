@@ -2,6 +2,11 @@
 #include "bridge.h"
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
+// ESPHome 2026.5 moved the heap-allocating helpers (format_hex, ...) to
+// alloc_helpers.h; helpers.h stops re-exporting them in 2026.11.
+#if __has_include("esphome/core/alloc_helpers.h")
+#include "esphome/core/alloc_helpers.h"
+#endif
 #include "esphome/core/version.h"
 #include "esp_system.h"
 #include "esp_bt_main.h"

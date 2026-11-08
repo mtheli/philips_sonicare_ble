@@ -17,7 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        esphome: ["2026.1.0", "2026.7.1", "latest"]
+        # "beta" installs the newest pre-release, so breaking changes show up
+        # before they reach users (e.g. #50).
+        esphome: ["2026.1.0", "2026.7.1", "latest", "beta"]
         board: ["esp32dev", "esp32-s3-devkitc-1"]
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +31,8 @@ jobs:
         run: |
           if [ "${{ matrix.esphome }}" = "latest" ]; then
             pip install esphome
+          elif [ "${{ matrix.esphome }}" = "beta" ]; then
+            pip install --pre esphome
           else
             pip install "esphome==${{ matrix.esphome }}"
           fi
