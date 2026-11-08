@@ -2,15 +2,15 @@
   "issues": {
     "esp_bridge_outdated": {
       "title": "Mise à jour du firmware du pont ESP requise",
-      "description": "Votre pont ESP utilise la version **v{version}**, mais la version **v{min_version}** ou plus récente est requise pour toutes les fonctionnalités.\n\nRecompilez et flashez votre appareil ESPHome pour obtenir le dernier firmware. Consultez le changelog du pont ESP dans le dépôt pour plus de détails."
+      "description": "Votre pont ESP utilise la version **v{version}**, mais la version **v{min_version}** ou plus récente est requise pour avoir toutes les fonctionnalités.\n\nRecompilez et flashez votre appareil ESPHome pour obtenir le dernier firmware. Consultez le changelog du pont ESP dans le dépôt pour plus de détails."
     },
     "brushhead_counterfeit": {
       "title": "Tête de brosse contrefaite ou absente — {device}",
-      "description": "**{device}** fonctionne depuis 30 secondes sans avoir lu de numéro de série NFC valide sur la tête de brosse.\n\nCela signifie généralement qu'il s'agit d'une tête contrefaite ou non d'origine, sans puce NFC, ou qu'aucune tête n'est montée.\n\n**Pour résoudre le problème :** montez une tête de brosse Philips Sonicare d'origine. L'avertissement disparaît automatiquement dès qu'un numéro de série valide est lu.\n\nVous pouvez désactiver cet avertissement dans les options de l'intégration."
+      "description": "**{device}** fonctionne depuis 30 secondes sans avoir lu un numéro de série NFC valide sur la tête de brosse.\n\nCela signifie généralement qu'il s'agit d'une tête contrefaite ou non d'origine, sans puce NFC, ou qu'aucune tête n'est montée.\n\n**Pour résoudre le problème :** montez une tête de brosse Philips Sonicare d'origine. L'avertissement disparaît automatiquement dès qu'un numéro de série valide est lu.\n\nVous pouvez désactiver cet avertissement dans les options de l'intégration."
     },
     "esp_bridge_idf_bond_loss": {
       "title": "Philips Sonicare : le pont ESP {esp_device} perd ses appairages (ESP-IDF {idf_version})",
-      "description": "L'intégration **Philips Sonicare** a détecté que son pont ESP **{esp_device}** utilise un firmware compilé avec ESP-IDF **{idf_version}**, la version par défaut d'ESPHome 2026.10.0. Cette version d'ESP-IDF contient un bug Bluetooth : après la première déconnexion, le pont oublie l'appairage avec votre brosse à dents jusqu'au redémarrage de l'ESP. Les modèles appairés ne se reconnectent alors plus.\n\n**Correction :** fixez ESP-IDF 5.5.5 dans le YAML du pont, puis recompilez et flashez-le :\n\n```yaml\nesp32:\n  framework:\n    type: esp-idf\n    version: 5.5.5\n```\n\nCet avertissement disparaît automatiquement dès que le pont utilise un firmware compilé avec une autre version d'ESP-IDF."
+      "description": "L'intégration **Philips Sonicare** a détecté que son pont ESP **{esp_device}** utilise un firmware compilé avec ESP-IDF **{idf_version}**, la version par défaut d'ESPHome 2026.10.0. Cette version d'ESP-IDF contient un bug Bluetooth : après la première déconnexion, le pont oublie l'appairage avec votre brosse à dents jusqu'au redémarrage de l'ESP. Les modèles appairés ne se reconnectent alors plus.\n\n**Correction :** forcez ESP-IDF 5.5.5 dans le YAML du pont, puis recompilez et flashez-le :\n\n```yaml\nesp32:\n  framework:\n    type: esp-idf\n    version: 5.5.5\n```\n\nCet avertissement disparaît automatiquement dès que le pont utilise un firmware compilé avec une autre version d'ESP-IDF."
     },
     "esp_bridge_rotating_address": {
       "title": "Philips Sonicare : {device} ne se reconnecte pas via le pont ESP {esp_device}",
@@ -21,7 +21,7 @@
     "flow_title": "{name}",
     "step": {
       "bluetooth_confirm": {
-        "title": "Confirmer la Philips Sonicare",
+        "title": "Confirmer Philips Sonicare",
         "description": "{alert}{warn}**{name}** détectée à l'adresse `{address}`{via}.\n\n**Allumez votre Sonicare** (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur), puis cliquez sur **Valider**.",
         "sections": {
           "adapter": {
@@ -93,7 +93,7 @@
       },
       "request_pair": {
         "title": "Appairer la brosse à dents avec le pont",
-        "description": "{alert}Aucune brosse à dents n'est encore liée à l'emplacement **{target}**.\n\n1. **Allumez** la Sonicare à lier (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur) et tenez-la à environ 1 m du pont. Si plusieurs brosses à dents se trouvent à proximité, laissez les autres éteintes.\n2. Cliquez sur **Démarrer l'appairage**. La fenêtre attend jusqu'à environ 60 s pendant que le pont recherche la première Sonicare trouvée et s'y lie. Ne fermez pas cette fenêtre.",
+        "description": "{alert}Aucune brosse à dents n'est encore liée à l'emplacement **{target}**.\n\n1. **Allumez** la Sonicare à lier (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur) et tenez-la à environ 1 m du pont. Si plusieurs brosses à dents se trouvent à proximité, laissez les autres éteintes.\n2. Cliquez sur **Démarrer l'appairage**. La boîte de dialogue attend jusqu'à environ 60 s pendant que le pont recherche la première Sonicare trouvée et s'y lie. Ne fermez pas cette boite de dialogue.",
         "submit": "Démarrer l'appairage"
       },
       "reset_bridge": {
@@ -223,13 +223,13 @@
       "pair_adapter": "En attente de la brosse à dents sur **{adapter}**, puis appairage — gardez-la en marche et près de l'adaptateur. Si rien ne se passe, appuyez sur le bouton marche/arrêt. Cela peut prendre jusqu'à deux minutes…"
     },
     "error": {
-      "pair_adapter_failed": "L'appairage avec {adapter} a échoué : {error}\n\nRéveillez la brosse à dents et cliquez sur Valider pour réessayer, ou fermez cette fenêtre pour conserver les paramètres précédents.",
-      "pair_adapter_no_advertisement": "{adapter} n'a pas reçu la brosse à dents en {seconds} secondes. Après une déconnexion, la brosse à dents reste souvent silencieuse jusqu'à ce que son bouton marche/arrêt soit pressé.\n\nPlacez-la près de {adapter}, appuyez sur le bouton marche/arrêt pour qu'elle fonctionne, puis cliquez immédiatement sur Valider — ou fermez cette fenêtre pour conserver les paramètres précédents.",
+      "pair_adapter_failed": "L'appairage avec {adapter} a échoué : {error}\n\nRéveillez la brosse à dents et cliquez sur Valider pour réessayer, ou fermez cette boite de dialogue pour conserver les paramètres précédents.",
+      "pair_adapter_no_advertisement": "{adapter} n'a pas reçu la brosse à dents en {seconds} secondes. Après une déconnexion, la brosse à dents reste souvent silencieuse jusqu'à ce que son bouton marche/arrêt soit pressé.\n\nPlacez-la a proximité de {adapter}, appuyez sur le bouton marche/arrêt pour qu'elle fonctionne, puis cliquez immédiatement sur Valider — ou fermez cette boite de dialogue pour conserver les paramètres précédents.",
       "pair_adapter_weak": "{adapter} ne reçoit la brosse à dents que faiblement ({rssi} dBm) — l'appairage risque d'expirer. Rapprochez la brosse à dents de {adapter}.",
       "headline_adapter": "**Adaptateur Bluetooth modifié.** Désormais, la brosse à dents se connecte uniquement via **{adapter}**.",
       "headline_adapter_auto": "**Adaptateur Bluetooth réglé sur « Choisi par Home Assistant ».** Home Assistant choisit l'adaptateur selon ses propres règles.",
-      "summary_pair_paired": "✅ **{adapter}** : appairé",
-      "summary_pair_already": "🔲 **{adapter}** : appairage inutile — déjà appairé",
+      "summary_pair_paired": "✅ **{adapter}** : appairée",
+      "summary_pair_already": "🔲 **{adapter}** : appairage inutile — déjà appairée",
       "summary_pair_not_needed": "🔲 **{adapter}** : appairage inutile — cette brosse à dents fonctionne sans appairage",
       "summary_pair_proxy": "🔲 **{adapter}** : appairage inutile — le proxy Bluetooth s'appaire lui-même si nécessaire",
       "summary_pair_auto": "🔲 **Appairage** : inutile — Home Assistant choisit l'adaptateur",
@@ -239,7 +239,7 @@
       "summary_drop_none": "🔲 **Autres adaptateurs** : aucun ancien appairage à supprimer",
       "summary_drop_auto": "🔲 **Autres adaptateurs** : appairages conservés — Home Assistant peut utiliser n'importe quel adaptateur",
       "summary_drop_proxy": "🔲 **Adaptateurs locaux** : appairages conservés — ils indiquent que cette brosse à dents nécessite un appairage si vous revenez en arrière",
-      "summary_drop_unknown": "🔲 **Autres adaptateurs** : non vérifié — service Bluetooth indisponible pour le moment",
+      "summary_drop_unknown": "🔲 **Autres adaptateurs** : non vérifiée — service Bluetooth indisponible pour le moment",
       "summary_reload": "✅ **Intégration** : rechargée — la brosse à dents se reconnecte dès qu'elle est allumée. Sinon, allumez-la avec le bouton marche/arrêt."
     },
     "abort": {
