@@ -93,7 +93,7 @@
       },
       "request_pair": {
         "title": "Appairer la brosse à dents avec le pont",
-        "description": "{alert}Aucune brosse à dents n'est encore liée à l'emplacement **{target}**.\n\n1. **Allumez** la Sonicare à lier (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur) et tenez-la à environ 1 m du pont. Si plusieurs brosses à dents se trouvent à proximité, laissez les autres éteintes.\n2. Cliquez sur **Démarrer l'appairage**. La boîte de dialogue attend jusqu'à environ 60 s pendant que le pont recherche la première Sonicare trouvée et s'y lie. Ne fermez pas cette boite de dialogue.",
+        "description": "{alert}Aucune brosse à dents n'est encore liée à l'emplacement **{target}**.\n\n1. **Allumez** la Sonicare à lier (appuyez sur le bouton marche/arrêt ou retirez-la du chargeur) et tenez-la à environ 1 m du pont. Si plusieurs brosses à dents se trouvent à proximité, laissez les autres éteintes.\n2. Cliquez sur **Démarrer l'appairage**. La boîte de dialogue attend jusqu'à environ 60 s pendant que le pont recherche la première Sonicare trouvée et s'y lie. Ne fermez pas cette boîte de dialogue.",
         "submit": "Démarrer l'appairage"
       },
       "reset_bridge": {
@@ -223,8 +223,8 @@
       "pair_adapter": "En attente de la brosse à dents sur **{adapter}**, puis appairage — gardez-la en marche et près de l'adaptateur. Si rien ne se passe, appuyez sur le bouton marche/arrêt. Cela peut prendre jusqu'à deux minutes…"
     },
     "error": {
-      "pair_adapter_failed": "L'appairage avec {adapter} a échoué : {error}\n\nRéveillez la brosse à dents et cliquez sur Valider pour réessayer, ou fermez cette boite de dialogue pour conserver les paramètres précédents.",
-      "pair_adapter_no_advertisement": "{adapter} n'a pas reçu la brosse à dents en {seconds} secondes. Après une déconnexion, la brosse à dents reste souvent silencieuse jusqu'à ce que son bouton marche/arrêt soit pressé.\n\nPlacez-la a proximité de {adapter}, appuyez sur le bouton marche/arrêt pour qu'elle fonctionne, puis cliquez immédiatement sur Valider — ou fermez cette boite de dialogue pour conserver les paramètres précédents.",
+      "pair_adapter_failed": "L'appairage avec {adapter} a échoué : {error}\n\nRéveillez la brosse à dents et cliquez sur Valider pour réessayer, ou fermez cette boîte de dialogue pour conserver les paramètres précédents.",
+      "pair_adapter_no_advertisement": "{adapter} n'a pas reçu la brosse à dents en {seconds} secondes. Après une déconnexion, la brosse à dents reste souvent silencieuse jusqu'à ce que son bouton marche/arrêt soit pressé.\n\nPlacez-la à proximité de {adapter}, appuyez sur le bouton marche/arrêt pour qu'elle fonctionne, puis cliquez immédiatement sur Valider — ou fermez cette boîte de dialogue pour conserver les paramètres précédents.",
       "pair_adapter_weak": "{adapter} ne reçoit la brosse à dents que faiblement ({rssi} dBm) — l'appairage risque d'expirer. Rapprochez la brosse à dents de {adapter}.",
       "headline_adapter": "**Adaptateur Bluetooth modifié.** Désormais, la brosse à dents se connecte uniquement via **{adapter}**.",
       "headline_adapter_auto": "**Adaptateur Bluetooth réglé sur « Choisi par Home Assistant ».** Home Assistant choisit l'adaptateur selon ses propres règles.",
@@ -239,7 +239,7 @@
       "summary_drop_none": "🔲 **Autres adaptateurs** : aucun ancien appairage à supprimer",
       "summary_drop_auto": "🔲 **Autres adaptateurs** : appairages conservés — Home Assistant peut utiliser n'importe quel adaptateur",
       "summary_drop_proxy": "🔲 **Adaptateurs locaux** : appairages conservés — ils indiquent que cette brosse à dents nécessite un appairage si vous revenez en arrière",
-      "summary_drop_unknown": "🔲 **Autres adaptateurs** : non vérifiée — service Bluetooth indisponible pour le moment",
+      "summary_drop_unknown": "🔲 **Autres adaptateurs** : non vérifié — service Bluetooth indisponible pour le moment",
       "summary_reload": "✅ **Intégration** : rechargée — la brosse à dents se reconnecte dès qu'elle est allumée. Sinon, allumez-la avec le bouton marche/arrêt."
     },
     "abort": {
