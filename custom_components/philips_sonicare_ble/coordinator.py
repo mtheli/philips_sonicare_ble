@@ -799,6 +799,18 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # from a live read (covers fresh pairs whose entry had no model yet).
         if model and not self._use_condor and self._protocol.model != model:
             self._apply_model(model)
+        # A pairing that could not read the model stores an empty one, and the
+        # model-gated platforms (mode/intensity selects) then never set up.
+        # Store the live-read model once and reload so they appear.
+        if model and not self.entry.data.get("model"):
+            _LOGGER.info(
+                "%s: storing model %s read from the device; reloading the entry",
+                self.address, model,
+            )
+            self.hass.config_entries.async_update_entry(
+                self.entry, data={**self.entry.data, "model": model}
+            )
+            self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
         if changed and (model or firmware or serial or hardware):
             dev_reg = dr.async_get(self.hass)
             device = async_get_own_device(
