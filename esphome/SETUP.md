@@ -309,7 +309,7 @@ After a successful pair, subsequent boots show the brush reconnecting on its own
 
 1. **Add the ESP32 to Home Assistant.** After its first boot it shows up under **Settings > Devices & Services** as a discovered ESPHome device. Click **Add** (or **Configure**) and confirm. If you are asked for the encryption key, enter the `api_encryption_key` from your `secrets.yaml`. The Philips Sonicare setup can only offer ESPs that are added here.
 2. Install the **Philips Sonicare** integration in Home Assistant
-   (via [HACS](../README.md#installation) or manually)
+   (via the [Marketplace](../README.md#installation) or manually)
 3. Go to **Settings > Devices & Services > + Add Integration** and search for **Philips Sonicare**
 4. Select **"ESP32 Bridge (ESPHome)"** → pick your ESP32 from the list
 5. If the ESP exposes multiple bridge slots (multi-device setup), pick the one

@@ -1,6 +1,6 @@
 # Philips Sonicare BLE Integration for Home Assistant
 
-[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://github.com/hacs/default)
+[![Home Assistant Marketplace](https://img.shields.io/badge/Marketplace-listed-41BDF5.svg)](https://www.home-assistant.io/integrations/marketplace/)
 [![GitHub Release](https://img.shields.io/github/v/release/mtheli/philips_sonicare_ble)](https://github.com/mtheli/philips_sonicare_ble/releases)
 [![License: MIT](https://img.shields.io/github/license/mtheli/philips_sonicare_ble)](LICENSE)
 
@@ -84,9 +84,9 @@ Any BLE-enabled Philips Sonicare toothbrush using either the standard protocol o
 
 For a visual brushing dashboard, use the [**Toothbrush Card**](https://github.com/mtheli/toothbrush-card) -- a custom Lovelace card with live sector tracking, pressure display, and brush head wear indicator. Works with Philips Sonicare, Oral-B and Laifen toothbrushes.
 
-The card is a **separate project and not bundled with this integration** -- install it in addition, via the default HACS store (search for "Toothbrush Card"). The button below opens the **Toothbrush Card** repository in HACS -- it does not install this integration:
+The card is a **separate project and not bundled with this integration** -- install it in addition from the Marketplace (search for "Toothbrush Card"). The button below opens the **Toothbrush Card** repository in the Marketplace -- it does not install this integration:
 
-[![Install Toothbrush Card via HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=mtheli&repository=toothbrush-card&category=plugin)
+[![Open Toothbrush Card in the Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=mtheli&repository=toothbrush-card&category=plugin)
 
 ![Toothbrush Card with Sonicare](screenshots/Card.png)
 
@@ -206,15 +206,13 @@ These sensors are only available while actively brushing and stream live data fr
 
 ## Installation
 
-### HACS (Recommended)
+### Marketplace (recommended)
 
-This integration is available in the **default HACS store** — just click the button below, or search HACS for "Philips Sonicare".
+This integration is listed in the Home Assistant **Marketplace**. Click the button below, or go to **Settings → Marketplace** and search for "Philips Sonicare". Select **Install** and the setup starts right away, no restart needed.
 
-[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=mtheli&repository=philips_sonicare_ble&category=integration)
+[![Open in the Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=mtheli&repository=philips_sonicare_ble&category=integration)
 
-Then restart Home Assistant.
-
-> Don't have HACS yet? Follow the [HACS installation guide](https://hacs.xyz/docs/use/) first.
+Requires Home Assistant 2025.2 or newer. On Home Assistant before 2026.11, the button opens the repository in [HACS](https://hacs.xyz/docs/use/) instead. Download it there and restart Home Assistant.
 
 <details>
 <summary>Manual installation</summary>
