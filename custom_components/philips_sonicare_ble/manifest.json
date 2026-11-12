@@ -6,6 +6,7 @@
     {"service_uuid": "477ea600-a260-11e4-ae37-0002a5d50001"},
     {"service_uuid": "e50ba3c0-af04-4564-92ad-fef019489de6", "local_name": "Philips Sonicare"}
   ],
+  "categories": ["health_wellbeing"],
   "codeowners": ["@mtheli"],
   "config_flow": true,
   "dependencies": ["bluetooth"],
