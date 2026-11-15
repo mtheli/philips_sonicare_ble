@@ -436,6 +436,7 @@ that stable identity — the pairing log names it:
 Full examples:
 - [`examples/atom-lite-dual.yaml`](examples/atom-lite-dual.yaml) — 2 brushes
 - [`examples/atom-lite-triple.yaml`](examples/atom-lite-triple.yaml) — 3 brushes (Atom Lite limit)
+- [`examples/esp32-s3-quad.yaml`](examples/esp32-s3-quad.yaml) — 4 brushes on a generic ESP32-S3 board
 
 > [!IMPORTANT]
 > **RAM limit on single-core ESP32 boards.** The M5Stack Atom Lite
@@ -456,7 +457,8 @@ Full examples:
 >   path if you already have hardware.
 > - **An ESP32-S3 board** (e.g. [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R)
 >   or ESP32-S3-DevKitC-1) — dual-core, more SRAM, enough headroom for
->   4 brushes on a single bridge.
+>   4 brushes on a single bridge. Start from
+>   [`esp32-s3-quad.yaml`](examples/esp32-s3-quad.yaml).
 >
 > ESP32-C3 / ESP32-C6 are not recommended for multi-brush setups (single
 > core + less SRAM than Atom Lite).

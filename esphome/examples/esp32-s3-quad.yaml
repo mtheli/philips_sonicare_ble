@@ -1,0 +1,143 @@
+# Philips Sonicare bridge for a generic ESP32-S3 dev board, four toothbrushes.
+# Same setup as atom-s3.yaml with four slots and Bluetooth limits sized for
+# four brushes connected at the same time. Use this board rather than an
+# Atom Lite for four brushes: the classic ESP32 runs out of memory with four
+# connected at once (SETUP.md, "Multi-Device Setup").
+esphome:
+  name: esp32-s3-quad
+  friendly_name: "ESP32-S3 BLE Bridge"
+  # Required on every chip but the original ESP32 for brushes with a rotating
+  # address (Series 7100, Sonicare For Kids HX6600): without it the bridge
+  # pairs, but loses the brush after the first session. Harmless for brushes
+  # with a fixed address. See KNOWN_ISSUES.md, "Brushes with a rotating
+  # address stop reconnecting on newer ESP32 chips".
+  build_flags:
+    - -DCONFIG_BT_BLE_RPA_SUPPORTED=0
+
+# ESP-IDF is required (not Arduino): only it can raise the Bluetooth limits
+# set below. See SETUP.md, "What you should NOT change".
+esp32:
+  # Fits most generic ESP32-S3 dev boards (N8R2, N16R8, ...). If the ESPHome
+  # dashboard created a different board for yours, use that one.
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+    # ESPHome 2026.10.0 defaults to ESP-IDF 5.5.6, which drops the pairing
+    # after the first disconnect (see KNOWN_ISSUES.md, "ESP bridge loses
+    # pairings with ESP-IDF 5.5.6"). ESPHome warns that this is not the
+    # recommended version; that is expected. On ESPHome versions that already
+    # ship 5.5.5 the line changes nothing. Keep it until KNOWN_ISSUES.md says
+    # the issue is fixed.
+    version: 5.5.5
+    sdkconfig_options:
+      # Services and characteristics per brush (default 40 is too few).
+      CONFIG_BT_GATTC_MAX_CACHE_CHAR: "80"
+      # Notification slots: 11 per brush, shared by all four, plus the
+      # sensor stream while brushing. Matched to max_notifications.
+      CONFIG_BT_GATTC_NOTIF_REG_MAX: "64"
+      # Optional, faster reconnects: see README.md, "Persisted GATT cache".
+      # CONFIG_BT_GATTC_CACHE_NVS_FLASH: "y"
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  custom_services: true
+  homeassistant_services: true
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "ESP32-S3-Quad-Fallback"
+    password: !secret fallback_password
+
+captive_portal:
+
+# --- BLE ---
+
+esp32_ble:
+  io_capability: none
+  max_notifications: 64    # matches CONFIG_BT_GATTC_NOTIF_REG_MAX (64 is the maximum)
+  max_connections: 5       # 4 brushes + 1 spare for re-pairing; ESPHome derives
+                           # CONFIG_BT_ACL_CONNECTIONS from it
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+    interval: 211ms
+    window: 120ms
+
+# --- Philips Sonicare Components (Auto-Discovery — no MAC required) ---
+#
+# Four independent bridge slots on the same ESP. Each bonds with whichever
+# brush is put into pair-mode while that slot's pair-mode service is armed,
+# and follows that brush's rotating address from then on. Don't set
+# mac_address: for the Series 7100 / HX6600.
+#
+# bridge_id is the slot label in the HA setup picker and the suffix of the
+# per-slot ESPHome services (e.g. esp32_s3_quad_ble_pair_mode_brush1). Keep it
+# short, lowercase and without spaces.
+#
+# To pair each brush:
+#   1. Flash this firmware
+#   2. In Home Assistant, add the Philips Sonicare integration → ESP32 Bridge
+#   3. Pick a free slot and wake only the brush meant for it
+#   4. Repeat for the other slots (SETUP.md, "Pairing brushes one at a time")
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/mtheli/philips_sonicare_ble
+      ref: master
+      path: esphome/components
+    components: [philips_sonicare]
+    refresh: 0s
+
+philips_sonicare:
+  - id: sonicare_1
+    bridge_id: brush1
+    # Optional: pre-fill the HA setup form (one-shot defaults).
+    friendly_name: "Brush 1"
+    # area: "Bathroom"
+  - id: sonicare_2
+    bridge_id: brush2
+    friendly_name: "Brush 2"
+  - id: sonicare_3
+    bridge_id: brush3
+    friendly_name: "Brush 3"
+  - id: sonicare_4
+    bridge_id: brush4
+    friendly_name: "Brush 4"
+
+# --- Heap sensors (optional) ---
+# Shows in HA how much memory is left. Worth watching while several brushes
+# are connected at once; remove the block once the setup runs stable.
+
+debug:
+  update_interval: 60s
+
+sensor:
+  - platform: debug
+    free:
+      name: "Heap free"
+    block:
+      name: "Heap largest block"
+    min_free:
+      name: "Heap min free"
+
+button:
+  - platform: restart
+    name: "Restart"
+
+# --- Bluetooth Proxy (optional) ---
+# Costs memory that four brushes need; not recommended on this bridge.
+#
+# bluetooth_proxy:
+#   active: true
