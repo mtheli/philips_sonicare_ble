@@ -75,6 +75,9 @@ See [Configuration](#configuration) for setup instructions.
 
 Any BLE-enabled Philips Sonicare toothbrush using either the standard protocol or the newer Condor protocol (Series 7100 HX742X, Sonicare For Kids HX6600) should work (Sonicare For Kids, ExpertClean, DiamondClean Smart, DiamondClean 9000, DiamondClean Prestige, Series 6500, Series 7100, and more). The integration auto-discovers compatible devices via BLE and selects the right protocol automatically. If you have a different model — happy to hear your test results!
 
+> [!IMPORTANT]
+> The brush needs Bluetooth. Some series sell handles with and without it under almost identical model numbers, e.g. HX742X (Bluetooth) vs. HX743A (none), or HX741B (Bluetooth) vs. HX740B (none). If the box doesn't mention Bluetooth or the Sonicare app, the brush can't be connected.
+
 > [!NOTE]
 > Some models (ExpertClean, HX991M, DiamondClean Prestige, Series 7100, Sonicare For Kids HX6600) require **BLE bonding**. The integration detects this automatically and pairs the device during setup. Models like DiamondClean Smart and the earlier Sonicare For Kids (HX63xx) use open GATT and connect without pairing. Series 7100 brushes additionally use a **rolling private address (RPA)** that can change as often as every ~15–20 seconds — bonding is what allows the host to follow the brush across address rotations. Bonding also needs a host adapter with a working SMP implementation; some cheap USB dongles can't complete it (see [Known Issues](docs/KNOWN_ISSUES.md#some-usb-dongles-cannot-complete-smp-bonding)).
 
