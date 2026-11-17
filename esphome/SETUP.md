@@ -52,7 +52,7 @@ flowchart LR
 | [LCDwiki ES3C35P](https://www.lcdwiki.com/3.5inch_ESP32-S3_Display) / Freenove FNK0104N (ESP32-S3, 3.5" display) | :white_check_mark: | needed | Community — HX960V, `esp32-s3-devkitc-1` ([#47](https://github.com/mtheli/philips_sonicare_ble/issues/47)), example config with display: [`es3c35p-display.yaml`](examples/es3c35p-display.yaml) |
 | Generic ESP32 dev board (ESP32-WROOM/PICO) | :white_check_mark: | — | Community — two brushes on one bridge ([#15](https://github.com/mtheli/philips_sonicare_ble/issues/15)); DOIT ESP32 DevKit v1, `esp32doit-devkit-v1` ([#24](https://github.com/mtheli/philips_sonicare_ble/issues/24)); `esp32dev` ([#1](https://github.com/mtheli/philips_sonicare_ble/issues/1)); AZDelivery ESP32 NodeMCU ([#32](https://github.com/mtheli/philips_sonicare_ble/issues/32)); ESP32-WROOM-32 and a classic dev board, both with brushes that rotate their address ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
 | Heemol ESP32 Mini (classic ESP32, mini form factor) | :white_check_mark: | — | Community ([#20](https://github.com/mtheli/philips_sonicare_ble/issues/20)) |
-| ESP32-S3 DevKitC-1 | :grey_question: | needed | Should work — same SoC as the confirmed S3 boards. Not yet confirmed with the build option; without it, two HX6600 on an ESP32-S3-N16R8 paired but did not reconnect ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
+| ESP32-S3-DevKitC-1 (WROOM-1 N16R8) | :white_check_mark: | needed | Community — four Series 7100 connected at the same time on one bridge, `esp32-s3-devkitc-1` with [`esp32-s3-quad.yaml`](examples/esp32-s3-quad.yaml) ([#54](https://github.com/mtheli/philips_sonicare_ble/issues/54)); without the build option, two HX6600 on an ESP32-S3-N16R8 paired but did not reconnect ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
 | ESP32-C3 / ESP32-C6 | :grey_question: | needed | Not yet confirmed with the build option; without it, a HX742X on an ESP32-C3 SuperMini paired but did not reconnect ([#38](https://github.com/mtheli/philips_sonicare_ble/issues/38)) |
 
 ¹ `-DCONFIG_BT_BLE_RPA_SUPPORTED=0` under `esphome: build_flags`, see [Required changes](#required-changes), item 4. Every chip but the original ESP32 needs it for brushes with a rotating address (Series 7100, Sonicare For Kids HX6600), see the [known issue](KNOWN_ISSUES.md#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips). Brushes with a fixed address work without it.
@@ -457,7 +457,8 @@ Full examples:
 >   path if you already have hardware.
 > - **An ESP32-S3 board** (e.g. [M5Stack AtomS3R](https://docs.m5stack.com/en/core/AtomS3R)
 >   or ESP32-S3-DevKitC-1) — dual-core, more SRAM, enough headroom for
->   4 brushes on a single bridge. Start from
+>   4 brushes on a single bridge (confirmed on an ESP32-S3-DevKitC-1 with
+>   four brushes connected at once, [#54](https://github.com/mtheli/philips_sonicare_ble/issues/54)). Start from
 >   [`esp32-s3-quad.yaml`](examples/esp32-s3-quad.yaml).
 >
 > ESP32-C3 / ESP32-C6 are not recommended for multi-brush setups (single
