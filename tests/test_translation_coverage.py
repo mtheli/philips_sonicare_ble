@@ -438,7 +438,7 @@ def test_accept_language_ranking() -> None:
     assert parse("en,de") == "en"
     # Unshipped languages are skipped rather than matched loosely.
     assert parse("it-IT,it;q=0.9,de;q=0.1") == "de"
-    assert parse("it,es") is None
+    assert parse("it,nl") is None
     # Malformed quality must not raise.
     assert parse("de;q=notanumber,en") == "en"
 
