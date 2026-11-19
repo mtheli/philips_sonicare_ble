@@ -1,0 +1,545 @@
+{
+  "issues": {
+    "esp_bridge_outdated": {
+      "title": "Se requiere actualizar el firmware del puente ESP",
+      "description": "Tu puente ESP ejecuta la versión **v{version}**, pero se requiere la **v{min_version}** o posterior para disponer de todas las funciones.\n\nVuelve a compilar y flashear tu dispositivo ESPHome para obtener el firmware más reciente. Consulta el registro de cambios del puente ESP (ESP Bridge Changelog) en el repositorio para más detalles."
+    },
+    "brushhead_counterfeit": {
+      "title": "Posible cabezal falsificado o ausente — {device}",
+      "description": "**{device}** lleva 30 segundos en funcionamiento sin leer un número de serie NFC válido del cabezal.\n\nNormalmente esto significa que el cabezal es falsificado o no original y no tiene chip NFC, o que no hay ningún cabezal colocado.\n\n**Para solucionarlo:** coloca un cabezal original de Philips Sonicare. El aviso desaparecerá automáticamente en cuanto se lea un número de serie válido.\n\nPuedes desactivar este aviso en las opciones de la integración."
+    },
+    "esp_bridge_idf_bond_loss": {
+      "title": "Philips Sonicare: el puente ESP {esp_device} pierde los emparejamientos (ESP-IDF {idf_version})",
+      "description": "La integración **Philips Sonicare** ha detectado que su puente ESP **{esp_device}** ejecuta un firmware compilado con ESP-IDF **{idf_version}**, la versión predeterminada de ESPHome 2026.10.0. Esta versión de ESP-IDF tiene un fallo de Bluetooth: tras la primera desconexión, el puente olvida el emparejamiento con tu cepillo de dientes hasta que el ESP se reinicia. Los modelos emparejados dejan entonces de volver a conectarse.\n\n**Para solucionarlo:** fija ESP-IDF 5.5.5 en el YAML del puente y, después, vuelve a compilarlo y flashearlo:\n\n```yaml\nesp32:\n  framework:\n    type: esp-idf\n    version: 5.5.5\n```\n\nEste aviso desaparece automáticamente en cuanto el puente ejecute un firmware compilado con otra versión de ESP-IDF."
+    },
+    "esp_bridge_rotating_address": {
+      "title": "Philips Sonicare: {device} no se vuelve a conectar a través del puente ESP {esp_device}",
+      "description": "La integración **Philips Sonicare** ha detectado que **{device}** está emparejado a través del puente ESP **{esp_device}** con una dirección Bluetooth rotativa, y el chip del puente resuelve ese tipo de direcciones en el controlador Bluetooth. Como consecuencia, el puente pierde el cepillo de dientes tras cada sesión y las reconexiones terminan en `status=133` hasta que se vuelve a configurar.\n\n**Para solucionarlo:** añade esto al YAML del puente y, después, vuelve a compilarlo y flashearlo. El emparejamiento sigue siendo válido:\n\n```yaml\nesphome:\n  build_flags:\n    - -DCONFIG_BT_BLE_RPA_SUPPORTED=0\n```\n\nEste aviso desaparece automáticamente en cuanto el puente ejecute un firmware con esta opción."
+    }
+  },
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "bluetooth_confirm": {
+        "title": "Confirmar Philips Sonicare",
+        "description": "{alert}{warn}**{name}** detectado en `{address}`{via}.\n\n**Enciende tu Sonicare** (pulsa el botón de encendido o levántalo del cargador) y, después, haz clic en **Enviar**.",
+        "sections": {
+          "adapter": {
+            "name": "Adaptador Bluetooth",
+            "data": {
+              "bluetooth_adapter": "Conectar a través de"
+            },
+            "data_description": {
+              "bluetooth_adapter": "Adaptador o proxy Bluetooth a través del cual se conecta el cepillo de dientes, a partir de esta primera conexión. Con “Elegido por Home Assistant”, Home Assistant elige el adaptador según sus propias reglas (normalmente, el de mejor señal); esta integración no interviene en ello. Con un adaptador fijo, Home Assistant se conecta solo a través de él: si no recibe el cepillo de dientes, no hay conexión. Puedes cambiarlo más adelante en las opciones."
+            }
+          }
+        }
+      },
+      "user": {
+        "title": "Añadir Philips Sonicare",
+        "description": "Elige cómo conectarte a tu cepillo de dientes.",
+        "menu_options": {
+          "user_bleak": "Bluetooth directo",
+          "esp_bridge": "Puente ESP32 (ESPHome)"
+        }
+      },
+      "user_bleak": {
+        "title": "Bluetooth directo",
+        "description": "Selecciona o introduce la dirección BLE de tu cepillo de dientes Sonicare.\n\n**Importante:** **enciende tu Sonicare** (pulsa el botón de encendido o levántalo del cargador) antes de hacer clic en Enviar; debe permanecer encendido para poder leer sus servicios.",
+        "data": {
+          "address": "Dirección BLE"
+        },
+        "sections": {
+          "adapter": {
+            "name": "Adaptador Bluetooth",
+            "data": {
+              "bluetooth_adapter": "Conectar a través de"
+            },
+            "data_description": {
+              "bluetooth_adapter": "Adaptador o proxy Bluetooth a través del cual se conecta el cepillo de dientes, a partir de esta primera conexión. Con “Elegido por Home Assistant”, Home Assistant elige el adaptador según sus propias reglas (normalmente, el de mejor señal); esta integración no interviene en ello. Con un adaptador fijo, Home Assistant se conecta solo a través de él: si no recibe el cepillo de dientes, no hay conexión. Puedes cambiarlo más adelante en las opciones."
+            }
+          }
+        }
+      },
+      "esp_bridge": {
+        "title": "Puente ESP32 (ESPHome)",
+        "description": "Selecciona el dispositivo ESPHome que actúa como puente BLE para tu cepillo de dientes.",
+        "data": {
+          "esp_device_name": "Dispositivo puente ESPHome"
+        }
+      },
+      "esp_select_device": {
+        "title": "Seleccionar dispositivo BLE",
+        "description": "Este puente ESP aloja varios cepillos de dientes Sonicare. Selecciona el que quieres añadir.\n\n✅ ya configurado · 🔐 vinculado · 🔓 sin emparejar · 🟢 en línea · ⚪ sin conexión",
+        "data": {
+          "esp_bridge_id": "Dispositivo BLE"
+        },
+        "data_description": {
+          "esp_bridge_id": "Las entradas sin iconos de estado son puentes vacíos en modo de emparejamiento. Enciende el cepillo de dientes que quieres vincular antes de enviar."
+        }
+      },
+      "esp_slot_action": {
+        "title": "Cepillo de dientes vinculado encontrado",
+        "description": "La ranura **{target}** ya está vinculada a un cepillo de dientes en el puente, pero todavía no está configurado en Home Assistant.\n\n¿Qué quieres hacer?",
+        "menu_options": {
+          "slot_setup": "Configurar este cepillo de dientes",
+          "slot_unpair": "Desemparejarlo del puente"
+        }
+      },
+      "esp_bridge_status": {
+        "title": "Conexión a través del puente ESP32",
+        "description": "{alert}Configurando el cepillo de dientes a través del **puente ESP32** ({target}).\n\n| **BLE** | {ble_state} |\n|---|---|\n| **Seguridad** | {security} |\n| **MAC del cepillo** | `{mac}` |{identity_row}\n| **Versión del puente** | {version} |\n\n✅ conectado · ❌ desconectado · 🔐 vinculado (cifrado) · 🔓 sin emparejar (sin cifrado)\n\n{action}",
+        "submit": "Leer capacidades"
+      },
+      "request_pair": {
+        "title": "Emparejar el cepillo de dientes con el puente",
+        "description": "{alert}La ranura **{target}** todavía no tiene ningún cepillo de dientes vinculado.\n\n1. **Enciende** el Sonicare que quieres vincular (pulsa el botón de encendido o levántalo del cargador) y mantenlo a menos de ~1 m del puente. Si tienes varios cepillos de dientes cerca, mantén apagados los demás.\n2. Haz clic en **Iniciar emparejamiento**. El cuadro de diálogo esperará hasta ~60 s mientras el puente busca el primer Sonicare que encuentre y se vincula con él. No cierres este cuadro de diálogo.",
+        "submit": "Iniciar emparejamiento"
+      },
+      "reset_bridge": {
+        "title": "Restablecer el vínculo del puente",
+        "description": "{alert}La ranura **{target}** está vinculada actualmente a **{identity_address}**.\n\nAl hacer clic en **Enviar**, se eliminará el vínculo BLE del puente y se borrará la identidad guardada. Después podrás emparejar otro Sonicare.\n\nEl Sonicare conserva su propia mitad del vínculo, pero no hay nada que borrar en el propio cepillo: volver a emparejar más adelante este mismo cepillo funciona sin pasos adicionales.",
+        "submit": "Desemparejar y restablecer"
+      },
+      "show_capabilities": {
+        "title": "Philips Sonicare — {name}",
+        "description": "{alert_open}Conectado a través de {transport}{detail}.{alert_close}\n\n**Información del dispositivo**\n\n| **Modelo** | {model} |\n|---|---|\n| **Número de serie** | `{serial}` |\n| **Firmware** | {firmware} |\n| **Batería** | {battery} |\n| **MAC** | `{mac}` |{identity_row}\n| **Seguridad BLE** | {ble_security} |\n\n🔐 vinculado (cifrado) · 🔓 sin emparejar (sin cifrado)\n\n**Servicios detectados**\n\n{services}\n\n{services_note}",
+        "submit": "Configurar",
+        "data": {
+          "device_name": "Nombre"
+        },
+        "data_description": {
+          "device_name": "Cómo aparece este cepillo de dientes en Home Assistant. Elige algo que lo distinga de otros cepillos que tengas (p. ej., \"Baño principal\", \"El de Juana\")."
+        }
+      },
+      "not_paired": {
+        "title": "Se requiere emparejamiento BLE",
+        "description": "{alert}Tu cepillo de dientes en `{address}` requiere **vinculación BLE** antes de poder leer sus características. El emparejamiento automático no ha funcionado.\n\n{pair_error}Abre {terminal} y ejecuta el script de emparejamiento:\n\n`{pair_cmd}`\n\nEl script registra el agente de emparejamiento necesario y, después, empareja el cepillo de dientes y lo marca como de confianza; solo tienes que mantenerlo **activo** (pulsa el botón de encendido) mientras se ejecuta.\n\nTambién puedes emparejarlo manualmente en una sesión interactiva de `bluetoothctl`; un simple `bluetoothctl pair` no registra ningún agente, y algunos modelos rechazan el emparejamiento sin él:\n\n```\nbluetoothctl\nagent NoInputNoOutput\ndefault-agent\npair {address}\ntrust {address}\nexit\n```\n\nDespués, haz clic en **Reintentar**.",
+        "submit": "Reintentar"
+      },
+      "not_paired_proxy": {
+        "title": "Se requiere emparejamiento BLE",
+        "description": "{alert}Tu cepillo de dientes en `{address}` requiere **vinculación BLE** antes de poder leer sus características.\n\nEsta conexión pasa por un **proxy Bluetooth** (`{proxy_name}`). El proxy se empareja con el cepillo de dientes **automáticamente durante la lectura**; las herramientas de emparejamiento del host de Home Assistant (`bluetoothctl`, scripts de emparejamiento) no tienen ningún efecto en esta conexión.\n\nEl emparejamiento automático no se ha completado. Causas más probables:\n\n1. **El cepillo de dientes aún conserva un vínculo antiguo** con un teléfono u otro adaptador. Elimina el cepillo de la app Philips Sonicare (u olvídalo en los ajustes de Bluetooth de tu teléfono), despiértalo y haz clic en **Reintentar**; al reintentar se reinicia el emparejamiento.\n2. **El cepillo de dientes ha entrado en reposo** durante la configuración: pulsa el botón de encendido, mantenlo activo y haz clic en **Reintentar**.\n3. **Usas varios proxies Bluetooth:** los vínculos no se trasladan de un proxy a otro, y Home Assistant elige el proxy que tenga mejor señal. Acerca el cepillo a uno de los proxies y haz clic en **Reintentar**.\n4. Algunos modelos **rechazan por completo el emparejamiento**. Si todos los reintentos fallan de inmediato, configura el cepillo mediante el adaptador Bluetooth del host o mediante el puente ESP32 dedicado.",
+        "submit": "Reintentar"
+      }
+    },
+    "error": {
+      "cannot_connect": "No se ha podido conectar con el cepillo de dientes. Asegúrate de que está activo (pulsa el botón o colócalo en el cargador) y dentro del alcance.",
+      "caps_missing_legend": "Las entradas marcadas con ❌ no están disponibles en este modelo.",
+      "caps_condor_note": "En este mango, los servicios de funciones Classic se sustituyen por el protocolo Condor.",
+      "identity_row": "| **Identidad** | `{identity}` |",
+      "confirm_alert_asleep": "El cepillo de dientes está en reposo: despiértalo (pulsa el botón de encendido o levántalo del cargador) y vuelve a hacer clic en Enviar.",
+      "confirm_alert_failed": "No se ha podido leer el cepillo de dientes. Asegúrate de que está activo y dentro del alcance y, después, haz clic en Enviar para volver a intentarlo.",
+      "confirm_warn_proxy": "Esta conexión pasará por el proxy Bluetooth {proxy_name}{proxy_rssi}.{nl}Según el modelo de cepillo de dientes, el emparejamiento y las actualizaciones en directo a través de un proxy Bluetooth estándar pueden no ser fiables.{nl}Para que el emparejamiento y las actualizaciones en directo sean fiables, usa un adaptador Bluetooth local o el puente ESP32.",
+      "confirm_warn_proxy_local": "Esta conexión pasará por el proxy Bluetooth {proxy_name}{proxy_rssi}.{nl}Según el modelo de cepillo de dientes, el emparejamiento y las actualizaciones en directo a través de un proxy Bluetooth estándar pueden no ser fiables.{nl}Tu adaptador local {local_name} también ve el cepillo de dientes{local_rssi}; para conectarte a través de él, elígelo más abajo como adaptador Bluetooth.",
+      "confirm_warn_proxy_choose": "Esta conexión pasará por el proxy Bluetooth {proxy_name}{proxy_rssi}.{nl}Según el modelo de cepillo de dientes, el emparejamiento y las actualizaciones en directo a través de un proxy Bluetooth estándar pueden no ser fiables.{nl}Para conectarte a través de tu adaptador local {local_name}, acerca el cepillo de dientes a su alcance y elígelo más abajo como adaptador Bluetooth.",
+      "confirm_warn_proxy_retry": "Esta conexión pasa por el proxy Bluetooth {proxy_name}{proxy_rssi}.{nl}Según el modelo de cepillo de dientes, el emparejamiento y las actualizaciones en directo a través de un proxy Bluetooth estándar pueden no ser fiables. Si los reintentos siguen fallando, usa un adaptador Bluetooth local o el puente ESP32.",
+      "esp_action_connected": "El puente ya está conectado a tu cepillo de dientes. **Mantén tu Sonicare encendido** y haz clic en **Leer capacidades** para terminar la configuración.",
+      "esp_action_retry": "**Enciende tu Sonicare** (pulsa el botón de encendido o levántalo del cargador), **mantenlo encendido** y haz clic en **Leer capacidades** para volver a intentarlo.",
+      "esp_action_switch_on": "**Enciende tu Sonicare** (pulsa el botón de encendido o levántalo del cargador), **mantenlo encendido** y haz clic en **Leer capacidades** para terminar la configuración.",
+      "esp_status_paired": "Emparejamiento correcto: el puente ya está vinculado a tu cepillo de dientes.",
+      "esp_status_paired_rpa_unsupported": "**Emparejado, pero este puente perderá el cepillo de dientes tras la primera sesión.** El cepillo cambia su dirección Bluetooth, y el chip del puente solo sigue ese tipo de dirección si el puente se compila con una opción adicional. Añade `-DCONFIG_BT_BLE_RPA_SUPPORTED=0` en `esphome:` → `build_flags:` del YAML del puente y, después, vuelve a compilarlo y flashearlo. El emparejamiento sigue siendo válido. [Detalles]({url})",
+      "esp_status_read_error": "Se ha producido un error al leer el cepillo de dientes. Revisa los registros (Ajustes → Sistema → Registros) y vuelve a intentarlo.",
+      "esp_status_read_failed": "No se ha podido leer el cepillo de dientes a través del puente. Asegúrate de que está encendido y de que el puente está en línea, y vuelve a intentarlo.",
+      "not_a_sonicare": "Se ha conectado con el dispositivo, pero no se han encontrado características de Philips Sonicare. Comprueba que la dirección corresponde a un cepillo de dientes Sonicare.",
+      "not_paired_terminal_hassio": "el complemento **Terminal & SSH** ([instálalo primero](/hassio/addon/core_ssh/info) si es necesario)",
+      "not_paired_terminal_host": "un terminal en el equipo que ejecuta Home Assistant",
+      "pair_status_unpaired": "Vínculo eliminado: la ranura está libre. Enciende el Sonicare que quieres vincular y, después, inicia el emparejamiento.",
+      "pair_timeout": "Ningún Sonicare se ha emparejado en el tiempo disponible. Pulsa el botón de encendido del cepillo de dientes para despertarlo y vuelve a intentarlo.",
+      "pair_timeout_passive_scanner": "**Ningún Sonicare se ha emparejado en el tiempo disponible.** El puente ha estado **escaneando en modo pasivo** todo el tiempo, por lo que no ha podido ver el cepillo de dientes: un escaneo pasivo nunca solicita la respuesta de escaneo que contiene el UUID del servicio Sonicare.\n\n**Qué hacer:** establece el modo de escaneo Bluetooth de este dispositivo ESPHome en **Activo** en `Ajustes > Dispositivos y servicios > ESPHome > Configurar` y vuelve a intentarlo.",
+      "pairing_failed": "El dispositivo sigue sin estar emparejado. Asegúrate de que el cepillo de dientes está activo y vuelve a intentar el emparejamiento.",
+      "reset_alert_offline": "No se ha podido contactar con el puente ESP para borrar el vínculo. Asegúrate de que está en línea y encendido, y vuelve a intentarlo.",
+      "reset_alert_unconfirmed": "No se ha podido confirmar que el puente haya borrado el vínculo; puede que necesite reiniciarse. Asegúrate de que está en línea y vuelve a intentarlo.",
+      "unknown": "Error inesperado. Revisa los registros (Ajustes → Sistema → Registros) para más detalles.",
+      "confirm_alert_adapter": "El adaptador Bluetooth seleccionado no recibe el cepillo de dientes en este momento. Despierta el cepillo y acércalo al alcance de ese adaptador, o elige otro adaptador.",
+      "adapter_not_receiving": "El adaptador Bluetooth seleccionado no recibe el cepillo de dientes en este momento. Despierta el cepillo y acércalo al alcance de ese adaptador, o elige otro adaptador."
+    },
+    "progress": {
+      "ble_probing": "💡 **Consejo:** si el cepillo de dientes está apagado, enciéndelo ahora: pulsa el botón de encendido o levántalo del cargador.\n\nConectando con {name} y leyendo sus datos. Normalmente tarda unos segundos; si primero hay que encender el cepillo o se necesitan varios intentos de conexión (señal débil, primer contacto tras un problema de emparejamiento), puede tardar hasta tres minutos…",
+      "pair_arming": "Activando el modo de emparejamiento en {target}…",
+      "pair_scanning": "Buscando tu Sonicare y vinculándolo: enciéndelo y mantenlo a menos de ~1 m del puente. Puede tardar hasta un minuto.",
+      "unpairing": "Eliminando el vínculo en {target}…",
+      "esp_reading": "Leyendo el cepillo de dientes a través de {target}…"
+    },
+    "abort": {
+      "device_asleep": "El cepillo de dientes está en reposo y no se ha podido contactar con él. Despiértalo (pulsa el botón de encendido o levántalo del cargador) y vuelve a iniciar la configuración.",
+      "already_configured": "El dispositivo ya está configurado.",
+      "already_configured_detail": "Este cepillo de dientes ya está configurado a través de **{transport}**. Elimina primero la entrada existente.",
+      "already_configured_disabled": "Este cepillo de dientes ya está configurado a través de **{transport}**, pero esa entrada está desactivada. Vuelve a activarla o elimínala primero.",
+      "esp_bridge_repaired": "Este cepillo de dientes ya está configurado en **{target}**. Su entrada sigue funcionando; no tienes que hacer nada más.",
+      "esp_bridge_elsewhere": "Este cepillo de dientes ya está configurado en **{old_target}**. Para usarlo en **{target}**, elimina primero su entrada existente.",
+      "esp_bridge_elsewhere_undone": "Este cepillo de dientes ya está configurado en **{old_target}**, así que se ha deshecho el emparejamiento en **{target}**. Para usarlo aquí, elimina primero su entrada existente y vuelve a emparejarlo.",
+      "already_in_progress": "El flujo de configuración ya está en curso.",
+      "no_devices_found": "No se han encontrado dispositivos Philips Sonicare compatibles en este puente ESP.",
+      "no_esphome_devices": "No se ha encontrado ningún puente ESPHome. Configura primero un dispositivo ESPHome con el componente de puente BLE de Sonicare; haz clic en el icono de ayuda (arriba a la derecha) para ver la guía de configuración.",
+      "not_supported": "Este dispositivo ESPHome no aloja ningún componente de puente Philips Sonicare."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opciones de Philips Sonicare",
+        "description": "¿Qué quieres cambiar?",
+        "menu_options": {
+          "settings": "Ajustes",
+          "adapter": "Cambiar adaptador Bluetooth"
+        }
+      },
+      "settings": {
+        "title": "Ajustes",
+        "data": {
+          "sensor_pressure": "Activar sensor de presión",
+          "sensor_temperature": "Activar sensor de temperatura",
+          "sensor_gyroscope": "Activar giroscopio",
+          "notify_throttle_ms": "Limitación de notificaciones (ms)",
+          "pipelined_reads": "Lecturas GATT en lote",
+          "warn_counterfeit_brushhead": "Avisar de cabezales falsificados"
+        },
+        "data_description": {
+          "sensor_pressure": "Transmite los datos de presión durante las sesiones de cepillado.",
+          "sensor_temperature": "Transmite los datos de temperatura durante las sesiones de cepillado.",
+          "sensor_gyroscope": "Transmite datos de movimiento de 6 ejes durante las sesiones de cepillado. Requiere mucho ancho de banda: en general funciona bien en un ESP32 completo, pero puede provocar cortes en placas más pequeñas, como el ESP32-C3. Solo disponible en modelos con sensor de movimiento integrado.",
+          "notify_throttle_ms": "Intervalo mínimo entre los eventos de notificación BLE que reenvía el puente ESP. Los valores más bajos ofrecen actualizaciones más rápidas, pero pueden sobrecargar el ESP.",
+          "pipelined_reads": "Envía las lecturas de sondeo al puente ESP como un único lote simultáneo en lugar de una a una. Requiere el firmware del puente 1.7.0 o posterior (los puentes más antiguos siempre se leen de forma secuencial). Desactívalo solo si ves errores de lectura tras actualizar el puente.",
+          "warn_counterfeit_brushhead": "Avisa si no se detecta un número de serie NFC válido del cabezal tras 30 segundos de cepillado."
+        }
+      },
+      "adapter": {
+        "title": "Cambiar adaptador Bluetooth",
+        "description": "Traslada el cepillo de dientes a otro adaptador o proxy Bluetooth. Si el nuevo adaptador necesita antes un emparejamiento, este se realiza en el siguiente paso.",
+        "data": {
+          "bluetooth_adapter": "Adaptador Bluetooth"
+        },
+        "data_description": {
+          "bluetooth_adapter": "Adaptador o proxy Bluetooth a través del cual se conecta el cepillo de dientes. Con “Elegido por Home Assistant”, Home Assistant elige el adaptador según sus propias reglas (normalmente, el de mejor señal); esta integración no interviene en ello. Con un adaptador fijo, Home Assistant se conecta solo a través de él: si no recibe el cepillo de dientes, no hay conexión. Si el cepillo de dientes necesita un emparejamiento que ese adaptador aún no tiene, el emparejamiento se realiza en el siguiente paso. Al cambiar a un adaptador fijo, se eliminan los emparejamientos del cepillo de dientes en los demás adaptadores locales. Se muestra la intensidad de la señal de los adaptadores que reciben el cepillo de dientes en este momento."
+        }
+      },
+      "pair_adapter": {
+        "title": "Emparejar adaptador Bluetooth",
+        "description": "{alert}El cepillo de dientes aún no está emparejado con **{adapter}**. Cada adaptador Bluetooth necesita su propio emparejamiento; hasta ahora está emparejado con: **{paired_on}**.\n\nColoca el cepillo de dientes cerca de **{adapter}**, **pulsa el botón de encendido** para que se ponga en marcha y haz clic en **Enviar** de inmediato. La conexión en directo se pausa durante el emparejamiento y se reanuda después."
+      }
+    },
+    "progress": {
+      "pair_adapter": "Esperando al cepillo de dientes en **{adapter}** para emparejarlo: mantenlo en marcha y cerca del adaptador. Si no pasa nada, pulsa el botón de encendido. Puede tardar hasta dos minutos…"
+    },
+    "error": {
+      "pair_adapter_failed": "El emparejamiento con {adapter} ha fallado: {error}\n\nDespierta el cepillo de dientes y haz clic en Enviar para volver a intentarlo, o cierra este cuadro de diálogo para conservar los ajustes anteriores.",
+      "pair_adapter_no_advertisement": "{adapter} no ha recibido el cepillo de dientes en {seconds} segundos. Tras una desconexión, el cepillo de dientes suele permanecer en silencio hasta que se pulsa su botón de encendido.\n\nColócalo cerca de {adapter}, pulsa el botón de encendido para que se ponga en marcha y haz clic en Enviar de inmediato, o cierra este cuadro de diálogo para conservar los ajustes anteriores.",
+      "pair_adapter_weak": "{adapter} recibe el cepillo de dientes con poca intensidad ({rssi} dBm); puede que se agote el tiempo de espera del emparejamiento. Acerca el cepillo de dientes a {adapter}.",
+      "headline_adapter": "**Adaptador Bluetooth cambiado.** A partir de ahora, el cepillo de dientes se conecta solo a través de **{adapter}**.",
+      "headline_adapter_auto": "**Adaptador Bluetooth establecido en “Elegido por Home Assistant”.** Home Assistant elige el adaptador según sus propias reglas.",
+      "summary_pair_paired": "✅ **{adapter}**: emparejado",
+      "summary_pair_already": "🔲 **{adapter}**: no es necesario emparejar; ya está emparejado",
+      "summary_pair_not_needed": "🔲 **{adapter}**: no es necesario emparejar; este cepillo de dientes funciona sin emparejamiento",
+      "summary_pair_proxy": "🔲 **{adapter}**: no es necesario emparejar; el proxy Bluetooth se empareja por sí mismo cuando hace falta",
+      "summary_pair_auto": "🔲 **Emparejamiento**: no es necesario; Home Assistant elige el adaptador",
+      "summary_pair_unknown": "🔲 **{adapter}**: emparejamiento no comprobado; el adaptador o el servicio Bluetooth no están disponibles en este momento",
+      "summary_drop_done": "✅ **{adapter}**: emparejamiento antiguo eliminado",
+      "summary_drop_failed": "❌ **{adapter}**: no se ha podido eliminar el emparejamiento antiguo; consulta el registro",
+      "summary_drop_none": "🔲 **Otros adaptadores**: no hay emparejamientos antiguos que eliminar",
+      "summary_drop_auto": "🔲 **Otros adaptadores**: emparejamientos conservados; Home Assistant puede usar cualquier adaptador",
+      "summary_drop_proxy": "🔲 **Adaptadores locales**: emparejamientos conservados; indican que este cepillo de dientes necesita emparejamiento cuando vuelvas a cambiar",
+      "summary_drop_unknown": "🔲 **Otros adaptadores**: no comprobado; el servicio Bluetooth no está disponible en este momento",
+      "summary_reload": "✅ **Integración**: recargada; el cepillo de dientes se vuelve a conectar en cuanto se enciende. Si no lo hace, enciéndelo con el botón de encendido."
+    },
+    "abort": {
+      "adapter_changed": "{headline}Se han realizado los siguientes pasos:\n\n{summary}"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery": {
+        "name": "Batería"
+      },
+      "handle_state": {
+        "name": "Estado del mango",
+        "state": {
+          "off": "Apagado",
+          "standby": "En espera",
+          "run": "En funcionamiento",
+          "charge": "Cargando",
+          "shutdown": "Apagándose",
+          "validate": "Validación",
+          "background": "Segundo plano"
+        }
+      },
+      "brushing_mode": {
+        "name": "Modo de cepillado",
+        "state": {
+          "clean": "Clean",
+          "white_plus": "White+",
+          "white": "White",
+          "gum_health": "Gum Health",
+          "gum_care": "Gum Care",
+          "deep_clean_plus": "Deep Clean+",
+          "deep_clean": "Deep Clean",
+          "sensitive": "Sensitive",
+          "tongue_care": "Tongue Care"
+        }
+      },
+      "brushing_state": {
+        "name": "Estado del cepillado",
+        "state": {
+          "off": "Apagado",
+          "on": "Encendido",
+          "pause": "Pausa",
+          "session_complete": "Sesión completada",
+          "session_aborted": "Sesión interrumpida"
+        }
+      },
+      "intensity": {
+        "name": "Intensidad",
+        "state": {
+          "low": "Baja",
+          "medium": "Media",
+          "high": "Alta"
+        }
+      },
+      "brushing_time": {
+        "name": "Tiempo de cepillado"
+      },
+      "routine_length": {
+        "name": "Duración de la rutina"
+      },
+      "routine_countdown": {
+        "name": "Cuenta atrás de la rutina"
+      },
+      "number_of_sectors": {
+        "name": "Número de sectores"
+      },
+      "sector": {
+        "name": "Sector",
+        "state": {
+          "sector_1": "Sector 1",
+          "sector_2": "Sector 2",
+          "sector_3": "Sector 3",
+          "sector_4": "Sector 4",
+          "sector_5": "Sector 5",
+          "sector_6": "Sector 6",
+          "success": "Completado",
+          "no_sector": "Sin sector"
+        }
+      },
+      "session_id": {
+        "name": "ID de sesión"
+      },
+      "latest_session_id": {
+        "name": "ID de la última sesión"
+      },
+      "last_session": {
+        "name": "Última sesión"
+      },
+      "last_session_duration": {
+        "name": "Duración de la última sesión"
+      },
+      "session_count": {
+        "name": "Número de sesiones"
+      },
+      "motor_runtime": {
+        "name": "Tiempo de funcionamiento del motor"
+      },
+      "brushhead_wear": {
+        "name": "Desgaste"
+      },
+      "brushhead_sessions_left": {
+        "name": "Sesiones restantes"
+      },
+      "brushhead_usage": {
+        "name": "Uso"
+      },
+      "brushhead_limit": {
+        "name": "Límite de vida útil"
+      },
+      "brushhead_serial": {
+        "name": "Número de serie"
+      },
+      "brushhead_date": {
+        "name": "Fecha de fabricación"
+      },
+      "brushhead_ring_id": {
+        "name": "ID del anillo NFC"
+      },
+      "brushhead_nfc_version": {
+        "name": "Versión NFC"
+      },
+      "brushhead_type": {
+        "name": "Tipo",
+        "state": {
+          "adaptive_clean": "Clean (C)",
+          "adaptive_white": "White (W)",
+          "adaptive_gums": "Gum Care (G)",
+          "tongue_clean": "TongueCare+",
+          "premium_all_in_one": "All-in-One (A)",
+          "sensitive": "Sensitive (S)",
+          "non_rfid": "Sin RFID"
+        }
+      },
+      "brushhead_payload": {
+        "name": "Datos NFC"
+      },
+      "bridge_version": {
+        "name": "Versión del puente"
+      },
+      "bridge_build": {
+        "name": "Compilación del ESP"
+      },
+      "bridge_chip": {
+        "name": "Chip del ESP"
+      },
+      "bridge_boot_time": {
+        "name": "Último arranque del ESP"
+      },
+      "model_number": {
+        "name": "Número de modelo"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "last_seen": {
+        "name": "Visto por última vez"
+      },
+      "pressure": {
+        "name": "Presión"
+      },
+      "pressure_state": {
+        "name": "Estado de la presión",
+        "state": {
+          "ok": "Correcta",
+          "optimal": "Óptima",
+          "too_high": "Demasiado alta"
+        }
+      },
+      "temperature": {
+        "name": "Temperatura"
+      },
+      "handle_time": {
+        "name": "Tiempo de uso del mango"
+      },
+      "activity": {
+        "name": "Actividad",
+        "state": {
+          "initializing": "Inicializando",
+          "off": "Apagado",
+          "standby": "En espera",
+          "brushing": "Cepillando",
+          "paused": "En pausa",
+          "charging": "Cargando"
+        }
+      },
+      "rssi": {
+        "name": "RSSI BLE"
+      },
+      "adapter": {
+        "name": "Adaptador"
+      },
+      "adapter_selection": {
+        "name": "Selección de adaptador",
+        "state": {
+          "automatic": "Elegido por Home Assistant",
+          "fixed": "Fijo"
+        }
+      },
+      "adapter_type": {
+        "name": "Tipo de adaptador",
+        "state": {
+          "direct_ble": "Bluetooth directo",
+          "esp_bridge": "Puente ESP",
+          "stock_proxy": "Proxy Bluetooth",
+          "unknown": "Desconocido"
+        }
+      }
+    },
+    "binary_sensor": {
+      "is_brushing": {
+        "name": "Cepillando"
+      },
+      "is_charging": {
+        "name": "Cargando",
+        "state": {
+          "off": "No está cargando",
+          "on": "Cargando"
+        }
+      },
+      "pressure_alert": {
+        "name": "Alerta de presión",
+        "state": {
+          "off": "Correcto",
+          "on": "Problema"
+        }
+      },
+      "esp_bridge_alive": {
+        "name": "ESP conectado",
+        "state": {
+          "off": "Desconectado",
+          "on": "Conectado"
+        }
+      },
+      "ble_connected": {
+        "name": "BLE conectado",
+        "state": {
+          "off": "Desconectado",
+          "on": "Conectado"
+        }
+      },
+      "brushhead_counterfeit": {
+        "name": "Cabezal falsificado",
+        "state": {
+          "off": "Correcto",
+          "on": "Problema"
+        }
+      }
+    },
+    "select": {
+      "brushing_mode_select": {
+        "name": "Modo de cepillado",
+        "state": {
+          "clean": "Clean",
+          "white_plus": "White+",
+          "gum_health": "Gum Health",
+          "deep_clean_plus": "Deep Clean+",
+          "sensitive": "Sensitive",
+          "tongue_care": "Tongue Care"
+        }
+      },
+      "intensity_select": {
+        "name": "Intensidad",
+        "state": {
+          "low": "Baja",
+          "medium": "Media",
+          "high": "Alta"
+        }
+      }
+    },
+    "switch": {
+      "adaptive_intensity": {
+        "name": "Intensidad adaptativa"
+      },
+      "scrubbing_feedback": {
+        "name": "Aviso de frotamiento"
+      },
+      "pressure_feedback": {
+        "name": "Aviso de presión"
+      }
+    },
+    "update": {
+      "bridge_firmware": {
+        "name": "Firmware del puente"
+      }
+    }
+  },
+  "device": {
+    "brush_head": {
+      "name": "Cabezal de {device_name}"
+    },
+    "connection": {
+      "name": "Conexión de {device_name}"
+    }
+  },
+  "selector": {
+    "bluetooth_adapter": {
+      "options": {
+        "auto": "Elegido por Home Assistant"
+      }
+    }
+  }
+}
