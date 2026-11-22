@@ -8,7 +8,7 @@ This is a custom component for Home Assistant to integrate **Philips Sonicare BL
 
 The integration connects to your toothbrush via **Bluetooth Low Energy (BLE)** to provide battery status, brushing session data, brush head wear tracking, and more. All communication is fully local -- no cloud, no app required.
 
-[![Device overview in Home Assistant](screenshots/ToothBrush1.png)](screenshots/ToothBrush1.png)
+<a href="screenshots/ToothBrush1.png"><img src="screenshots/ToothBrush1.png" alt="Device overview in Home Assistant" width="880"></a>
 
 Three connection methods are supported:
 
@@ -95,7 +95,7 @@ The card is a **separate project and not bundled with this integration** -- inst
 
 For small displays and wall panels there is also a compact view (`tooth_style: none`) with a large standalone timer -- shown here with the header and chips still enabled. With the header hidden as well (`show_header: false`), two of these fit side by side on a 480x480 wall panel:
 
-[![Toothbrush Card compact view](screenshots/CardCompact.png)](screenshots/CardCompact.png)
+<a href="screenshots/CardCompact.png"><img src="screenshots/CardCompact.png" alt="Toothbrush Card compact view" width="424"></a>
 
 ---
 
@@ -411,11 +411,11 @@ For a detailed technical description of the BLE protocol including service UUIDs
 
 | Sensors & Controls | Diagnostics | Dashboard Card |
 | :---: | :---: | :---: |
-| [![Sensors](screenshots/ToothBrush1.png)](screenshots/ToothBrush1.png) | [![Diagnostics](screenshots/ToothBrush2.png)](screenshots/ToothBrush2.png) | [![Card](screenshots/Card.png)](screenshots/Card.png) |
+| <a href="screenshots/ToothBrush1.png"><img src="screenshots/ToothBrush1.png" alt="Sensors" width="270"></a> | <a href="screenshots/ToothBrush2.png"><img src="screenshots/ToothBrush2.png" alt="Diagnostics" width="270"></a> | <a href="screenshots/Card.png"><img src="screenshots/Card.png" alt="Card" width="270"></a> |
 
 | Device Overview | Brush Head |
 | :---: | :---: |
-| [![Overview](screenshots/DeviceOverview.png)](screenshots/DeviceOverview.png) | [![Brush Head](screenshots/BrushHead.png)](screenshots/BrushHead.png) |
+| <a href="screenshots/DeviceOverview.png"><img src="screenshots/DeviceOverview.png" alt="Overview" width="414"></a> | <a href="screenshots/BrushHead.png"><img src="screenshots/BrushHead.png" alt="Brush Head" width="414"></a> |
 
 | While Brushing | Condor Models (e.g. HX742X) | Condor Brush Head |
 | :---: | :---: | :---: |
