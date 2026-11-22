@@ -44,7 +44,7 @@ from .const import (
     CHAR_SERVICE_MAP,
     BLUETOOTH_ADAPTER_AUTO,
 )
-from .exceptions import TransportError
+from .exceptions import ProxyEncryptionError, TransportError
 
 _LOGGER = logging.getLogger(__name__)
 _RAW_LOGGER = logging.getLogger(__name__ + ".raw")
@@ -817,6 +817,41 @@ class BleakTransport(SonicareTransport):
             self._hass, self._client, device
         )
         _LOGGER.info("%s: connected via %s", self._address, self._connection_path)
+
+    async def pair(self, timeout: float) -> None:
+        """Pair (or, with an existing bond, encrypt) the live connection.
+
+        Used for stock ESPHome Bluetooth proxies, which only encrypt a
+        link when asked to (#52). Raises ProxyEncryptionError when the
+        proxy reports the pairing as failed, TransportError for anything
+        that says nothing about the bond (timeout, link drop, firmware
+        without pairing support).
+        """
+        if not self.is_connected:
+            raise TransportError(f"Device {self._address} not connected")
+        try:
+            paired = await asyncio.wait_for(self._client.pair(), timeout=timeout)
+        except asyncio.TimeoutError as err:
+            raise TransportError(
+                f"pairing through the Bluetooth proxy timed out after {timeout:.0f}s"
+            ) from err
+        except NotImplementedError as err:
+            raise TransportError(
+                "the Bluetooth proxy firmware does not support pairing"
+            ) from err
+        except Exception as err:  # noqa: BLE001 — raw API errors from bleak_esphome
+            if "pairing failed" in str(err).lower():
+                raise ProxyEncryptionError(
+                    f"encryption through the Bluetooth proxy failed: {err}"
+                ) from err
+            raise TransportError(
+                f"pairing through the Bluetooth proxy aborted: {err}"
+            ) from err
+        if paired is False:
+            # Older bleak_esphome reported a failed pairing by return value.
+            raise ProxyEncryptionError(
+                "encryption through the Bluetooth proxy failed"
+            )
 
     async def disconnect(self) -> None:
         # Not gated on is_connected (see _cleanup_disconnected_client):

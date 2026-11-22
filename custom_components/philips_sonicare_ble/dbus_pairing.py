@@ -316,8 +316,12 @@ async def async_pair_via_existing_client(client, mac: str) -> None:
     agent_registered = False
 
     try:
-        bus = MessageBus(bus_type=BusType.SYSTEM)
-        await bus.connect()
+        try:
+            bus = MessageBus(bus_type=BusType.SYSTEM)
+            await bus.connect()
+        except Exception as err:  # noqa: BLE001 — no D-Bus socket (#52)
+            bus = None
+            raise PairingError(f"System D-Bus not available: {err}") from err
 
         agent = _AutoConfirmAgent()
         bus.export(AGENT_PATH, agent)

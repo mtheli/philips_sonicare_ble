@@ -1160,7 +1160,40 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             # on Condor detection.
             just_paired_in_place = False
 
-            if SVC_CONDOR.lower() in gatt_services:
+            if SVC_CONDOR.lower() in gatt_services and self._probe_via_proxy:
+                # Bluetooth proxy: the bond lives on the proxy, not in the
+                # host's BlueZ — neither its bond state nor its pairing
+                # agent applies, and HA may run without D-Bus at all (#52).
+                # pair() on the proxy client bonds there, or only starts
+                # encryption when the proxy already holds a bond.
+                from .dbus_pairing import PAIR_TIMEOUT
+                _LOGGER.info(
+                    "%s: Condor service via Bluetooth proxy — pairing "
+                    "through the proxy",
+                    address,
+                )
+                try:
+                    paired = await asyncio.wait_for(
+                        client.pair(), timeout=PAIR_TIMEOUT
+                    )
+                    if paired is False:
+                        # Older bleak_esphome reported failure by value.
+                        raise RuntimeError("proxy reported pairing failed")
+                    await asyncio.sleep(0.5)
+                    just_paired_in_place = True
+                    # The link is encrypted now; the capabilities page
+                    # derives its BLE-security label from this flag.
+                    self._probe_needed_encryption = True
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "%s: pairing through the proxy failed: %s",
+                        address,
+                        err,
+                    )
+                    raise NotPairedException(
+                        "Condor brush requires bonding"
+                    ) from err
+            elif SVC_CONDOR.lower() in gatt_services:
                 from .dbus_pairing import (
                     PairingError,
                     async_is_device_paired,
@@ -2371,8 +2404,10 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._transport_type = TRANSPORT_BLEAK
                 await self._adopt_identity(data.get("identity"))
                 _LOGGER.info(
-                    "Read capabilities over direct BLE from %s: model %s, "
+                    "Read capabilities over %s from %s: model %s, "
                     "firmware %s, %s Sonicare service(s)",
+                    "a Bluetooth proxy" if self._probe_via_proxy
+                    else "direct BLE",
                     self._address, data.get("model") or "unknown",
                     data.get("firmware") or "unknown",
                     len(data.get("services", [])),

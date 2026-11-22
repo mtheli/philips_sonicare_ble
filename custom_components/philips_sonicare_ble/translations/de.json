@@ -15,6 +15,10 @@
     "esp_bridge_rotating_address": {
       "title": "Philips Sonicare: {device} verbindet sich nicht mehr über die ESP-Bridge {esp_device}",
       "description": "Die Integration **Philips Sonicare** hat festgestellt, dass **{device}** über die ESP-Bridge **{esp_device}** unter einer wechselnden Bluetooth-Adresse gekoppelt ist und der Chip der Bridge solche Adressen im Bluetooth-Controller auflöst. Die Bridge verliert die Zahnbürste dann nach jeder Sitzung, und neue Verbindungsversuche enden in `status=133`, bis sie neu eingerichtet wird.\n\n**Abhilfe:** Ergänze das in der YAML der Bridge, baue sie dann neu und flashe sie. Die Kopplung bleibt gültig:\n\n```yaml\nesphome:\n  build_flags:\n    - -DCONFIG_BT_BLE_RPA_SUPPORTED=0\n```\n\nDiese Warnung verschwindet von selbst, sobald die Bridge mit dieser Option läuft."
+    },
+    "stock_proxy_encryption": {
+      "title": "Philips Sonicare: {device} kann über den Bluetooth-Proxy keine verschlüsselte Verbindung aufbauen",
+      "description": "Die Integration **Philips Sonicare** verbindet sich über einen Bluetooth-Proxy mit **{device}**, aber der Proxy konnte die Verbindung mehrmals hintereinander nicht verschlüsseln. Diese Zahnbürste funktioniert nur über eine verschlüsselte Verbindung und bleibt deshalb nicht verfügbar. Die Integration versucht es erneut, sobald die Zahnbürste wach ist.\n\nMeist hat der Proxy die Kopplung nicht mehr, zum Beispiel nach einem Neuflashen oder Zurücksetzen, oder in seinen `esp32_ble`-Einstellungen fehlt `auth_req_mode: sc_bond`.\n\n**Abhilfe:** Prüfe die YAML des Proxys, entferne dann diese Zahnbürste und richte sie neu ein, damit sie sich mit dem Proxy koppelt. Für einen zuverlässigen Betrieb wird für diese Zahnbürste die ESP-Bridge empfohlen.\n\nDiese Warnung verschwindet von selbst, sobald die Verbindung wieder klappt."
     }
   },
   "config": {

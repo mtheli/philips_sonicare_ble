@@ -15,6 +15,10 @@
     "esp_bridge_rotating_address": {
       "title": "Philips Sonicare: {device} won't reconnect through ESP bridge {esp_device}",
       "description": "The **Philips Sonicare** integration found that **{device}** is paired through the ESP bridge **{esp_device}** under a rotating Bluetooth address, and the bridge's chip resolves such addresses in the Bluetooth controller. The bridge then loses the toothbrush after each session, and reconnects end in `status=133` until it is set up again.\n\n**To fix:** add this to the bridge's YAML, then rebuild and flash it. The pairing stays valid:\n\n```yaml\nesphome:\n  build_flags:\n    - -DCONFIG_BT_BLE_RPA_SUPPORTED=0\n```\n\nThis warning clears automatically once the bridge runs firmware with this option."
+    },
+    "stock_proxy_encryption": {
+      "title": "Philips Sonicare: {device} can't encrypt the connection through the Bluetooth proxy",
+      "description": "The **Philips Sonicare** integration connects to **{device}** through a Bluetooth proxy, but the proxy could not encrypt the connection several times in a row. This toothbrush only works over an encrypted connection, so it stays unavailable. The integration keeps retrying whenever the toothbrush is awake.\n\nThis usually means the proxy no longer holds the pairing, for example after it was reflashed or reset, or its `esp32_ble` settings are missing `auth_req_mode: sc_bond`.\n\n**To fix:** check the proxy's YAML, then remove this toothbrush and set it up again so it pairs with the proxy. For reliable operation, the ESP bridge is the recommended way to connect this toothbrush.\n\nThis warning clears automatically once the connection works again."
     }
   },
   "config": {

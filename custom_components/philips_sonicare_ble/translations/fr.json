@@ -15,6 +15,10 @@
     "esp_bridge_rotating_address": {
       "title": "Philips Sonicare : {device} ne se reconnecte pas via le pont ESP {esp_device}",
       "description": "L'intégration **Philips Sonicare** a détecté que **{device}** est appairée via le pont ESP **{esp_device}** sous une adresse Bluetooth changeante, et que la puce du pont résout ces adresses dans le contrôleur Bluetooth. Le pont perd alors la brosse à dents après chaque séance, et les reconnexions échouent avec `status=133` jusqu'à une nouvelle configuration.\n\n**Correction :** ajoutez ceci au YAML du pont, puis recompilez et flashez-le. L'appairage reste valide :\n\n```yaml\nesphome:\n  build_flags:\n    - -DCONFIG_BT_BLE_RPA_SUPPORTED=0\n```\n\nCet avertissement disparaît automatiquement dès que le pont utilise un firmware avec cette option."
+    },
+    "stock_proxy_encryption": {
+      "title": "Philips Sonicare : {device} ne peut pas chiffrer la connexion via le proxy Bluetooth",
+      "description": "L'intégration **Philips Sonicare** se connecte à **{device}** via un proxy Bluetooth, mais le proxy n'a pas pu chiffrer la connexion plusieurs fois de suite. Cette brosse à dents ne fonctionne qu'avec une connexion chiffrée, elle reste donc indisponible. L'intégration réessaie dès que la brosse à dents est réveillée.\n\nLe plus souvent, le proxy n'a plus l'appairage, par exemple après avoir été reflashé ou réinitialisé, ou ses paramètres `esp32_ble` ne contiennent pas `auth_req_mode: sc_bond`.\n\n**Pour corriger :** vérifiez le YAML du proxy, puis supprimez cette brosse à dents et configurez-la à nouveau pour qu'elle s'appaire avec le proxy. Pour un fonctionnement fiable, le bridge ESP est la méthode recommandée pour connecter cette brosse à dents.\n\nCet avertissement disparaît automatiquement dès que la connexion fonctionne à nouveau."
     }
   },
   "config": {

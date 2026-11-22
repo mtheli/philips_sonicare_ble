@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
+import re
 from typing import Any, Callable
 
 from homeassistant.core import HomeAssistant, callback
@@ -31,7 +32,7 @@ from .transport import (
     SonicareTransport,
     register_advertisements,
 )
-from .exceptions import TransportError
+from .exceptions import ProxyEncryptionError, TransportError
 from .condor_adapter import resolve_brushing_mode
 from .helpers import async_get_own_device
 from .const import (
@@ -113,6 +114,13 @@ _RAW_LOGGER.setLevel(logging.WARNING)  # silent unless explicitly enabled
 # connected device every 15 s, so waiting much longer than that only adds
 # dead time.
 ESP_RETRY_DELAY = 20
+# Condor over a stock Bluetooth proxy (#52): pair() timeout, and after how
+# many failed encryptions in a row the repair issue is raised.
+PROXY_PAIR_TIMEOUT = 15
+PROXY_ENCRYPT_ISSUE_AFTER = 3
+# GATT errors that mean the link is not encrypted (ATT 0x05 Insufficient
+# Authentication, 0x0F Insufficient Encryption) as bleak_esphome words them.
+_ATT_ENCRYPTION_ERROR = re.compile(r"\berror=(?:5|15)\b")
 
 STORAGE_VERSION = 1
 # Debounced: brushing sessions update data every second, so the actual disk
@@ -256,6 +264,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._setup_disconnect_count = 0
         self._full_read_done = False
         self._last_adapter_type: str | None = None
+        # Consecutive failures to encrypt a Condor link through a stock
+        # Bluetooth proxy (#52) — raises the repair issue.
+        self._proxy_encrypt_failures = 0
         self._unsub_adv_debug = None
         self._dbus_bus: MessageBus | None = None
         self._counterfeit_timer_task: asyncio.Task | None = None
@@ -1333,6 +1344,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             # ---- Connect and set up live monitoring ----
             async with self._connection_lock:
+                link_up = False
                 try:
                     # Check if ESP bridge needs resubscription (after ESP restart)
                     if (
@@ -1390,6 +1402,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                     _LOGGER.info("Establishing live connection to %s...", self.address)
                     await self.transport.connect()
+                    link_up = not self._is_esp_bridge
 
                     # The bridge reports its build environment while the
                     # transport waits for it, before the brush is connected —
@@ -1443,6 +1456,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self.data["connection_path"] = path
                         self.async_set_updated_data(self.data)
                     _LOGGER.info("%s: live monitoring active (%d subscriptions)", self.address, sub_count)
+                    # Unconditionally: the issue survives a reload or a
+                    # remove/re-add, where this counter starts at zero.
+                    self._proxy_encrypt_failures = 0
+                    self._clear_proxy_encryption_issue()
 
                     if self._is_esp_bridge:
                         self._update_bridge_device_version()
@@ -1462,6 +1479,11 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         # fault worth a warning — same class as the rest.
                         or "did not respond" in err_msg
                     )
+                    if link_up and self._on_stock_proxy_condor():
+                        # The link was up, so "timeout" here is a GATT
+                        # request left unanswered, not an absent brush —
+                        # worth a warning (#52: such a loop went unseen).
+                        is_unreachable = False
                     if is_unreachable:
                         _LOGGER.debug(
                             "%s: device not reachable: %s", self.address, err
@@ -1476,6 +1498,12 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         await self.transport.disconnect()
                     except Exception:
                         pass
+
+                    if self._is_proxy_encryption_error(err):
+                        # No pause: the brush is awake for two or three
+                        # minutes at most, and after a lost bond the proxy
+                        # drops its key, so the next attempt pairs afresh.
+                        self._count_proxy_encryption_failure()
 
                     if not self._is_esp_bridge:
                         # Direct BLE: quick retries, then wait for ADV
@@ -1876,6 +1904,64 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return self._last_adapter_type or "unknown"
         return self._last_adapter_type
 
+    def _on_stock_proxy_condor(self) -> bool:
+        """True for a Condor brush on a stock Bluetooth proxy (#52)."""
+        return (
+            self._use_condor
+            and not self._is_esp_bridge
+            and self.adapter_type == "stock_proxy"
+        )
+
+    def _is_proxy_encryption_error(self, err: Exception) -> bool:
+        """True for a Condor session over a stock proxy that failed on encryption."""
+        if not self._on_stock_proxy_condor():
+            return False
+        # The proxy rejected the pairing itself. Timeouts, link drops and
+        # proxies without pairing support raise a plain TransportError and
+        # say nothing about the bond, so they do not count here.
+        if isinstance(err, ProxyEncryptionError):
+            return True
+        # pair() went through but a GATT request still needs encryption.
+        msg = str(err).lower()
+        return (
+            "insufficient encryption" in msg
+            or "insufficient authentication" in msg
+            or _ATT_ENCRYPTION_ERROR.search(msg) is not None
+        )
+
+    def _count_proxy_encryption_failure(self) -> None:
+        """Count one more failed encryption, raise the repair issue if due."""
+        self._proxy_encrypt_failures += 1
+        _LOGGER.warning(
+            "%s: could not encrypt the link through the Bluetooth proxy "
+            "(%d in a row)",
+            self.address,
+            self._proxy_encrypt_failures,
+        )
+        if self._proxy_encrypt_failures >= PROXY_ENCRYPT_ISSUE_AFTER:
+            self._create_proxy_encryption_issue()
+
+    def _create_proxy_encryption_issue(self) -> None:
+        """Repair issue: the proxy cannot encrypt the link (bond lost or missing)."""
+        from homeassistant.helpers import issue_registry as ir
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            f"stock_proxy_encryption_{self.address.lower()}",
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key="stock_proxy_encryption",
+            translation_placeholders={
+                "device": self.entry.data.get("device_name") or self.address,
+            },
+        )
+
+    def _clear_proxy_encryption_issue(self) -> None:
+        from homeassistant.helpers import issue_registry as ir
+        ir.async_delete_issue(
+            self.hass, DOMAIN, f"stock_proxy_encryption_{self.address.lower()}"
+        )
+
     def _scanner_needs_eager_smp(self) -> bool:
         """True when the active transport is a stock ``bluetooth_proxy``."""
         return self.adapter_type == "stock_proxy"
@@ -1989,6 +2075,17 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         callers treat zero as a fatal session error just like Classic's
         subscription count.
         """
+        if self._scanner_needs_eager_smp():
+            # Stock bluetooth_proxy: Bluedroid never encrypts on its own,
+            # so the handshake's first CCCD write fails with Insufficient
+            # Encryption (ATT 0x0F) on every reconnect (#52). With a bond
+            # on the proxy, pair() only starts encryption.
+            _LOGGER.info(
+                "%s: stock bluetooth_proxy — encrypting the link before "
+                "the Condor handshake",
+                self.address,
+            )
+            await self.transport.pair(timeout=PROXY_PAIR_TIMEOUT)
         await self._protocol.connect()
 
         initial = await self._protocol.refresh_all()

@@ -344,12 +344,15 @@ def _async_migrate_to_identity(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     from homeassistant.helpers import issue_registry as ir
 
-    # Both repair issues are keyed by the address; their checks re-create
+    # The repair issues are keyed by the address; their checks re-create
     # them under the identity if they still apply.
     ir.async_delete_issue(
         hass, DOMAIN, f"esp_bridge_rotating_address_{old.lower()}"
     )
     ir.async_delete_issue(hass, DOMAIN, f"brushhead_counterfeit_{old}")
+    ir.async_delete_issue(
+        hass, DOMAIN, f"stock_proxy_encryption_{old.lower()}"
+    )
 
     data[CONF_ADDRESS] = identity
     data.setdefault(CONF_BOND_ADDRESS, old)
@@ -622,6 +625,10 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
         ir.async_delete_issue(
             hass, DOMAIN, f"esp_bridge_rotating_address_{address.lower()}"
+        )
+        # Same for the proxy-encryption issue (#52): its coordinator is gone.
+        ir.async_delete_issue(
+            hass, DOMAIN, f"stock_proxy_encryption_{address.lower()}"
         )
 
     try:

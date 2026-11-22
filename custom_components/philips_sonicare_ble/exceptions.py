@@ -19,6 +19,15 @@ class TransportError(PhilipsSonicareException):
     """Transport-level error."""
 
 
+class ProxyEncryptionError(TransportError):
+    """A stock Bluetooth proxy could not pair or encrypt the link (#52).
+
+    Raised only when the proxy itself reports the pairing as failed — not
+    for timeouts, link drops or proxies without pairing support, which say
+    nothing about the bond.
+    """
+
+
 class NotPairedException(PhilipsSonicareException):
     """Device requires BLE bonding but is not paired.
 
