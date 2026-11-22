@@ -91,7 +91,7 @@ The card is a **separate project and not bundled with this integration** -- inst
 
 [![Open Toothbrush Card in the Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=mtheli&repository=toothbrush-card&category=plugin)
 
-![Toothbrush Card with Sonicare](screenshots/Card.png)
+![Toothbrush Card with Sonicare while brushing](screenshots/CardBrushing.png)
 
 For small displays and wall panels there is also a compact view (`tooth_style: none`) with a large standalone timer -- shown here with the header and chips still enabled. With the header hidden as well (`show_header: false`), two of these fit side by side on a 480x480 wall panel:
 
@@ -416,6 +416,14 @@ For a detailed technical description of the BLE protocol including service UUIDs
 | Device Overview | Brush Head |
 | :---: | :---: |
 | ![Overview](screenshots/DeviceOverview.png) | ![Brush Head](screenshots/BrushHead.png) |
+
+| While Brushing | Condor Models (e.g. HX742X) | Condor Brush Head |
+| :---: | :---: | :---: |
+| ![Device page while brushing](screenshots/DeviceBrushing.png) | ![Condor device page](screenshots/DeviceCondor.png) | ![Condor brush head](screenshots/BrushHeadCondor.png) |
+
+| Card: Too Much Pressure | Card: Dark Theme | Card: Condor Model |
+| :---: | :---: | :---: |
+| ![Pressure high](screenshots/CardPressureHigh.png) | ![Dark theme](screenshots/CardDark.png) | ![Condor card](screenshots/CardCondor.png) |
 
 ---
 
