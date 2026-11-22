@@ -8,7 +8,7 @@ This is a custom component for Home Assistant to integrate **Philips Sonicare BL
 
 The integration connects to your toothbrush via **Bluetooth Low Energy (BLE)** to provide battery status, brushing session data, brush head wear tracking, and more. All communication is fully local -- no cloud, no app required.
 
-![Device overview in Home Assistant](screenshots/ToothBrush1.png)
+[![Device overview in Home Assistant](screenshots/ToothBrush1.png)](screenshots/ToothBrush1.png)
 
 Three connection methods are supported:
 
@@ -91,11 +91,11 @@ The card is a **separate project and not bundled with this integration** -- inst
 
 [![Open Toothbrush Card in the Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=mtheli&repository=toothbrush-card&category=plugin)
 
-![Toothbrush Card with Sonicare while brushing](screenshots/CardBrushing.png)
+[![Toothbrush Card with Sonicare while brushing](screenshots/CardBrushing.png)](screenshots/CardBrushing.png)
 
 For small displays and wall panels there is also a compact view (`tooth_style: none`) with a large standalone timer -- shown here with the header and chips still enabled. With the header hidden as well (`show_header: false`), two of these fit side by side on a 480x480 wall panel:
 
-![Toothbrush Card compact view](screenshots/CardCompact.png)
+[![Toothbrush Card compact view](screenshots/CardCompact.png)](screenshots/CardCompact.png)
 
 ---
 
@@ -411,19 +411,19 @@ For a detailed technical description of the BLE protocol including service UUIDs
 
 | Sensors & Controls | Diagnostics | Dashboard Card |
 | :---: | :---: | :---: |
-| ![Sensors](screenshots/ToothBrush1.png) | ![Diagnostics](screenshots/ToothBrush2.png) | ![Card](screenshots/Card.png) |
+| [![Sensors](screenshots/ToothBrush1.png)](screenshots/ToothBrush1.png) | [![Diagnostics](screenshots/ToothBrush2.png)](screenshots/ToothBrush2.png) | [![Card](screenshots/Card.png)](screenshots/Card.png) |
 
 | Device Overview | Brush Head |
 | :---: | :---: |
-| ![Overview](screenshots/DeviceOverview.png) | ![Brush Head](screenshots/BrushHead.png) |
+| [![Overview](screenshots/DeviceOverview.png)](screenshots/DeviceOverview.png) | [![Brush Head](screenshots/BrushHead.png)](screenshots/BrushHead.png) |
 
 | While Brushing | Condor Models (e.g. HX742X) | Condor Brush Head |
 | :---: | :---: | :---: |
-| ![Device page while brushing](screenshots/DeviceBrushing.png) | ![Condor device page](screenshots/DeviceCondor.png) | ![Condor brush head](screenshots/BrushHeadCondor.png) |
+| [![Device page while brushing](screenshots/DeviceBrushing.png)](screenshots/DeviceBrushing.png) | [![Condor device page](screenshots/DeviceCondor.png)](screenshots/DeviceCondor.png) | [![Condor brush head](screenshots/BrushHeadCondor.png)](screenshots/BrushHeadCondor.png) |
 
 | Card: Too Much Pressure | Card: Dark Theme | Card: Condor Model |
 | :---: | :---: | :---: |
-| ![Pressure high](screenshots/CardPressureHigh.png) | ![Dark theme](screenshots/CardDark.png) | ![Condor card](screenshots/CardCondor.png) |
+| [![Pressure high](screenshots/CardPressureHigh.png)](screenshots/CardPressureHigh.png) | [![Dark theme](screenshots/CardDark.png)](screenshots/CardDark.png) | [![Condor card](screenshots/CardCondor.png)](screenshots/CardCondor.png) |
 
 ---
 
