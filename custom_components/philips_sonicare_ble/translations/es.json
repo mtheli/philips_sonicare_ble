@@ -15,6 +15,10 @@
     "esp_bridge_rotating_address": {
       "title": "Philips Sonicare: {device} no se vuelve a conectar a través del puente ESP {esp_device}",
       "description": "La integración **Philips Sonicare** ha detectado que **{device}** está emparejado a través del puente ESP **{esp_device}** con una dirección Bluetooth rotativa, y el chip del puente resuelve ese tipo de direcciones en el controlador Bluetooth. Como consecuencia, el puente pierde el cepillo de dientes tras cada sesión y las reconexiones terminan en `status=133` hasta que se vuelve a configurar.\n\n**Para solucionarlo:** añade esto al YAML del puente y, después, vuelve a compilarlo y flashearlo. El emparejamiento sigue siendo válido:\n\n```yaml\nesphome:\n  build_flags:\n    - -DCONFIG_BT_BLE_RPA_SUPPORTED=0\n```\n\nEste aviso desaparece automáticamente en cuanto el puente ejecute un firmware con esta opción."
+    },
+    "stock_proxy_encryption": {
+      "title": "Philips Sonicare: {device} no puede cifrar la conexión a través del proxy Bluetooth",
+      "description": "La integración **Philips Sonicare** se conecta a **{device}** a través de un proxy Bluetooth, pero el proxy no ha podido cifrar la conexión varias veces seguidas. Este cepillo de dientes solo funciona con una conexión cifrada, por lo que sigue no disponible. La integración vuelve a intentarlo cada vez que el cepillo de dientes está despierto.\n\nNormalmente significa que el proxy ya no conserva el emparejamiento, por ejemplo después de volver a flashearlo o restablecerlo, o que en su configuración `esp32_ble` falta `auth_req_mode: sc_bond`.\n\n**Para solucionarlo:** revisa el YAML del proxy y, después, elimina este cepillo de dientes y vuelve a configurarlo para que se empareje con el proxy. Para un funcionamiento fiable, se recomienda conectar este cepillo de dientes mediante el puente ESP.\n\nEste aviso desaparece automáticamente en cuanto la conexión vuelva a funcionar."
     }
   },
   "config": {
