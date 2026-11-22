@@ -91,7 +91,7 @@ The card is a **separate project and not bundled with this integration** -- inst
 
 [![Open Toothbrush Card in the Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=mtheli&repository=toothbrush-card&category=plugin)
 
-[![Toothbrush Card with Sonicare while brushing](screenshots/CardBrushing.png)](screenshots/CardBrushing.png)
+<a href="screenshots/CardBrushing.png"><img src="screenshots/CardBrushing.png" alt="Toothbrush Card with Sonicare while brushing" width="424"></a>
 
 For small displays and wall panels there is also a compact view (`tooth_style: none`) with a large standalone timer -- shown here with the header and chips still enabled. With the header hidden as well (`show_header: false`), two of these fit side by side on a 480x480 wall panel:
 
@@ -419,11 +419,11 @@ For a detailed technical description of the BLE protocol including service UUIDs
 
 | While Brushing | Condor Models (e.g. HX742X) | Condor Brush Head |
 | :---: | :---: | :---: |
-| [![Device page while brushing](screenshots/DeviceBrushing.png)](screenshots/DeviceBrushing.png) | [![Condor device page](screenshots/DeviceCondor.png)](screenshots/DeviceCondor.png) | [![Condor brush head](screenshots/BrushHeadCondor.png)](screenshots/BrushHeadCondor.png) |
+| <a href="screenshots/DeviceBrushing.png"><img src="screenshots/DeviceBrushing.png" alt="Device page while brushing" width="270"></a> | <a href="screenshots/DeviceCondor.png"><img src="screenshots/DeviceCondor.png" alt="Condor device page" width="270"></a> | <a href="screenshots/BrushHeadCondor.png"><img src="screenshots/BrushHeadCondor.png" alt="Condor brush head" width="270"></a> |
 
 | Card: Too Much Pressure | Card: Dark Theme | Card: Condor Model |
 | :---: | :---: | :---: |
-| [![Pressure high](screenshots/CardPressureHigh.png)](screenshots/CardPressureHigh.png) | [![Dark theme](screenshots/CardDark.png)](screenshots/CardDark.png) | [![Condor card](screenshots/CardCondor.png)](screenshots/CardCondor.png) |
+| <a href="screenshots/CardPressureHigh.png"><img src="screenshots/CardPressureHigh.png" alt="Pressure high" width="270"></a> | <a href="screenshots/CardDark.png"><img src="screenshots/CardDark.png" alt="Dark theme" width="270"></a> | <a href="screenshots/CardCondor.png"><img src="screenshots/CardCondor.png" alt="Condor card" width="270"></a> |
 
 ---
 
