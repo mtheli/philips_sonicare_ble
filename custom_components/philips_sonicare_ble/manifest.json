@@ -15,6 +15,6 @@
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/mtheli/philips_sonicare_ble/issues",
   "requirements": [],
-  "version": "0.34.1",
+  "version": "0.35.0",
   "zeroconf": [{"type": "_esphomelib._tcp.local."}]
 }
