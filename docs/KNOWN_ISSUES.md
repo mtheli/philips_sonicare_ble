@@ -6,7 +6,7 @@
 
 | Issue | Affects | Known since | Status |
 | :--- | :--- | :--- | :--- |
-| [Brushes with a rotating address do not reconnect on Linux kernel 6.19 and later](#brushes-with-a-rotating-address-do-not-reconnect-on-linux-kernel-619-and-later) | Direct Bluetooth on Linux 6.19+ (not Home Assistant OS) | 2026-10-30 | ⏳ Fixed in the kernel, not yet released |
+| [Brushes with a rotating address do not reconnect on Linux kernel 6.19 and later](#brushes-with-a-rotating-address-do-not-reconnect-on-linux-kernel-619-and-later) | Direct Bluetooth on Linux 6.19 to 7.2.7 (not Home Assistant OS) | 2026-10-30 | ✅ Fixed in Linux 7.2.8 and 7.3 |
 | [Some USB dongles cannot complete SMP bonding](#some-usb-dongles-cannot-complete-smp-bonding) | Some USB Bluetooth dongles | 2026-07-20 | ❌ Adapter limitation |
 | [Budget BT adapters can't scan while a GATT connection is active](#budget-bt-adapters-cant-scan-while-a-gatt-connection-is-active) | Budget USB Bluetooth adapters | 2026-04-24 | ❌ Adapter limitation |
 | [Toothbrush not reachable on charger](#toothbrush-not-reachable-on-charger) | All models | 2026-04-01 | ℹ️ By design |
@@ -18,11 +18,13 @@
 
 **Known since:** 2026-10-30
 
-**Status:** Linux kernel bug, fixed in `bluetooth-next` but not yet in a released kernel (not in 7.3)
+**Status:** Linux kernel bug, fixed in Linux 7.2.8 and 7.3; Ubuntu ships the fix from kernel 7.0.0-44
 
 Affects brushes that advertise under a rotating private address, such as the
 Series 7100 (HX742X), connected over **direct Bluetooth** to a host running
-Linux **6.19 or later** — for example Ubuntu with kernel 7.0. Home Assistant
+Linux **6.19 up to 7.2.7** — for example Ubuntu with a kernel 7.0 before
+7.0.0-44. Linux 6.19, 7.0 and 7.1 no longer receive upstream stable updates,
+so they only get the fix if your distribution backports it. Home Assistant
 OS runs kernel 6.18 and is not affected, and neither is the ESP bridge.
 Brushes with a fixed address (most other models) are not affected.
 
@@ -42,10 +44,14 @@ the device's identity address type, but sends the private address it
 currently advertises under. The controller then looks for a public device
 with a random address and never finds it. Reported upstream in
 [bluez/bluez#2609](https://github.com/bluez/bluez/issues/2609) (first seen
-with hearing aids); the fixes are queued in `bluetooth-next`.
+with hearing aids) and fixed by the commits "Bluetooth: keep dst_type with
+dst when reusing an LE connection" and "Bluetooth: put the peer's on-air
+address on air when we cannot resolve".
 
 ### Mitigations
 
+- Update the host kernel to Linux 7.2.8 or 7.3 or later, or on Ubuntu with
+  kernel 7.0 to 7.0.0-44 or later.
 - Run Home Assistant on Home Assistant OS, or on a host with a kernel
   before 6.19.
 - Connect the brush through the [ESP32 bridge](ESP32_BRIDGE.md) instead of
