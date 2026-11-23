@@ -3,6 +3,7 @@
 [![Home Assistant Marketplace](https://img.shields.io/badge/Marketplace-listed-41BDF5.svg)](https://www.home-assistant.io/integrations/marketplace/)
 [![GitHub Release](https://img.shields.io/github/v/release/mtheli/philips_sonicare_ble)](https://github.com/mtheli/philips_sonicare_ble/releases)
 [![License: MIT](https://img.shields.io/github/license/mtheli/philips_sonicare_ble)](LICENSE)
+[![nixpkgs](https://img.shields.io/badge/nixpkgs-packaged-5277C3?logo=nixos&logoColor=white)](https://search.nixos.org/packages?channel=unstable&query=philips-sonicare-ble)
 
 This is a custom component for Home Assistant to integrate **Philips Sonicare BLE toothbrushes**.
 
@@ -223,6 +224,19 @@ Requires Home Assistant 2025.2 or newer. On Home Assistant before 2026.11, the b
 
 1.  Copy the `custom_components/philips_sonicare_ble` directory from this repository into your Home Assistant `config/custom_components/` folder.
 2.  Restart Home Assistant.
+
+</details>
+
+<details>
+<summary>NixOS</summary>
+
+The integration is packaged in nixpkgs as `home-assistant-custom-components.philips-sonicare-ble` (maintained by the nixpkgs community, so the version there can lag behind the latest release):
+
+```nix
+services.home-assistant.customComponents = [
+  pkgs.home-assistant-custom-components.philips-sonicare-ble
+];
+```
 
 </details>
 
