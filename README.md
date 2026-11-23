@@ -27,7 +27,7 @@ See [Configuration](#configuration) for setup instructions.
 
 - [Tested Models](#tested-models)
 - [Dashboard Card](#dashboard-card)
-- [Community Blueprints](#community-blueprints)
+- [Community](#community)
 - [Supported Languages](#supported-languages)
 - [Features](#features)
 - [Prerequisites](#prerequisites)
@@ -100,11 +100,17 @@ For small displays and wall panels there is also a compact view (`tooth_style: n
 
 ---
 
-## Community Blueprints
+## Community
+
+### Blueprints
 
 [**Toothbrushing Notification System (Morning/Evening)**](https://community.home-assistant.io/t/adhd-friendly-toothbrushing-notification-system-morning-evening/1017326) — a blueprint by [@CoatsyJnr](https://github.com/CoatsyJnr) that reminds you to brush morning and evening, at deliberately unpredictable times so the reminder does not fade into background noise. It triggers on this integration's live brushing state — pick the **Brushing** binary sensor (the **Brushing State** sensor works as well). The blueprint's own description also offers the **Handle State** and **Activity** sensors, but its trigger compares against the translated display names rather than the raw states (`run` and `brushing`), so those two never fire; I reported it as [CoatsyJnr/home-assistant-blueprints#1](https://github.com/CoatsyJnr/home-assistant-blueprints/issues/1).
 
 Like the card above, this is a **separate project and not bundled with this integration**.
+
+### Maintenance reminders
+
+[Maintenance Supporter](https://github.com/iluebbe/maintenance_supporter) by [@iluebbe](https://github.com/iluebbe) and [Home Keeper](https://github.com/prestomation/ha-home-keeper) by [@prestomation](https://github.com/prestomation) detect this integration and offer a task to replace the brush head, based on the brush head's **Wear** sensor.
 
 ---
 
