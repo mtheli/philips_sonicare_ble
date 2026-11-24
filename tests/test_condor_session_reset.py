@@ -123,14 +123,14 @@ async def test_invalidated_session_runs_the_handshake_again() -> None:
 async def test_invalidation_forgets_the_negotiated_session_state() -> None:
     """Sequence counter and packet size come back as fresh-session values."""
     protocol, _transport = await _open_session()
-    protocol._next_data_seq = 17
-    protocol._rx_buffer = bytearray(b"\x01\x02")
+    protocol._link._next_data_seq = 17
+    protocol._link._rx_buffer = bytearray(b"\x01\x02")
     protocol._subscribed_ports = [("1", "Battery")]
 
     protocol.invalidate_session()
 
-    assert protocol._next_data_seq == 1
-    assert protocol._rx_buffer == bytearray()
+    assert protocol._link._next_data_seq == 1
+    assert protocol._link._rx_buffer == bytearray()
     assert protocol._subscribed_ports == []
 
 

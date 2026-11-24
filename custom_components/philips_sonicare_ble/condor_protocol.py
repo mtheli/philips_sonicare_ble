@@ -4,76 +4,45 @@
 manufacturer-data (Philips Company ID 477). Confirmed on Sonicare
 HX742X / Series 7100 running firmware 1.8.20.0.
 
-Wire format (on top of GATT service ``e50ba3c0-…``):
-
-- Version negotiation and channel-config exchange on ``…0006`` / ``…0007``
-- Framed messages on ``…0001`` (RX, app→device) and ``…0003`` (TX,
-  device→app), each fragment carrying a 1-byte transport header. Frame
-  structure: ``FE FF`` + 1-byte type + 2-byte big-endian length + body.
-- Properties are addressed as ``product_id/port_name`` (e.g. ``1/Battery``,
-  ``1/RoutineStatus``). Bodies are UTF-8 JSON for named ports, raw bytes
-  for ``*.b`` streaming ports.
-
-Phase 2a implements the V4 handshake + frame transport; later phases add
-the JSON-to-data-key adapter and live update routing.
+This module is the message half of the protocol: products, ports,
+properties, change indications, and how they map onto the integration's
+data keys. Exchanging the messages with the device — over BLE the V4
+handshake, framing and acks — is the job of a ``CondorLink``
+(``condor_link.py``). By default the link is a ``CondorBleLink`` on the
+transport passed in.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-import struct
-import time
 from typing import Any
 
 from .condor_adapter import map_port_props, map_sensor_frame
-from .const import (
-    CHAR_CLIENT_CFG,
-    CHAR_PROTO_CFG,
-    CHAR_RX,
-    CHAR_RX_ACK,
-    CHAR_SERVER_CFG,
-    CHAR_TX,
-    CHAR_TX_ACK,
-    SVC_CONDOR,
+from .condor_link import (  # noqa: F401 — re-exported for callers and tests
+    MSG_CHANGE_IND,
+    MSG_CHANGE_IND_RESP,
+    MSG_GENERIC_RESP,
+    MSG_GET_PORTS,
+    MSG_GET_PRODS,
+    MSG_GET_PROPS,
+    MSG_INITIALIZE_REQ,
+    MSG_INITIALIZE_RESP,
+    MSG_PUT_PROPS,
+    MSG_SUBSCRIBE,
+    MSG_UNSUBSCRIBE,
+    RESPONSE_TIMEOUT,
+    STATUS_NAMES,
+    STATUS_OK,
+    SUBSCRIBE_TIMEOUT_SECS,
+    CondorBleLink,
+    CondorLink,
+    status_name,
 )
 from .exceptions import TransportError
 from .protocol import SonicareProtocol, UpdateCallback
 from .transport import SonicareTransport
 
 _LOGGER = logging.getLogger(__name__)
-
-# Message types on the framed layer
-MSG_INITIALIZE_REQ = 1
-MSG_INITIALIZE_RESP = 2
-MSG_PUT_PROPS = 3
-MSG_GET_PROPS = 4
-MSG_SUBSCRIBE = 5
-MSG_UNSUBSCRIBE = 6
-MSG_GENERIC_RESP = 7
-MSG_CHANGE_IND = 8
-MSG_CHANGE_IND_RESP = 9
-MSG_GET_PRODS = 10
-MSG_GET_PORTS = 11
-
-STATUS_OK = 0
-STATUS_NAMES = {
-    0: "NoError", 1: "NotUnderstood", 2: "OutOfMemory", 3: "NoSuchPort",
-    4: "NotImplemented", 5: "VersionNotSupported", 6: "NoSuchProperty",
-    7: "NoSuchOperation", 8: "NoSuchProduct", 9: "PropertyAlreadyExists",
-    10: "NoSuchMethod", 11: "WrongParameters", 12: "InvalidParameter",
-    13: "NotSubscribed", 14: "ProtocolViolation",
-}
-
-# Transport header bits (1-byte header before each BLE chunk)
-_BIT_CHANNEL = 0x80  # 0 = data, 1 = binary
-_BIT_START = 0x40    # set only on the channel-open handshake packet
-_MASK_SEQ = 0x3F     # seq 0..63, wraps
-
-# Subscribe timeout: ports stay subscribed for a year unless explicitly
-# unsubscribed.
-SUBSCRIBE_TIMEOUT_SECS = 31_536_000
 
 # Default port subscription set. Confirmed live on HX742X 2026-04-23:
 # Sonicare + RoutineStatus are chatty during sessions; Battery / BrushHead /
@@ -86,412 +55,58 @@ DEFAULT_SUBSCRIBE_PORTS: tuple[tuple[str, str], ...] = (
     ("1", "SessionStorage"),
 )
 
-# Safe default packet size before Phase-2 channel-config lands. BlueZ keeps
-# ATT MTU at 23 unless negotiated, which leaves 20 bytes of payload.
-_DEFAULT_PACKET_SIZE = 20
-_HANDSHAKE_TIMEOUT = 5.0
-_RESPONSE_TIMEOUT = 5.0
-# Some hosts hand every notification to the program many times although the
-# brush sent it once (issue #45: ~60 copies within microseconds). A copy is
-# the same bytes on the same characteristic as the delivery before it; a
-# new TX packet cannot look like that because its sequence number moves on.
-# A copy later than this is taken as the brush sending the packet again
-# (its ack went missing) and acked once more — but never reassembled twice.
-_COPY_WINDOW = 0.1
-_monotonic = time.monotonic
-
 
 class CondorProtocol(SonicareProtocol):
-    """Framed request/response + change-indication protocol."""
+    """Port reads, writes and change indications over a ``CondorLink``."""
 
-    def __init__(self, transport: SonicareTransport) -> None:
+    def __init__(
+        self, transport: SonicareTransport, link: CondorLink | None = None,
+    ) -> None:
         super().__init__(transport)
-        self._max_packet_size: int = _DEFAULT_PACKET_SIZE
-        self._connected: bool = False
+        self._link: CondorLink = link if link is not None else CondorBleLink(transport)
         self._live_callback: UpdateCallback | None = None
-
-        # Handshake sync
-        self._server_cfg_event = asyncio.Event()
-        self._server_cfg_data = b""
-        self._handshake_ack_event = asyncio.Event()
-
-        # Frame reassembly + request/response demux
-        self._rx_buffer = bytearray()
-        self._response_event = asyncio.Event()
-        self._response_data = b""
-
-        # Outgoing data-channel sequence: starts at 1 after the channel-open
-        # START frame (which alone carries BIT_START + seq 0), then advances
-        # mod-64. See _next_seq for the wrap invariant.
-        self._next_data_seq = 1
-
-        # Serializes outbound RX writes so chunks of different frames never
-        # interleave. Distinct from _response_lock, which serializes the
-        # full request/response cycle (only one in flight at a time).
-        self._send_lock = asyncio.Lock()
-        self._response_lock = asyncio.Lock()
-
-        # Last delivery per characteristic: (bytes, monotonic time), and
-        # how many copies of earlier deliveries were dropped this session.
-        self._last_delivery: dict[str, tuple[bytes, float]] = {}
-        self._copies_dropped = 0
-        self._resends = 0
 
         # Ports currently under Subscribe. Tracked so stop_live_updates can
         # clean up symmetrically regardless of which set was requested.
         self._subscribed_ports: list[tuple[str, str]] = []
 
+    @property
+    def _connected(self) -> bool:
+        return self._link.is_open
+
     # --- Session lifecycle -------------------------------------------------
 
     async def connect(self) -> None:
-        """Run the Condor V4 handshake on top of an already-open transport.
-
-        Phases: subscribe SERVER_CFG → version-negotiation → subscribe
-        TX/RX_ACK → channel-config → channel-open → InitializeReq. Each
-        phase is strictly ordered — HX742X FW 1.8.20.0 drops the link if
-        TX is subscribed before version negotiation completes.
-        """
-        if self._connected:
-            return
-
-        await self._transport.subscribe(CHAR_SERVER_CFG, self._on_server_cfg)
-
-        # Phase 1 — version negotiation. Announce [0x03, 0x04]; device
-        # replies with 1 byte = chosen transport version.
-        self._server_cfg_event.clear()
-        await self._transport.write_char(CHAR_CLIENT_CFG, bytes([0x03, 0x04]))
-        version_data = await self._await_server_cfg(1)
-        chosen = version_data[0]
-        if chosen != 4:
-            raise TransportError(
-                f"Condor transport v{chosen} is not supported (only v4 implemented)"
-            )
-
-        # Only now subscribe the data + ack channels — earlier subscriptions
-        # cause FW 1.8.20.0 to disconnect.
-        await self._transport.subscribe(CHAR_TX, self._on_tx)
-        await self._transport.subscribe(CHAR_RX_ACK, self._on_rx_ack)
-
-        # Phase 2 — channel config. Device replies with 6 bytes: 3× LE uint16
-        # = (max_packet_size, ch0_buf, ch1_buf).
-        self._server_cfg_event.clear()
-        await self._transport.write_char(
-            CHAR_CLIENT_CFG, bytes([0xFF, 0xFF, 0xFF, 0xFF])
-        )
-        cfg_data = await self._await_server_cfg(6)
-        max_pkt, _ch0_buf, _ch1_buf = struct.unpack("<HHH", cfg_data)
-        # Clamp to the safe BLE-MTU default; a real MTU exchange would let
-        # us lift this, but BlueZ stays at 23 unless negotiated and we have
-        # no cross-transport MTU accessor yet.
-        self._max_packet_size = max(min(max_pkt, _DEFAULT_PACKET_SIZE), 4)
-
-        # Phase 3 — open the data channel. 1-byte packet with BIT_START and
-        # seq=0; device acks on RX_ACK. Until that ack lands, any framed
-        # payload we send is discarded.
-        self._handshake_ack_event.clear()
-        await self._transport.write_char(CHAR_RX, bytes([_BIT_START]))
-        try:
-            await asyncio.wait_for(
-                self._handshake_ack_event.wait(), _HANDSHAKE_TIMEOUT
-            )
-        except asyncio.TimeoutError as err:
-            raise TransportError("No channel-open ACK from Condor device") from err
-
-        # Phase 4 — drive the framed protocol. Empty Initialize marks the
-        # session ready for GetProds / GetPorts / GetProps traffic.
-        await self._send_and_wait(MSG_INITIALIZE_REQ)
-
-        self._connected = True
-        _LOGGER.debug(
-            "Condor session open (max_packet=%d)", self._max_packet_size,
-        )
+        """Open the link's session (over BLE: the Condor V4 handshake)."""
+        await self._link.open()
 
     def invalidate_session(self) -> None:
         """Forget the open session without touching the link.
 
-        The handshake state lives here, the notification registrations live
-        in the transport. When a link drops, the transport drops its half on
-        its own — this drops ours, synchronously, so ``connect()`` cannot
-        short-circuit on a session that ended with the previous link. Safe to
-        call at any time, including when no session was ever open.
+        When a link drops, the transport drops its notification registrations
+        on its own — this drops the session state on both layers,
+        synchronously, so ``connect()`` cannot short-circuit on a session that
+        ended with the previous link. Safe to call at any time, including when
+        no session was ever open.
         """
-        self._connected = False
-        self._live_callback = None
+        self._set_live_callback(None)
         self._subscribed_ports = []
-        self._max_packet_size = _DEFAULT_PACKET_SIZE
-        self._rx_buffer = bytearray()
-        self._next_data_seq = 1
-        self._server_cfg_data = b""
-        self._server_cfg_event.clear()
-        self._handshake_ack_event.clear()
-        if self._copies_dropped or self._resends:
-            _LOGGER.debug(
-                "Condor: dropped %d host copies and %d resent packets of "
-                "notifications this session",
-                self._copies_dropped, self._resends,
-            )
-        self._last_delivery = {}
-        self._copies_dropped = 0
-        self._resends = 0
+        self._link.invalidate()
 
     async def disconnect(self) -> None:
-        """Tear down protocol-level subscriptions. The BLE link itself is
-        the transport's concern — disconnect is idempotent."""
-        self.invalidate_session()
-        for uuid in (CHAR_SERVER_CFG, CHAR_TX, CHAR_RX_ACK):
-            try:
-                await self._transport.unsubscribe(uuid)
-            except Exception:  # noqa: BLE001
-                pass
+        """Tear down the session. The BLE link itself is the transport's
+        concern — disconnect is idempotent."""
+        self._set_live_callback(None)
+        self._subscribed_ports = []
+        await self._link.close()
 
-    async def _await_server_cfg(self, expected_len: int) -> bytes:
-        try:
-            await asyncio.wait_for(
-                self._server_cfg_event.wait(), _HANDSHAKE_TIMEOUT
-            )
-        except asyncio.TimeoutError as err:
-            raise TransportError(
-                f"No Condor SERVER_CFG response (expected {expected_len}B)"
-            ) from err
-        if len(self._server_cfg_data) != expected_len:
-            raise TransportError(
-                f"Condor SERVER_CFG length mismatch: "
-                f"got {len(self._server_cfg_data)}B, expected {expected_len}B"
-            )
-        return self._server_cfg_data
-
-    # --- Notification callbacks -------------------------------------------
-
-    def _repeat_age(self, uuid: str, data: bytes) -> float | None:
-        """Seconds since the identical previous delivery, None if new.
-
-        Records this delivery either way.
-        """
-        now = _monotonic()
-        last = self._last_delivery.get(uuid)
-        self._last_delivery[uuid] = (bytes(data), now)
-        if last is None or last[0] != data:
-            return None
-        age = now - last[1]
-        if age >= _COPY_WINDOW:
-            # The brush sent it again, most likely because an ack was lost.
-            self._resends += 1
-            _LOGGER.debug(
-                "Condor: packet resent after %.0f ms on %s", age * 1000, uuid
-            )
-            return age
-        self._copies_dropped += 1
-        if self._copies_dropped == 1:
-            _LOGGER.info(
-                "Condor: notification delivered again after %.3f ms on %s — "
-                "the host repeats notifications; dropping the copies",
-                age * 1000, uuid,
-            )
-        return age
-
-    def _on_server_cfg(self, uuid: str, data: bytes) -> None:
-        # A late copy of the 1-byte version reply must not answer the
-        # 6-byte channel-config request that follows it.
-        if self._repeat_age(uuid, data) is not None:
-            return
-        self._server_cfg_data = bytes(data)
-        self._server_cfg_event.set()
-
-    def _on_rx_ack(self, _uuid: str, _data: bytes) -> None:
-        # First RX_ACK after the channel-open write completes the handshake.
-        # Subsequent ones ack our own outbound chunks; we don't gate on them.
-        if not self._handshake_ack_event.is_set():
-            self._handshake_ack_event.set()
-
-    def _on_tx(self, uuid: str, data: bytes) -> None:
-        if len(data) < 1:
-            return
-        seq = data[0] & _MASK_SEQ
-        payload = bytes(data[1:])
-
-        age = self._repeat_age(uuid, data)
-        if age is not None:
-            # Already reassembled. Ack only a resend — acking every copy
-            # floods TX_ACK and the brush disconnects.
-            if age >= _COPY_WINDOW and not self._transport.auto_tx_ack:
-                asyncio.get_running_loop().create_task(self._send_tx_ack(seq))
-            return
-
-        # Every incoming data packet must be acked on TX_ACK — otherwise
-        # the device's send window fills up and notifications stall, and
-        # if we're slow enough (>250 ms) the brush tears the link down with
-        # reason=0x13 mid-session. ESP bridges v1.6.0+ echo the ack on the
-        # BLE thread already, so skip the HA-loop round-trip there.
-        if not self._transport.auto_tx_ack:
-            asyncio.get_running_loop().create_task(self._send_tx_ack(seq))
-
-        # A single logical frame may land across several notifications;
-        # reassemble until 5 + payload_len bytes are buffered.
-        self._rx_buffer.extend(payload)
-        buf = bytes(self._rx_buffer)
-        if len(buf) < 5 or buf[0] != 0xFE or buf[1] != 0xFF:
-            return
-        payload_len = struct.unpack(">H", buf[3:5])[0]
-        if len(buf) < 5 + payload_len:
-            return
-        msg_type = buf[2]
-        body = buf[5:5 + payload_len]
-        self._rx_buffer = bytearray(buf[5 + payload_len:])
-        self._dispatch_frame(msg_type, body)
-
-    def _dispatch_frame(self, msg_type: int, body: bytes) -> None:
-        if msg_type == MSG_CHANGE_IND:
-            # Unsolicited push notification — ack first so the device keeps
-            # streaming, then route the decoded delta to the live callback.
-            asyncio.get_running_loop().create_task(self._send_change_ind_ack())
-            self._route_change_indication(body)
-            return
-
-        # Everything else is a response to the pending request. If no one
-        # is waiting, drop it — spurious responses after a timeout are
-        # harmless, and we don't want to leak state into the next cycle.
-        self._response_data = body
-        self._response_event.set()
-
-    def _route_change_indication(self, body: bytes) -> None:
-        """Parse a ChangeIndication payload and fan it out to the callback.
-
-        Payload layout (device → app): ``<product>/<port>\\0<json_body>\\0``.
-        Note the product/port separator is a slash, **not** a NUL — that
-        differs from the Subscribe request payload, where both boundaries
-        are NUL. Binary ``*.b`` streaming ports never go through the JSON
-        adapter; they are noted at debug level and dropped for now — the
-        pressure/temperature stream decode is a later phase.
-        """
-        if self._live_callback is None:
-            return
-        parts = body.split(b"\x00", 1)
-        if len(parts) < 2 or b"/" not in parts[0]:
-            _LOGGER.debug("Condor ChangeInd malformed (%dB): %s", len(body), body.hex())
-            return
-        try:
-            header = parts[0].decode("ascii")
-        except UnicodeDecodeError:
-            _LOGGER.debug("Condor ChangeInd non-ascii header: %s", parts[0].hex())
-            return
-        prod, port = header.split("/", 1)
-        if port.endswith(".b"):
-            # SensorData.b carries the pressure/temperature telemetry stream;
-            # other binary ports stay unhandled. The body runs from the byte
-            # after the header NUL to the exact end of the frame — the frame's
-            # own length field delimits it, so there is no trailing terminator
-            # to strip (stripping one would corrupt a frame ending in 0x00).
-            binary_body = parts[1]
-            if port == "SensorData.b":
-                delta = map_sensor_frame(binary_body)
-                if delta:
-                    try:
-                        self._live_callback(delta)
-                    except Exception as err:  # noqa: BLE001
-                        _LOGGER.exception("Condor sensor callback failed: %s", err)
-                return
-            _LOGGER.debug(
-                "Condor ChangeInd binary port %s/%s (%dB) — skipped",
-                prod, port, len(binary_body),
-            )
-            return
-        raw_body = parts[1].rstrip(b"\x00")
-        if not raw_body:
-            return
-        try:
-            props = json.loads(raw_body.decode("utf-8", errors="replace"))
-        except ValueError:
-            _LOGGER.debug(
-                "Condor ChangeInd %s/%s body not JSON: %s", prod, port, raw_body.hex(),
-            )
-            return
-        if not isinstance(props, dict):
-            return
-        delta = map_port_props(port, props)
-        if not delta:
-            return
-        try:
-            self._live_callback(delta)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.exception("Condor live callback failed: %s", err)
-
-    async def _send_tx_ack(self, seq: int) -> None:
-        try:
-            await self._transport.write_char(
-                CHAR_TX_ACK, bytes([seq & _MASK_SEQ])
-            )
-        except Exception as e:  # noqa: BLE001
-            _LOGGER.debug("Condor TX_ACK write failed: %s", e)
-
-    async def _send_change_ind_ack(self) -> None:
-        # The ChangeIndicationResponse payload is two bytes: a status byte
-        # (NoError) followed by a reserved zero. The handle tolerates a
-        # single status byte, but matching the exact two-byte payload keeps
-        # us spec-conformant.
-        try:
-            await self._send_msg(MSG_CHANGE_IND_RESP, bytes([STATUS_OK, 0]))
-        except Exception as e:  # noqa: BLE001
-            _LOGGER.debug("Condor ChangeInd ACK send failed: %s", e)
-
-    # --- Frame layer ------------------------------------------------------
-
-    def _next_seq(self) -> int:
-        # Pure mod-64: the brush enforces strict monotonic seq matching
-        # and tears the link down on a gap. Seq 0 is reused after the
-        # wrap; the channel-open frame is distinguished by BIT_START in
-        # the high bits, not by reserving seq 0.
-        seq = self._next_data_seq & _MASK_SEQ
-        self._next_data_seq = (self._next_data_seq + 1) % 64
-        return seq
-
-    async def _send_msg(self, msg_type: int, payload: bytes = b"") -> None:
-        """Send one framed message, fragmented across RX writes with a
-        1-byte header per chunk. Holds the send lock for the whole frame
-        so chunks of different messages never interleave."""
-        frame = (
-            b"\xFE\xFF"
-            + bytes([msg_type])
-            + struct.pack(">H", len(payload))
-            + payload
+    def _set_live_callback(self, callback: UpdateCallback | None) -> None:
+        self._live_callback = callback
+        self._link.set_change_handler(
+            self._on_change_indication if callback is not None else None
         )
-        chunk_payload = max(self._max_packet_size - 1, 1)
-        async with self._send_lock:
-            offset = 0
-            while offset < len(frame):
-                chunk = frame[offset:offset + chunk_payload]
-                hdr = self._next_seq()
-                await self._transport.write_char(
-                    CHAR_RX, bytes([hdr]) + chunk
-                )
-                offset += len(chunk)
 
-    async def _send_and_wait(
-        self,
-        msg_type: int,
-        payload: bytes = b"",
-        timeout: float = _RESPONSE_TIMEOUT,
-    ) -> bytes:
-        """Send one request and wait for the matching response body.
-
-        Only one request is in flight at any time — the response
-        demultiplexer has a single slot and relies on FIFO ordering.
-        ChangeIndications are handled out-of-band in ``_dispatch_frame``.
-        """
-        async with self._response_lock:
-            self._response_event.clear()
-            self._response_data = b""
-            await self._send_msg(msg_type, payload)
-            try:
-                await asyncio.wait_for(
-                    self._response_event.wait(), timeout
-                )
-            except asyncio.TimeoutError as err:
-                raise TransportError(
-                    f"Condor response timeout for message type {msg_type}"
-                ) from err
-            return self._response_data
-
-    # --- Property discovery (framed layer primitives) ----------------------
+    # --- Property discovery -------------------------------------------------
 
     async def discover_products(self) -> list[str]:
         """List product IDs the device exposes.
@@ -501,11 +116,10 @@ class CondorProtocol(SonicareProtocol):
         """
         if not self._connected:
             raise TransportError("Condor session not established")
-        resp = await self._send_and_wait(MSG_GET_PRODS)
-        status, data = _parse_generic_resp(resp)
+        status, data = await self._link.get_prods()
         if status != STATUS_OK:
             raise TransportError(
-                f"GetProds failed: {_status_name(status)}"
+                f"GetProds failed: {status_name(status)}"
             )
         return list(data.keys()) if isinstance(data, dict) else []
 
@@ -518,19 +132,17 @@ class CondorProtocol(SonicareProtocol):
         """
         if not self._connected:
             raise TransportError("Condor session not established")
-        payload = product_id.encode("ascii") + b"\x00"
-        resp = await self._send_and_wait(MSG_GET_PORTS, payload)
-        status, data = _parse_generic_resp(resp)
+        status, data = await self._link.get_ports(product_id)
         if status != STATUS_OK:
             raise TransportError(
-                f"GetPorts({product_id}) failed: {_status_name(status)}"
+                f"GetPorts({product_id}) failed: {status_name(status)}"
             )
         if not isinstance(data, list):
             return []
         return [p for p in data if isinstance(p, str)]
 
     async def get_props(
-        self, product_id: str, port: str, timeout: float = _RESPONSE_TIMEOUT,
+        self, product_id: str, port: str, timeout: float = RESPONSE_TIMEOUT,
     ) -> dict[str, Any]:
         """Read all properties of a single port.
 
@@ -541,45 +153,67 @@ class CondorProtocol(SonicareProtocol):
         """
         if not self._connected:
             raise TransportError("Condor session not established")
-        payload = (
-            product_id.encode("ascii") + b"\x00" + port.encode("ascii") + b"\x00"
-        )
-        resp = await self._send_and_wait(MSG_GET_PROPS, payload, timeout=timeout)
-        status, data = _parse_generic_resp(resp)
+        status, data = await self._link.get_props(product_id, port, timeout=timeout)
         if status != STATUS_OK:
             raise TransportError(
-                f"GetProps({product_id}/{port}) failed: {_status_name(status)}"
+                f"GetProps({product_id}/{port}) failed: {status_name(status)}"
             )
         return data if isinstance(data, dict) else {}
 
     async def put_props(
         self, product_id: str, port: str, props: dict[str, Any],
     ) -> bool:
-        """Write properties to a port. Returns True on a NoError response.
-
-        Payload mirrors GetProps but appends a compact JSON body:
-        ``product\\0port\\0{json}``.
-        """
+        """Write properties to a port. Returns True on a NoError response."""
         if not self._connected:
             raise TransportError("Condor session not established")
-        body = json.dumps(props, separators=(",", ":")).encode("utf-8")
-        payload = (
-            product_id.encode("ascii") + b"\x00" + port.encode("ascii") + b"\x00" + body
-        )
-        resp = await self._send_and_wait(MSG_PUT_PROPS, payload)
-        status, _ = _parse_generic_resp(resp)
+        status, _ = await self._link.put_props(product_id, port, props)
         if status != STATUS_OK:
             _LOGGER.debug(
-                "Condor PutProps(%s/%s) status=%s", product_id, port, _status_name(status),
+                "Condor PutProps(%s/%s) status=%s", product_id, port, status_name(status),
             )
         return status == STATUS_OK
+
+    # --- Change indications -------------------------------------------------
+
+    def _on_change_indication(
+        self, product_id: str, port: str, props: dict[str, Any] | bytes,
+    ) -> None:
+        """Map one change indication and fan the delta out to the callback.
+
+        Binary ``*.b`` streaming ports never go through the JSON adapter:
+        ``SensorData.b`` is decoded by ``map_sensor_frame``, other binary
+        ports are noted at debug level and dropped.
+        """
+        if self._live_callback is None:
+            return
+        if isinstance(props, bytes):
+            if port == "SensorData.b":
+                delta = map_sensor_frame(props)
+                if delta:
+                    try:
+                        self._live_callback(delta)
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.exception("Condor sensor callback failed: %s", err)
+                return
+            _LOGGER.debug(
+                "Condor ChangeInd binary port %s/%s (%dB) — skipped",
+                product_id, port, len(props),
+            )
+            return
+        delta = map_port_props(port, props)
+        if not delta:
+            return
+        try:
+            self._live_callback(delta)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.exception("Condor live callback failed: %s", err)
 
     # --- Live sensor stream (pressure / temperature) ----------------------
     # The pressure/temperature telemetry rides the ``SensorData.b`` binary
     # port. It only streams once the enable register on the ``SensorData``
     # JSON port is set, so enabling must precede the subscribe and the
     # register is cleared again on stop. Frames are decoded by
-    # ``map_sensor_frame`` inside ``_route_change_indication`` and delivered
+    # ``map_sensor_frame`` inside ``_on_change_indication`` and delivered
     # through the change-indication callback already registered by
     # ``start_live_updates`` — the ``callback`` argument (the Classic char
     # signature) is accepted for interface parity but unused here.
@@ -654,7 +288,6 @@ class CondorProtocol(SonicareProtocol):
                 merged.update(map_port_props(port, props))
         return merged
 
-
     async def start_live_updates(self, on_update: UpdateCallback) -> None:
         """Subscribe to push updates for the default port set.
 
@@ -666,7 +299,7 @@ class CondorProtocol(SonicareProtocol):
         """
         if not self._connected:
             raise TransportError("Condor session not established")
-        self._live_callback = on_update
+        self._set_live_callback(on_update)
         subscribed: list[tuple[str, str]] = []
         for prod, port in DEFAULT_SUBSCRIBE_PORTS:
             try:
@@ -688,17 +321,17 @@ class CondorProtocol(SonicareProtocol):
         subscriptions down device-side, so a best-effort cleanup on our
         end is all that's needed.
         """
-        self._live_callback = None
+        self._set_live_callback(None)
         ports = self._subscribed_ports
         self._subscribed_ports = []
         # Skip the graceful unsubscribe when the link is already gone: the
         # writes would each time out (3 s) against a dead connection — 15 s of
         # stalled teardown that delays the reconnect — and the device already
-        # dropped its subscriptions on disconnect. The transport link is the
+        # dropped its subscriptions on disconnect. The link state is the
         # authoritative gate here; the session flag is already False on the
         # drop path, because the coordinator invalidates it the moment the
         # link goes away.
-        if not self._connected or not self._transport.is_connected:
+        if not self._connected or not self._link.link_up:
             return
         for prod, port in ports:
             try:
@@ -707,60 +340,15 @@ class CondorProtocol(SonicareProtocol):
                 _LOGGER.debug("Unsubscribe %s/%s failed: %s", prod, port, err)
 
     async def _subscribe_port(self, product_id: str, port: str) -> bool:
-        """Send one MSG_SUBSCRIBE. Returns True on ``NoError`` status.
-
-        Payload format (NUL between product/port — asymmetric with the
-        ChangeIndication payload the device sends back, which uses a
-        slash): ``product\\0port\\0{"timeout":N}``.
-        """
-        body = json.dumps({"timeout": SUBSCRIBE_TIMEOUT_SECS}).encode("utf-8")
-        payload = (
-            product_id.encode("ascii") + b"\x00"
-            + port.encode("ascii") + b"\x00"
-            + body
-        )
-        resp = await self._send_and_wait(MSG_SUBSCRIBE, payload)
-        if not resp:
-            return False
-        return resp[0] == STATUS_OK
+        """Subscribe one port. Returns True on ``NoError`` status."""
+        status, _ = await self._link.subscribe(product_id, port)
+        return status == STATUS_OK
 
     async def _unsubscribe_port(self, product_id: str, port: str) -> None:
-        payload = (
-            product_id.encode("ascii") + b"\x00"
-            + port.encode("ascii") + b"\x00"
-            + b"{}"
-        )
-        await self._send_and_wait(MSG_UNSUBSCRIBE, payload, timeout=3.0)
+        await self._link.unsubscribe(product_id, port)
 
     async def set_brushing_mode(self, mode_key: str) -> None:
         raise NotImplementedError("Condor PutProps — implemented in Phase 4")
 
     async def set_intensity(self, intensity_key: str) -> None:
         raise NotImplementedError("Condor PutProps — implemented in Phase 4")
-
-
-# --- Response-body parsing ------------------------------------------------
-
-
-def _status_name(status: int) -> str:
-    return f"{STATUS_NAMES.get(status, 'Unknown')}({status})"
-
-
-def _parse_generic_resp(body: bytes) -> tuple[int, Any]:
-    """Decode a GenericResponse body into (status, parsed_payload).
-
-    Wire format is ``<status_byte> <utf8_json_body> 0x00``. The trailing
-    NUL terminator is emitted by the handle's firmware regardless of body
-    content. When the body isn't valid JSON (empty-port answers,
-    unexpected framing), ``parsed_payload`` is ``None``.
-    """
-    if not body:
-        return 255, None
-    status = body[0]
-    tail = body[1:].rstrip(b"\x00")
-    if not tail:
-        return status, None
-    try:
-        return status, json.loads(tail.decode("utf-8", errors="replace"))
-    except (ValueError, UnicodeDecodeError):
-        return status, None
