@@ -8,6 +8,12 @@
      an Unreleased block placed between two releases would be served as part of
      the release above it. -->
 
+## v1.16.0 — 2026-11-24
+
+- **`ble_list_services` answers failures instead of staying silent.** When the brush is not connected, service discovery is incomplete, memory runs out or the GATT cache cannot be read, the bridge sends one `_ble_services` event with `error` (`not_connected`, `no_memory`, `gattc_error`). Until now it only logged the failure, and Home Assistant waited 5 seconds before falling back to probing single characteristics. A service list that comes back empty is answered with `service_count` `0`.
+- **`ble_list_services` names each characteristic's handle.** Entries in `service_chars` read `<uuid>/<props>/<handle>`, the handle of the characteristic's value as four hex digits (e.g. `0x2A19/RN/0032`). That is one above the declaration handle BlueZ and `sonicare_scan.py` report; the integration's new `capture_gatt` action converts it, so its captures match those from `sonicare_scan.py`. Integrations that read only uuid and properties keep working.
+- **A service whose characteristics cannot be listed is marked.** If allocating or reading its characteristic table fails, the service's event carries `chars_error` (`no_memory`, `gattc_error`) next to an empty `service_chars`, instead of looking like a service without characteristics.
+
 ## v1.15.1 — 2026-11-08
 
 - **Builds with ESPHome 2026.11.** ESPHome 2026.5 moved `format_hex` and the other heap-allocating helpers to `alloc_helpers.h`; from 2026.11 on `helpers.h` no longer brings them along, and the build failed with `'format_hex' was not declared in this scope`. The bridge includes the new header where it exists, so older ESPHome versions keep building as well. Reported by @bvalat in [#50](https://github.com/mtheli/philips_sonicare_ble/issues/50).
