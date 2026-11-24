@@ -120,7 +120,9 @@ class CondorMqttLink(CondorLink):
             (f"{self._base}/status", self._on_status, 1),
             (f"{self._base}/link", self._on_link, 1),
             (f"{self._base}/resp", self._on_resp, 1),
-            (f"{self._base}/ind/#", self._on_ind, 0),
+            # QoS 1: the delivered QoS is the lower of publish and subscribe;
+            # binary ports published at 0 stay at 0.
+            (f"{self._base}/ind/#", self._on_ind, 1),
         )
         for topic, cb, qos in subs:
             self._unsubscribers.append(await self._client.subscribe(topic, cb, qos))

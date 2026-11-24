@@ -191,10 +191,16 @@ async def test_info_and_status_are_retained() -> None:
     s = Setup()
     await s.gateway.start()
     assert s.broker.retained[f"{BASE}/status"] == "online"
+    # link before status: a stale retained "connected" must never pair with
+    # a fresh "online".
+    order = [t for t, *_ in s.broker.log]
+    assert order.index(f"{BASE}/link") < order.index(f"{BASE}/status")
     info = json.loads(s.broker.retained[f"{BASE}/info"])
     assert info["protocol"] == 1 and info["model"] == "HX7410"
     link = json.loads(s.broker.retained[f"{BASE}/link"])
-    assert link == {"connected": False, "session": 0}
+    assert link["connected"] is False
+    # Starts from the clock, so a restarted gateway never repeats a session.
+    assert link["session"] > 1_700_000_000
     await s.gateway.stop()
     assert s.broker.retained[f"{BASE}/status"] == "offline"
 

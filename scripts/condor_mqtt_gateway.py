@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -45,13 +46,15 @@ class CondorMqttGateway:
         client: MqttClient,
         base: str,
         info: dict[str, Any],
-        session: int = 0,
+        session: int | None = None,
     ) -> None:
         self.link = link
         self.client = client
         self.base = base.rstrip("/")
         self.info = {"protocol": PROTOCOL_VERSION, **info}
-        self.session = session
+        # Never repeat a session number, not even after a restart: start
+        # from the clock.
+        self.session = int(time.time()) if session is None else session
         self.connected = False
         self.rssi: int | None = None
         self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -61,11 +64,13 @@ class CondorMqttGateway:
     # --- Lifecycle -------------------------------------------------------
 
     async def start(self) -> None:
-        await self.client.publish(f"{self.base}/status", "online", retain=True)
+        # link first: until it is replaced, a retained link from before the
+        # restart may still say "connected".
+        await self._publish_link()
         await self.client.publish(
             f"{self.base}/info", json.dumps(self.info), retain=True,
         )
-        await self._publish_link()
+        await self.client.publish(f"{self.base}/status", "online", retain=True)
         self._unsub = await self.client.subscribe(f"{self.base}/cmd", self._on_cmd)
         self._worker = asyncio.get_running_loop().create_task(self._run())
 
@@ -201,7 +206,11 @@ class PahoClient:
         self._loop = asyncio.get_running_loop()
         self._subs: dict[str, Any] = {}
         self._mqtt = mqtt
-        self._client = mqtt.Client(client_id=f"condor-gw-{will_topic.split('/')[1]}")
+        client_id = f"condor-gw-{will_topic.split('/')[1]}"
+        if hasattr(mqtt, "CallbackAPIVersion"):  # paho-mqtt 2.x
+            self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+        else:
+            self._client = mqtt.Client(client_id=client_id)
         self._client.will_set(will_topic, "offline", qos=1, retain=True)
         self._client.on_message = self._on_message
         self._connected = asyncio.Event()
@@ -345,6 +354,7 @@ async def _main(args) -> None:
                 link.invalidate()
             await asyncio.sleep(2)
     finally:
+        await transport.disconnect()
         await gateway.stop()
         mqtt.close()
 

@@ -56,7 +56,11 @@ class Checker:
         self.link_log: list[dict] = []
         # Far away from the ids Home Assistant uses, in case it is connected too.
         self.next_id = 900_000
-        self.client = mqtt.Client(client_id=f"gateway-check-{int(time.time())}")
+        client_id = f"gateway-check-{int(time.time())}"
+        if hasattr(mqtt, "CallbackAPIVersion"):  # paho-mqtt 2.x
+            self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+        else:
+            self.client = mqtt.Client(client_id=client_id)
         if args.username:
             self.client.username_pw_set(args.username, args.password)
         self.client.on_message = self.on_message

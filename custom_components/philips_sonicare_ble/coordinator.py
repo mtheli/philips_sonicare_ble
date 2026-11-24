@@ -1496,6 +1496,11 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         # A bridge that stays silent is unreachable, not a
                         # fault worth a warning — same class as the rest.
                         or "did not respond" in err_msg
+                        # MQTT gateway: the brush or the gateway went away
+                        # during setup — the same as an unreachable brush.
+                        or "brush disconnected" in err_msg
+                        or "brush not connected" in err_msg
+                        or "gateway offline" in err_msg
                     )
                     if link_up and self._on_stock_proxy_condor():
                         # The link was up, so "timeout" here is a GATT
