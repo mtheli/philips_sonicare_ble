@@ -34,7 +34,10 @@ class Broker:
 
     def deliver(self, topic: str, payload: str, retain: bool) -> None:
         if retain:
-            self.retained[topic] = payload
+            if payload:
+                self.retained[topic] = payload
+            else:
+                self.retained.pop(topic, None)  # empty retained clears
         for pattern, cb in list(self.subs):
             if _matches(pattern, topic):
                 asyncio.get_running_loop().call_soon(cb, topic, payload)

@@ -133,8 +133,9 @@ async def test_new_session_sets_up_again(rig) -> None:
     # same "connected: true", new session number.
     await rig.brush_connects()
     await rig.wait(lambda: rig.subscribes() == 10)
-    await rig.wait(lambda: rig.coordinator._live_setup_done)
-    assert rig.transport.link.is_open
+    await rig.wait(
+        lambda: rig.transport.link.is_open and rig.coordinator._live_setup_done
+    )
 
 
 async def test_brush_disconnect_marks_device_off(rig) -> None:

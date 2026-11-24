@@ -210,82 +210,46 @@ class CondorProtocol(SonicareProtocol):
 
     # --- Live sensor stream (pressure / temperature) ----------------------
     # The pressure/temperature telemetry rides the ``SensorData.b`` binary
-    # port. It only streams once the enable register on the ``SensorData``
-    # JSON port is set, so enabling must precede the subscribe and the
-    # register is cleared again on stop. Frames are decoded by
-    # ``map_sensor_frame`` inside ``_on_change_indication`` and delivered
-    # through the change-indication callback already registered by
-    # ``start_live_updates`` — the ``callback`` argument (the Classic char
-    # signature) is accepted for interface parity but unused here.
+    # port; it streams once the enable register on the ``SensorData`` JSON
+    # port is set. Frames are decoded by ``map_sensor_frame`` inside
+    # ``_on_change_indication`` and delivered through the change-indication
+    # callback already registered by ``start_live_updates`` — the
+    # ``callback`` argument (the Classic char signature) is accepted for
+    # interface parity but unused here. How the stream is switched is the
+    # link's business (see ``CondorLink.start_sensor_stream``).
 
     async def start_sensor_stream(
         self, enable_mask: int, callback: object = None,
     ) -> bool:
-        """Enable the sensor frontend and subscribe to its binary stream.
-
-        Subscribe to ``SensorData.b`` *before* writing the enable register so
-        no frames are emitted before we're listening — the enable write is
-        best-effort (some firmwares stream regardless of a stale register),
-        but a failed subscribe means no telemetry arrives. Returns True if
-        the subscribe succeeded.
-        """
+        """Switch the sensor stream on. Returns True if it is running."""
         if not self._connected:
             return False
-        try:
-            ok = await self._subscribe_port("1", "SensorData.b")
-        except TransportError as err:
-            _LOGGER.warning("Condor SensorData.b subscribe failed: %s", err)
-            return False
-        try:
-            await self.put_props("1", "SensorData", {"Sensors": enable_mask})
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Condor sensor enable write failed: %s", err)
-        return ok
+        return await self._link.start_sensor_stream(enable_mask)
 
     async def stop_sensor_stream(self) -> None:
-        """Unsubscribe the binary stream. Best-effort — a transport teardown
-        may already have invalidated the subscription. The enable register is
-        left as-is; the handle powers its sensor frontend down on its own when
-        the session ends."""
+        """Switch the sensor stream off. Best-effort — a transport teardown
+        may already have ended it."""
         try:
-            await self._unsubscribe_port("1", "SensorData.b")
+            await self._link.stop_sensor_stream()
         except Exception:  # noqa: BLE001
             pass
 
     # --- SonicareProtocol surface ------------------------------------------
 
     async def refresh_all(self) -> dict[str, Any]:
-        """Discover products + ports and read every JSON port's state.
+        """Read every JSON port's state and map it.
 
-        Iterates both the firmware product (``0``) and the device product
-        (``1``), skipping binary streaming ports (``*.b``). Per-port
-        failures are logged and skipped so one flaky port never blocks
-        the rest of the refresh. The result is a flat dict keyed by
-        ``coordinator.data`` names, already merged across ports.
+        Covers both the firmware product (``0``) and the device product
+        (``1``); binary streaming ports (``*.b``) and ports that fail are
+        left out (see ``CondorLink.read_all_ports``). The result is a flat
+        dict keyed by ``coordinator.data`` names, already merged across
+        ports.
         """
+        if not self._connected:
+            raise TransportError("Condor session not established")
         merged: dict[str, Any] = {}
-        products = await self.discover_products()
-        for prod in products:
-            try:
-                ports = await self.discover_ports(prod)
-            except TransportError as err:
-                _LOGGER.debug("Condor discover_ports(%s) failed: %s", prod, err)
-                continue
-            for port in ports:
-                if port.endswith(".b"):
-                    # Binary streams are subscribe-only; refresh_all sticks
-                    # to JSON ports that carry named properties.
-                    continue
-                try:
-                    props = await self.get_props(prod, port)
-                except TransportError as err:
-                    _LOGGER.debug(
-                        "Condor get_props(%s/%s) failed: %s", prod, port, err,
-                    )
-                    continue
-                if not props:
-                    continue
-                merged.update(map_port_props(port, props))
+        for _prod, port, props in await self._link.read_all_ports():
+            merged.update(map_port_props(port, props))
         return merged
 
     async def start_live_updates(self, on_update: UpdateCallback) -> None:
@@ -293,26 +257,17 @@ class CondorProtocol(SonicareProtocol):
 
         Empirically on HX742X only ``Sonicare`` + ``RoutineStatus`` are
         chatty during sessions; ``Battery`` / ``BrushHead`` /
-        ``SessionStorage`` fire only on actual change. Per-port subscribe
-        failures are logged and skipped — a partially subscribed device
-        is still useful.
+        ``SessionStorage`` fire only on actual change.
         """
         if not self._connected:
             raise TransportError("Condor session not established")
         self._set_live_callback(on_update)
-        subscribed: list[tuple[str, str]] = []
-        for prod, port in DEFAULT_SUBSCRIBE_PORTS:
-            try:
-                ok = await self._subscribe_port(prod, port)
-            except TransportError as err:
-                _LOGGER.debug("Subscribe %s/%s raised: %s", prod, port, err)
-                continue
-            if ok:
-                subscribed.append((prod, port))
-            else:
-                _LOGGER.info("Subscribe %s/%s declined by device", prod, port)
-        self._subscribed_ports = subscribed
-        _LOGGER.debug("Condor subscribed to %d port(s)", len(subscribed))
+        self._subscribed_ports = await self._link.subscribe_ports(
+            DEFAULT_SUBSCRIBE_PORTS
+        )
+        _LOGGER.debug(
+            "Condor subscribed to %d port(s)", len(self._subscribed_ports)
+        )
 
     async def stop_live_updates(self) -> None:
         """Unsubscribe every port that successfully subscribed.
@@ -333,19 +288,7 @@ class CondorProtocol(SonicareProtocol):
         # link goes away.
         if not self._connected or not self._link.link_up:
             return
-        for prod, port in ports:
-            try:
-                await self._unsubscribe_port(prod, port)
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Unsubscribe %s/%s failed: %s", prod, port, err)
-
-    async def _subscribe_port(self, product_id: str, port: str) -> bool:
-        """Subscribe one port. Returns True on ``NoError`` status."""
-        status, _ = await self._link.subscribe(product_id, port)
-        return status == STATUS_OK
-
-    async def _unsubscribe_port(self, product_id: str, port: str) -> None:
-        await self._link.unsubscribe(product_id, port)
+        await self._link.unsubscribe_ports(ports)
 
     async def set_brushing_mode(self, mode_key: str) -> None:
         raise NotImplementedError("Condor PutProps — implemented in Phase 4")

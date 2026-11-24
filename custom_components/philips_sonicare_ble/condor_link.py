@@ -37,7 +37,7 @@ import json
 import logging
 import struct
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from .const import (
@@ -183,6 +183,118 @@ class CondorLink(abc.ABC):
     @abc.abstractmethod
     async def unsubscribe(self, product: str, port: str) -> tuple[int, Any]:
         """Stop change indications for one port."""
+
+    # --- Session-level operations -----------------------------------------
+    # What the message layer needs once per session or per brushing session.
+    # The defaults run them as single port operations, the way they go over
+    # BLE; a link whose other end does them by itself (an MQTT gateway)
+    # overrides them.
+
+    async def read_all_ports(self) -> list[tuple[str, str, dict[str, Any]]]:
+        """Read every JSON port of every product.
+
+        Returns ``(product, port, props)`` in device order. Binary ``*.b``
+        ports are skipped, so are ports that fail or come back empty — one
+        flaky port never blocks the rest. A failing product list raises.
+        """
+        status, data = await self.get_prods()
+        if status != STATUS_OK:
+            raise TransportError(f"GetProds failed: {status_name(status)}")
+        products = list(data.keys()) if isinstance(data, dict) else []
+        result: list[tuple[str, str, dict[str, Any]]] = []
+        for prod in products:
+            try:
+                status, data = await self.get_ports(prod)
+                if status != STATUS_OK:
+                    raise TransportError(
+                        f"GetPorts({prod}) failed: {status_name(status)}"
+                    )
+            except TransportError as err:
+                _LOGGER.debug("Condor discover_ports(%s) failed: %s", prod, err)
+                continue
+            ports = [p for p in data if isinstance(p, str)] if isinstance(data, list) else []
+            for port in ports:
+                if port.endswith(".b"):
+                    # Binary streams are subscribe-only.
+                    continue
+                try:
+                    status, props = await self.get_props(prod, port)
+                    if status != STATUS_OK:
+                        raise TransportError(
+                            f"GetProps({prod}/{port}) failed: {status_name(status)}"
+                        )
+                except TransportError as err:
+                    _LOGGER.debug(
+                        "Condor get_props(%s/%s) failed: %s", prod, port, err,
+                    )
+                    continue
+                if isinstance(props, dict) and props:
+                    result.append((prod, port, props))
+        return result
+
+    async def subscribe_ports(
+        self, ports: Iterable[tuple[str, str]],
+    ) -> list[tuple[str, str]]:
+        """Subscribe each port; returns the ones the device accepted.
+
+        Per-port failures are logged and skipped — a partially subscribed
+        device is still useful.
+        """
+        subscribed: list[tuple[str, str]] = []
+        for prod, port in ports:
+            try:
+                status, _ = await self.subscribe(prod, port)
+            except TransportError as err:
+                _LOGGER.debug("Subscribe %s/%s raised: %s", prod, port, err)
+                continue
+            if status == STATUS_OK:
+                subscribed.append((prod, port))
+            else:
+                _LOGGER.info("Subscribe %s/%s declined by device", prod, port)
+        return subscribed
+
+    async def unsubscribe_ports(self, ports: Iterable[tuple[str, str]]) -> None:
+        """Best-effort unsubscribe of each port."""
+        for prod, port in ports:
+            try:
+                await self.unsubscribe(prod, port)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Unsubscribe %s/%s failed: %s", prod, port, err)
+
+    async def start_sensor_stream(self, enable_mask: int) -> bool:
+        """Subscribe ``SensorData.b``, then set the enable register.
+
+        Subscribe first so no frame is emitted before we listen. The enable
+        write is best-effort (some firmwares stream regardless of a stale
+        register), a failed subscribe means no telemetry: returns whether
+        the subscribe succeeded.
+        """
+        try:
+            status, _ = await self.subscribe("1", "SensorData.b")
+        except TransportError as err:
+            _LOGGER.warning("Condor SensorData.b subscribe failed: %s", err)
+            return False
+        try:
+            put_status, _ = await self.put_props(
+                "1", "SensorData", {"Sensors": enable_mask},
+            )
+            if put_status != STATUS_OK:
+                _LOGGER.debug(
+                    "Condor PutProps(1/SensorData) status=%s",
+                    status_name(put_status),
+                )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Condor sensor enable write failed: %s", err)
+        return status == STATUS_OK
+
+    async def stop_sensor_stream(self) -> None:
+        """Unsubscribe ``SensorData.b``, best-effort. The enable register is
+        left as-is; the handle powers its sensor frontend down on its own when
+        the session ends."""
+        try:
+            await self.unsubscribe("1", "SensorData.b")
+        except Exception:  # noqa: BLE001
+            pass
 
 
 class CondorBleLink(CondorLink):
