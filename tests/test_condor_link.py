@@ -146,7 +146,7 @@ async def test_stop_skips_unsubscribe_when_the_link_is_gone(link) -> None:
     await protocol.stop_live_updates()
 
     assert not [c for c in link.calls if c[0] == "unsub"]
-    link.push("1", "RoutineStatus", {"Duration": 5})  # handler cleared
+    assert link._change_handler is None
 
 
 async def test_invalidate_clears_both_layers(link) -> None:
@@ -159,5 +159,39 @@ async def test_invalidate_clears_both_layers(link) -> None:
     link.push("1", "RoutineStatus", {"Duration": 5})
 
     assert not link.is_open
+    assert link._change_handler is None
     assert protocol._subscribed_ports == []
     assert deltas == []
+
+
+async def test_ble_link_acks_change_indication_without_handler() -> None:
+    """The brush expects every ChangeInd answered, listened to or not."""
+    import asyncio
+
+    from custom_components.philips_sonicare_ble.condor_link import (
+        MSG_CHANGE_IND,
+        MSG_CHANGE_IND_RESP,
+        CondorBleLink,
+    )
+
+    class Recorder:
+        auto_tx_ack = True
+        is_connected = True
+
+        def __init__(self) -> None:
+            self.writes: list[bytes] = []
+
+        async def write_char(self, _uuid, data) -> None:
+            self.writes.append(bytes(data))
+
+    transport = Recorder()
+    ble = CondorBleLink(transport)
+    body = b"1/Battery\x00{\"BatteryPercent\":50}\x00"
+    frame = b"\xfe\xff" + bytes([MSG_CHANGE_IND]) + struct.pack(">H", len(body)) + body
+
+    ble._dispatch_frame(frame[2], frame[5:])
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    sent = b"".join(w[1:] for w in transport.writes)
+    assert sent == b"\xfe\xff" + bytes([MSG_CHANGE_IND_RESP]) + b"\x00\x02\x00\x00"

@@ -117,6 +117,10 @@ class CondorLink(abc.ABC):
     Requests are serialized: at most one is in flight at a time. Change
     indications arrive out of band through the handler set with
     ``set_change_handler``; acknowledging them is the link's job.
+
+    Errors: a request that gets no answer in time, or a link that fails,
+    raises ``TransportError``. A device that answers with an error status is
+    not an exception — the status is returned and the message layer decides.
     """
 
     def __init__(self) -> None:
