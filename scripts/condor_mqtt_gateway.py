@@ -16,7 +16,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
+from pathlib import Path
 from typing import Any
+
+# Run as a script from anywhere: the integration package lives one level up.
+_ROOT = str(Path(__file__).resolve().parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 from custom_components.philips_sonicare_ble.condor_link import CondorLink
 from custom_components.philips_sonicare_ble.condor_mqtt_link import (
@@ -169,3 +176,194 @@ class CondorMqttGateway:
         asyncio.get_running_loop().create_task(
             self.client.publish(f"{self.base}/ind/{product}/{port}", payload, qos=qos)
         )
+
+
+# --- Command line: a gateway on this machine (bleak + paho-mqtt) ----------
+#
+#   python scripts/condor_mqtt_gateway.py --address AA:BB:CC:DD:EE:FF \
+#       [--adapter hci0] [--broker 127.0.0.1] [--port 1883]
+#
+# Runs from the repository root. Stands in for a phone gateway in tests.
+
+_DIS = {
+    "model": "00002a24-0000-1000-8000-00805f9b34fb",
+    "serial": "00002a25-0000-1000-8000-00805f9b34fb",
+    "firmware": "00002a26-0000-1000-8000-00805f9b34fb",
+}
+
+
+class PahoClient:
+    """``MqttClient`` on paho-mqtt; callbacks run on the asyncio loop."""
+
+    def __init__(self, host: str, port: int, will_topic: str) -> None:
+        import paho.mqtt.client as mqtt
+
+        self._loop = asyncio.get_running_loop()
+        self._subs: dict[str, Any] = {}
+        self._mqtt = mqtt
+        self._client = mqtt.Client(client_id=f"condor-gw-{will_topic.split('/')[1]}")
+        self._client.will_set(will_topic, "offline", qos=1, retain=True)
+        self._client.on_message = self._on_message
+        self._connected = asyncio.Event()
+        self._client.on_connect = lambda *_: self._loop.call_soon_threadsafe(
+            self._connected.set
+        )
+        self._client.connect(host, port, keepalive=15)
+        self._client.loop_start()
+
+    async def wait_connected(self) -> None:
+        await asyncio.wait_for(self._connected.wait(), 10)
+
+    def _on_message(self, _client, _userdata, msg) -> None:
+        payload = msg.payload.decode("utf-8", errors="replace")
+        for pattern, cb in list(self._subs.items()):
+            if self._mqtt.topic_matches_sub(pattern, msg.topic):
+                self._loop.call_soon_threadsafe(cb, msg.topic, payload)
+
+    async def publish(self, topic, payload, qos=1, retain=False) -> None:
+        self._client.publish(topic, payload, qos=qos, retain=retain)
+
+    async def subscribe(self, topic, callback, qos=1):
+        self._subs[topic] = callback
+        self._client.subscribe(topic, qos)
+
+        def unsubscribe() -> None:
+            self._subs.pop(topic, None)
+            self._client.unsubscribe(topic)
+
+        return unsubscribe
+
+    def close(self) -> None:
+        self._client.loop_stop()
+        self._client.disconnect()
+
+
+def _bleak_transport_class():
+    from bleak import BleakClient
+
+    from custom_components.philips_sonicare_ble.transport import SonicareTransport
+
+    class BleakGattTransport(SonicareTransport):
+        """Plain bleak GATT access, no Home Assistant."""
+
+        def __init__(self, address: str, adapter: str | None) -> None:
+            self.address = address
+            self.adapter = adapter
+            self.client: BleakClient | None = None
+            self.disconnected = asyncio.Event()
+            self._cb = None
+
+        @property
+        def is_connected(self) -> bool:
+            return self.client is not None and self.client.is_connected
+
+        async def connect(self) -> None:
+            self.disconnected.clear()
+            kwargs = {"adapter": self.adapter} if self.adapter else {}
+            self.client = BleakClient(
+                self.address,
+                disconnected_callback=lambda _c: self.disconnected.set(),
+                timeout=20.0,
+                **kwargs,
+            )
+            await self.client.connect()
+
+        async def disconnect(self) -> None:
+            if self.client is not None:
+                try:
+                    await self.client.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        async def read_char(self, char_uuid: str) -> bytes | None:
+            return bytes(await self.client.read_gatt_char(char_uuid))
+
+        async def read_chars(self, char_uuids):
+            return {u: await self.read_char(u) for u in char_uuids}
+
+        async def write_char(self, char_uuid: str, data: bytes) -> None:
+            await self.client.write_gatt_char(char_uuid, data)
+
+        async def subscribe(self, char_uuid, cb) -> None:
+            await self.client.start_notify(
+                char_uuid, lambda _c, data: cb(char_uuid, bytes(data))
+            )
+
+        async def unsubscribe(self, char_uuid) -> None:
+            if self.is_connected:
+                await self.client.stop_notify(char_uuid)
+
+        async def unsubscribe_all(self) -> None:
+            return None
+
+        def set_disconnect_callback(self, cb) -> None:
+            self._cb = cb
+
+    return BleakGattTransport
+
+
+async def _main(args) -> None:
+    from custom_components.philips_sonicare_ble.condor_link import CondorBleLink
+    from custom_components.philips_sonicare_ble.condor_mqtt_link import base_topic
+
+    base = base_topic(args.address)
+    mqtt = PahoClient(args.broker, args.port, f"{base}/status")
+    await mqtt.wait_connected()
+    transport = _bleak_transport_class()(args.address, args.adapter)
+    link = CondorBleLink(transport)
+    info = {
+        "gateway": "condor-mqtt-gateway (reference)",
+        "gateway_version": "1",
+        "address": args.address.upper(),
+        "name": "Philips Sonicare",
+    }
+    gateway = CondorMqttGateway(link, mqtt, base, info)
+    await gateway.start()
+    _LOGGER.info("gateway online on %s", base)
+    try:
+        while True:
+            try:
+                await transport.connect()
+                for key, uuid in _DIS.items():
+                    try:
+                        value = (await transport.read_char(uuid)).decode(errors="replace")
+                        gateway.info[key] = value.strip("\x00 ")
+                    except Exception:  # noqa: BLE001
+                        pass
+                await mqtt.publish(f"{base}/info", json.dumps(gateway.info), retain=True)
+                await link.open()
+                await gateway.session_up()
+                _LOGGER.info("brush connected, session %d", gateway.session)
+                await transport.disconnected.wait()
+                _LOGGER.info("brush disconnected")
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.info("connect failed: %s", err)
+                await transport.disconnect()
+            if gateway.connected:
+                await gateway.session_down()
+            else:
+                link.invalidate()
+            await asyncio.sleep(2)
+    finally:
+        await gateway.stop()
+        mqtt.close()
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--address", required=True)
+    parser.add_argument("--adapter", default=None)
+    parser.add_argument("--broker", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=1883)
+    parser.add_argument("-v", "--verbose", action="store_true")
+    a = parser.parse_args()
+    logging.basicConfig(
+        level=logging.DEBUG if a.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    try:
+        asyncio.run(_main(a))
+    except KeyboardInterrupt:
+        pass

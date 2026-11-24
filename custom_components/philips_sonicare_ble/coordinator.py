@@ -1426,7 +1426,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # ESP bridge / MQTT gateway: wait for the brush to connect
                     if self._is_gateway and not self.transport.is_connected:
                         _LOGGER.debug(
-                            "ESP bridge alive, waiting for BLE device connection for %s...",
+                            "%s alive, waiting for the brush to connect for %s...",
+                            "ESP bridge" if self._is_esp_bridge else "MQTT gateway",
                             self.address,
                         )
                         self._wake_event.clear()
@@ -1549,7 +1550,12 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         # that a bridge that is still connected gets picked up
                         # again quickly.
                         self._wake_event.clear()
-                        _LOGGER.debug("Waiting for ESP bridge ready event for %s...", self.address)
+                        _LOGGER.debug(
+                            "Waiting for %s for %s...",
+                            "ESP bridge ready event" if self._is_esp_bridge
+                            else "MQTT gateway",
+                            self.address,
+                        )
                         try:
                             await asyncio.wait_for(
                                 self._wake_event.wait(), timeout=ESP_RETRY_DELAY

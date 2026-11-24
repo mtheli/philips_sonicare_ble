@@ -2489,8 +2489,19 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
             )
             return self.async_abort(reason="mqtt_gateway_unsupported")
 
-        await self.async_set_unique_id(address)
+        # A Bluetooth discovery of the same brush may already be open; the
+        # gateway is offered anyway, whichever is confirmed first wins.
+        await self.async_set_unique_id(address, raise_on_progress=False)
         self._abort_if_already_configured()
+        # The gateway publishes its info again once it has read model and
+        # firmware: the newer announcement replaces an older open one.
+        for flow in self._async_in_progress(include_uninitialized=True):
+            if (
+                flow["flow_id"] != self.flow_id
+                and flow["context"].get("source") == "mqtt"
+                and flow["context"].get("unique_id") == address
+            ):
+                self.hass.config_entries.flow.async_abort(flow["flow_id"])
         self._address = address
         self._mqtt_info = info
         model = str(info.get("model") or "")
