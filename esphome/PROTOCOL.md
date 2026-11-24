@@ -316,7 +316,7 @@ philips_sonicare:
 | 4 | [`ble_write_char`](#ble_write_char) | `service_uuid`, `char_uuid`, `data` | 1.2.0 |
 | 5 | [`ble_set_throttle`](#ble_set_throttle) | `throttle_ms` | 1.2.0 |
 | 6 | [`ble_get_info`](#ble_get_info) | — | 1.2.0 (extended in 1.3.0) |
-| 7 | [`ble_list_services`](#ble_list_services) | — | 1.3.0 |
+| 7 | [`ble_list_services`](#ble_list_services) | — | 1.3.0 (extended in 1.16.0) |
 | 8 | [`ble_pair_mode`](#ble_pair_mode) | `enabled`, `timeout_s` | 1.3.0 |
 | 9 | [`ble_unpair`](#ble_unpair) | — | 1.3.0 |
 | 10 | [`ble_scan`](#ble_scan) | `timeout_s` | 1.3.0 |
@@ -509,10 +509,21 @@ Enumerate the GATT database of the bonded brush.
 | `service_count` | Total services in the GATT DB |
 | `service_index` | 0-based index of this entry |
 | `service_uuid` | UUID of the service |
-| `service_chars` | CSV of `<char_uuid>/<props>` pairs, e.g. `00002a19-…/RN,…/W` (R=read, W=write-rsp, w=write-no-rsp, N=notify, I=indicate) |
+| `service_chars` | CSV of `<char_uuid>/<props>/<handle>` entries, e.g. `0x2A19/RN/0032,…` (R=read, W=write-rsp, w=write-no-rsp, N=notify, I=indicate). The handle is the **value** handle in 4 hex digits — one above the declaration handle BlueZ/bleak report. Before 1.16.0 the handle is missing and `/<props>` is left out when empty. |
+| `chars_error` | Only when the service's characteristics could not be listed (`no_memory`, `gattc_error`, since 1.16.0); `service_chars` is then empty |
 
 HA aggregates all events with matching `mac` + `bridge_id` until
 `service_index == service_count - 1`.
+
+**On failure** the bridge sends a single event with `mac` and `error`
+instead (since 1.16.0; older bridges stay silent and HA runs
+into its timeout):
+
+| `error` | Cause |
+|---|---|
+| `not_connected` | No brush connected, or service discovery not finished |
+| `no_memory` | Allocating the service list failed |
+| `gattc_error` | `esp_ble_gattc_get_service` failed |
 
 ---
 

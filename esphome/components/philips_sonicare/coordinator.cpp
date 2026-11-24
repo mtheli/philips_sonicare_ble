@@ -1996,14 +1996,20 @@ void SonicareCoordinator::condor_answer_change_indications_(const uint8_t *data,
 }
 
 void SonicareCoordinator::list_services() {
+  // Every failure answers with an "error" event so HA stops waiting instead
+  // of running into its timeout.
+  std::string mac = this->get_device_mac();
+  auto fail = [this, &mac](const char *error) {
+    this->emit_(EVENT_SERVICES, {{"mac", mac}, {"error", error}});
+  };
   if (this->parent_ == nullptr || !this->services_discovered_) {
     ESP_LOGW(this->log_tag_.c_str(), "list_services: not connected or service discovery incomplete");
+    fail("not_connected");
     return;
   }
 
   esp_gatt_if_t gattc_if = this->parent_->get_gattc_if();
   uint16_t conn_id = this->parent_->get_conn_id();
-  std::string mac = this->get_device_mac();
 
   uint16_t svc_count = 0;
   esp_ble_gattc_get_attr_count(gattc_if, conn_id,
@@ -2035,6 +2041,7 @@ void SonicareCoordinator::list_services() {
       svc_count * sizeof(esp_gattc_service_elem_t));
   if (services == nullptr) {
     ESP_LOGE(this->log_tag_.c_str(), "list_services: malloc failed");
+    fail("no_memory");
     return;
   }
 
@@ -2044,10 +2051,23 @@ void SonicareCoordinator::list_services() {
   if (err != ESP_OK) {
     ESP_LOGW(this->log_tag_.c_str(), "esp_ble_gattc_get_service failed: %d", err);
     free(services);
+    fail("gattc_error");
     return;
   }
 
   snprintf(count_buf, sizeof(count_buf), "%u", (unsigned) actual);
+  if (actual == 0) {
+    // The cache emptied between the count and the read: still answer.
+    free(services);
+    this->emit_(EVENT_SERVICES, {
+        {"mac", mac},
+        {"service_count", "0"},
+        {"service_index", "0"},
+        {"service_uuid", ""},
+        {"service_chars", ""},
+    });
+    return;
+  }
 
   for (uint16_t i = 0; i < actual; i++) {
     char svc_uuid_buf[esp32_ble::UUID_STR_LEN];
@@ -2064,6 +2084,7 @@ void SonicareCoordinator::list_services() {
                                   &char_count);
 
     std::string chars_str;
+    const char *chars_error = nullptr;
     if (char_count > 0) {
       auto *chars = (esp_gattc_char_elem_t *) malloc(
           char_count * sizeof(esp_gattc_char_elem_t));
@@ -2087,13 +2108,24 @@ void SonicareCoordinator::list_services() {
             if (props & ESP_GATT_CHAR_PROP_BIT_WRITE_NR) p += "w";
             if (props & ESP_GATT_CHAR_PROP_BIT_NOTIFY)   p += "N";
             if (props & ESP_GATT_CHAR_PROP_BIT_INDICATE) p += "I";
-            if (!p.empty())
-              chars_str += "/" + p;
+            // "<uuid>/<props>/<value handle hex>": the handle of the value
+            // attribute (char_handle), one above the declaration handle
+            // that BlueZ/bleak report. Older integrations read only the
+            // first two parts.
+            char handle_buf[8];
+            snprintf(handle_buf, sizeof(handle_buf), "%04x",
+                     (unsigned) chars[j].char_handle);
+            chars_str += "/" + p + "/" + handle_buf;
           }
         } else {
           ESP_LOGW(this->log_tag_.c_str(), "esp_ble_gattc_get_all_char failed: %d", cerr);
+          chars_error = "gattc_error";
         }
         free(chars);
+      } else {
+        ESP_LOGW(this->log_tag_.c_str(), "list_services: malloc failed for %u characteristic(s) of %s",
+                 (unsigned) char_count, svc_uuid_str.c_str());
+        chars_error = "no_memory";
       }
     }
 
@@ -2103,13 +2135,18 @@ void SonicareCoordinator::list_services() {
     ESP_LOGI(this->log_tag_.c_str(), "  [%u] %s → %s", i, svc_uuid_str.c_str(),
              chars_str.empty() ? "(no chars)" : chars_str.c_str());
 
-    this->emit_(EVENT_SERVICES, {
+    std::map<std::string, std::string> event = {
         {"mac", mac},
         {"service_count", count_buf},
         {"service_index", idx_buf},
         {"service_uuid", svc_uuid_str},
         {"service_chars", chars_str},
-    });
+    };
+    // The service itself was listed, but its characteristics could not be:
+    // service_chars is empty.
+    if (chars_error != nullptr)
+      event["chars_error"] = chars_error;
+    this->emit_(EVENT_SERVICES, event);
   }
 
   free(services);
