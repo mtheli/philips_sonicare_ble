@@ -56,6 +56,16 @@ _DEVICE_INFO_CHARS = {
     "00002a29-0000-1000-8000-00805f9b34fb": "Manufacturer Name",
 }
 
+# Characteristics that hold text. Only these get ``value_text``: arbitrary
+# bytes that happen to be printable (battery 0x5a = "Z") are not text.
+# Same set as the ``_dec_str`` entries in sonicare_scan.py.
+TEXT_CHARS = frozenset({
+    "00002a00-0000-1000-8000-00805f9b34fb",  # Device Name
+    *_DEVICE_INFO_CHARS,                     # 0x2A24-0x2A29
+    "477ea600-a260-11e4-ae37-0002a5d54240",  # Brushhead Date
+    "477ea600-a260-11e4-ae37-0002a5d542b0",  # Brushhead Payload (NFC URL)
+})
+
 CLASSIC_SERVICE_PREFIX = "477ea600-a260-11e4-ae37-0002a5d5"
 CONDOR_SERVICE = "e50ba3c0-af04-4564-92ad-fef019489de6"
 
@@ -124,7 +134,11 @@ def parse_lightblue_log(text: str) -> dict:
             if hex_value is None:
                 continue
             char["value_hex"] = hex_value
-            text_value = _printable(bytes.fromhex(hex_value))
+            text_value = (
+                text_value_of(bytes.fromhex(hex_value))
+                if char["uuid"] in TEXT_CHARS
+                else None
+            )
             char["value_text"] = text_value
             if label := _DEVICE_INFO_CHARS.get(char["uuid"]):
                 device_info[label] = text_value or ""
@@ -159,12 +173,10 @@ def parse_lightblue_log(text: str) -> dict:
     }
 
 
-def _printable(data: bytes) -> str | None:
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
-    return text if text.isprintable() else None
+def text_value_of(data: bytes) -> str | None:
+    """Text of a string characteristic without trailing NULs, None if empty."""
+    text = data.rstrip(b"\x00").decode("utf-8", errors="replace")
+    return text if text.strip() else None
 
 
 def main() -> None:

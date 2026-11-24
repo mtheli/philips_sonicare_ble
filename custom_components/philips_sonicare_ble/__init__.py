@@ -1,6 +1,7 @@
 # custom_components/philips_sonicare/__init__.py
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -33,6 +34,7 @@ from .const import (
     CHAR_SERVICE_MAP,
     SVC_CONDOR,
 )
+from . import capture
 from .coordinator import PhilipsSonicareCoordinator, async_remove_stored_data
 from .helpers import async_get_own_device, esphome_service_id
 from .transport import (
@@ -56,6 +58,7 @@ PLATFORMS = [
 SERVICE_READ_CHARACTERISTIC = "read_characteristic"
 SERVICE_WRITE_CHARACTERISTIC = "write_characteristic"
 SERVICE_FORCE_WAKE = "force_wake"
+SERVICE_CAPTURE_GATT = "capture_gatt"
 
 
 def _get_coordinator(hass: HomeAssistant, entry_id: str | None):
@@ -564,6 +567,103 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             supports_response=SupportsResponse.ONLY,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_CAPTURE_GATT):
+        async def handle_capture_gatt(call: ServiceCall) -> ServiceResponse:
+            """Capture the GATT table plus all readable values as a fixture."""
+            entry_id = call.data.get("entry_id")
+            entries = hass.data.get(DOMAIN, {})
+            if entry_id:
+                if entry_id not in entries:
+                    return {"status": "no_device", "reason": "unknown_entry_id"}
+                coord = entries[entry_id]["coordinator"]
+            else:
+                # Without an entry_id: a bridge entry, a connected one first
+                candidates = [
+                    e["coordinator"] for e in entries.values()
+                    if hasattr(e["coordinator"].transport, "list_gatt_table")
+                ]
+                if not candidates:
+                    return {"status": "not_supported", "reason": "esp_bridge_only"}
+                coord = next(
+                    (c for c in candidates if c.transport.is_connected), candidates[0]
+                )
+            transport = coord.transport
+            chosen = {"entry_id": coord.entry.entry_id, "title": coord.entry.title}
+            if not hasattr(transport, "list_gatt_table"):
+                return {"status": "not_supported", "reason": "esp_bridge_only", **chosen}
+            if not transport.is_connected:
+                return {"status": "not_connected", **chosen}
+            if transport.prefer_listed_services:
+                # Another capture of this brush is still reading
+                return {"status": "busy", **chosen}
+            transport.prefer_listed_services = True
+            try:
+                services = await transport.list_gatt_table()
+                if not services:
+                    return {
+                        "status": "error",
+                        "reason": transport.last_list_error or "bridge_too_old_or_no_answer",
+                        **chosen,
+                    }
+                readable = capture.readable_chars(services)
+                values = await capture.async_read_values(transport, readable)
+            finally:
+                transport.prefer_listed_services = False
+            incomplete = [s["uuid"] for s in services if s.get("chars_error")]
+            missing = sum(1 for u in readable if values.get(u) is None)
+            if readable and missing == len(readable):
+                # Nothing read at all (brush gone mid-capture): no file
+                return {
+                    "status": "not_connected" if not transport.is_connected else "no_data",
+                    **chosen,
+                }
+            snapshot = capture.build_snapshot(
+                services,
+                values,
+                addresses=[
+                    coord.address,
+                    coord.entry.data.get(CONF_BOND_ADDRESS),
+                    coord.entry.data.get(CONF_PENDING_IDENTITY),
+                    getattr(transport, "_detected_mac", None),
+                    getattr(transport, "_bond_address", None),
+                ],
+            )
+            model = snapshot["device_info"].get("Model Number") or coord.entry.data.get("model")
+            filename = "philips_sonicare_capture_{}.json".format(
+                "".join(c for c in (model or "") if c.isalnum()) or "unknown"
+            )
+            path = hass.config.path(filename)
+
+            def _write() -> None:
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(snapshot, fh, indent=2, ensure_ascii=False)
+                    fh.write("\n")
+
+            response: dict[str, Any] = {
+                **chosen,
+                "status": "ok" if not missing and not incomplete else "partial",
+                "unreadable": missing,
+                # services whose characteristics the bridge could not list
+                "incomplete_services": incomplete,
+                "file": path,
+                "capture": snapshot,
+            }
+            try:
+                await hass.async_add_executor_job(_write)
+            except OSError as err:
+                _LOGGER.warning("Could not write GATT capture to %s: %s", path, err)
+                response["file"] = None
+                response["write_error"] = str(err)
+            else:
+                _LOGGER.info("GATT capture written to %s", path)
+            return response
+
+        hass.services.async_register(
+            DOMAIN, SERVICE_CAPTURE_GATT, handle_capture_gatt,
+            schema=vol.Schema({vol.Optional("entry_id"): str}),
+            supports_response=SupportsResponse.ONLY,
+        )
+
     _LOGGER.info("Philips Sonicare integration loaded - device: %s", address)
     return True
 
@@ -585,6 +685,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             SERVICE_READ_CHARACTERISTIC,
             SERVICE_WRITE_CHARACTERISTIC,
             SERVICE_FORCE_WAKE,
+            SERVICE_CAPTURE_GATT,
         ):
             if hass.services.has_service(DOMAIN, svc):
                 hass.services.async_remove(DOMAIN, svc)

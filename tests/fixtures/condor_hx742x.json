@@ -6,12 +6,12 @@
   "device_info": {
     "IEEE Regulatory Cert": "00",
     "Manufacturer Name": "Philips OHC",
-    "Software Revision": "00",
+    "Software Revision": "",
     "System ID": "0000000000000000",
     "Firmware Revision": "1.8.20.0",
     "Model Number": "HX742X",
     "PnP ID": "01dd0100140000",
-    "Hardware Revision": "00",
+    "Hardware Revision": "",
     "Serial Number": "0000000000"
   },
   "condor": {

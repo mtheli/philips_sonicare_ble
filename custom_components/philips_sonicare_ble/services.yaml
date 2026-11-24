@@ -41,3 +41,26 @@ force_wake:
       required: false
       selector:
         text:
+
+capture_gatt:
+  name: Capture GATT table
+  description: >
+    Captures the brush's full GATT table (services, characteristics,
+    properties, handles) and the value of every readable characteristic
+    through the ESP bridge. Handles need bridge firmware 1.16.0 or newer.
+    MAC address, serial number, system ID and brush head serial are replaced,
+    also where they turn up in other values; stored usage data (session
+    history, counters) stays in. It also reads characteristics the
+    integration does not use. The result is returned and saved as a JSON
+    file in the Home Assistant config folder, ready to attach to a GitHub
+    issue. On a brush that is not paired, a characteristic that needs
+    encryption can make the bridge start pairing.
+  fields:
+    entry_id:
+      name: Config entry ID
+      description: >
+        Optional. Without it, the first entry that runs over an ESP bridge is
+        used, a connected one first; the response names the entry it used.
+      required: false
+      selector:
+        text:

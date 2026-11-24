@@ -126,6 +126,12 @@ def _dec_str(d):
     return d.decode("utf-8", errors="replace")
 
 
+def _text_value(d: bytes) -> str | None:
+    """Text of a string characteristic without trailing NULs, None if empty."""
+    text = d.rstrip(b"\x00").decode("utf-8", errors="replace")
+    return text if text.strip() else None
+
+
 def _dec_pct(d):
     return f"{d[0]}%" if d else "?"
 
@@ -229,7 +235,7 @@ KNOWN_CHARS = {
     "477ea600-a260-11e4-ae37-0002a5d54210": ("Brushhead NFC Version",   "legacy", None),
     "477ea600-a260-11e4-ae37-0002a5d54220": ("Brushhead Type",          "legacy", _dec_enum(_BRUSHHEAD_TYPES)),
     "477ea600-a260-11e4-ae37-0002a5d54230": ("Brushhead Serial",        "legacy", None),
-    "477ea600-a260-11e4-ae37-0002a5d54240": ("Brushhead Date",          "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d54240": ("Brushhead Date",          "legacy", _dec_str),
     "477ea600-a260-11e4-ae37-0002a5d54250": ("Brushhead Unknown 4250",  "legacy", None),
     "477ea600-a260-11e4-ae37-0002a5d54254": ("Brushhead Unknown 4254",  "legacy", None),
     "477ea600-a260-11e4-ae37-0002a5d54260": ("Brushhead Unknown 4260",  "legacy", None),
@@ -240,7 +246,7 @@ KNOWN_CHARS = {
     "477ea600-a260-11e4-ae37-0002a5d542a2": ("Brushhead Unknown 42A2",  "legacy", None),
     "477ea600-a260-11e4-ae37-0002a5d542a4": ("Brushhead Unknown 42A4",  "legacy", None),
     "477ea600-a260-11e4-ae37-0002a5d542a6": ("Brushhead Unknown 42A6",  "legacy", None),
-    "477ea600-a260-11e4-ae37-0002a5d542b0": ("Brushhead Payload",       "legacy", None),
+    "477ea600-a260-11e4-ae37-0002a5d542b0": ("Brushhead Payload",       "legacy", _dec_str),
     "477ea600-a260-11e4-ae37-0002a5d542c0": ("Brushhead Ring ID",       "legacy", None),
     # Diagnostic Service (0x0007) — legacy protocol
     "477ea600-a260-11e4-ae37-0002a5d54310": ("Error Persistent",        "legacy", None),
@@ -1288,20 +1294,32 @@ async def _read_char(client, char, char_entry, char_info, device_info) -> str:
 
     hex_str = value.hex()
     char_entry["value_hex"] = hex_str
-    text = None
-    try:
-        decoded = value.decode("utf-8")
-        if decoded.isprintable():
-            text = decoded
-            print(f"    Value: {hex_str} = \"{decoded}\"")
-        else:
-            print(f"    Value: {hex_str}")
-    except (UnicodeDecodeError, ValueError):
-        print(f"    Value: {hex_str}")
+    is_text = bool(char_info) and char_info[2] is _dec_str
+    # value_text only for characteristics that hold text (decoder _dec_str):
+    # arbitrary bytes that happen to be printable (battery 0x5a = "Z") are
+    # not text.
+    text = _text_value(value) if is_text else None
     char_entry["value_text"] = text
+    decoded = None
+    if char_info and char_info[2] is not None and not is_text:
+        try:
+            decoded = char_info[2](value)
+        except Exception as dec_err:  # noqa: BLE001 — a scan keeps going
+            decoded = f"(decode error: {dec_err})"
+    if text is not None:
+        print(f"    Value: {hex_str} = \"{text}\"")
+    elif decoded is not None:
+        print(f"    Value: {hex_str}  →  {decoded}")
+    else:
+        print(f"    Value: {hex_str}")
 
     if char_info and char_info[1] in ("device_info", "standard_ble"):
-        device_info[char_info[0]] = text if text is not None else hex_str
+        if is_text:
+            device_info[char_info[0]] = text or ""
+        elif decoded is not None:
+            device_info[char_info[0]] = decoded
+        else:
+            device_info[char_info[0]] = hex_str
 
     if char.uuid.lower() == "00002a24-0000-1000-8000-00805f9b34fb":
         try:

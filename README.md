@@ -411,6 +411,7 @@ Toothbrush wakes up
 * **Pairing issues**: If a model that requires bonding won't connect, remove the toothbrush from your phone's Bluetooth settings first (Settings → Bluetooth → Philips Sonicare → Forget/Unpair). The integration handles stale bonds automatically, but the phone's bond may block the connection.
 * **ESPHome Bluetooth Proxy**: Works out of the box from ESPHome 2026.7.1 (older builders need the [Bluedroid NULL-check patch](esphome/KNOWN_ISSUES.md#bluedroid-crash-with-bluetooth_proxy-fixed-in-esphome-202671)). See [Option C](#option-c-bluetooth-proxy) for scope and the dedicated [ESP32 BLE Bridge](esphome/SETUP.md) as the recommended alternative for multi-device setups.
 * **Unsure if your model is compatible?** Run the [GATT scan script](scripts/sonicare_scan.py) to check which BLE protocol your toothbrush uses. It only needs Python 3 and `bleak` (`pip install bleak`).
+* **Sending a capture with an ESP32 BLE Bridge**: Run the action `philips_sonicare_ble.capture_gatt` (Developer Tools → Actions) while the brush is connected. It saves the brush's GATT table and every readable value as `philips_sonicare_capture_<model>.json` in your Home Assistant config folder, ready to attach to an issue (bridge firmware 1.16.0 or newer adds the attribute handles). MAC address, serial number, system ID and brush head serial are replaced; stored session data stays in.
 
 ### Known Issues
 

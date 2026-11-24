@@ -4,7 +4,7 @@
   "adv_name": "Philips Sonicare",
   "protocol": "Classic (supported)",
   "device_info": {
-    "Battery Level": "*",
+    "Battery Level": "42%",
     "System ID": "0000000000000000",
     "Manufacturer Name": "Philips OHC",
     "Software Revision": "",
@@ -151,7 +151,7 @@
           ],
           "handle": 149,
           "value_hex": "6054",
-          "value_text": "`T"
+          "value_text": null
         },
         {
           "uuid": "477ea600-a260-11e4-ae37-0002a5d54230",
@@ -359,7 +359,7 @@
           ],
           "handle": 60,
           "value_hex": "2a",
-          "value_text": "*"
+          "value_text": null
         }
       ]
     },
@@ -394,7 +394,7 @@
           ],
           "handle": 75,
           "value_hex": "",
-          "value_text": ""
+          "value_text": null
         },
         {
           "uuid": "00002a24-0000-1000-8000-00805f9b34fb",
@@ -454,7 +454,7 @@
           ],
           "handle": 71,
           "value_hex": "",
-          "value_text": ""
+          "value_text": null
         }
       ]
     },

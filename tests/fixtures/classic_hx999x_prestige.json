@@ -13,7 +13,7 @@
     "Firmware Revision": "1.15.4",
     "Model Number": "HX999X",
     "Serial Number": "0000000000",
-    "Battery Level": "."
+    "Battery Level": "46%"
   },
   "condor": {},
   "gatt_services": [
@@ -360,7 +360,7 @@
           ],
           "handle": 25,
           "value_hex": "",
-          "value_text": ""
+          "value_text": null
         },
         {
           "uuid": "00002a23-0000-1000-8000-00805f9b34fb",
@@ -380,7 +380,7 @@
           ],
           "handle": 29,
           "value_hex": "",
-          "value_text": ""
+          "value_text": null
         },
         {
           "uuid": "00002a26-0000-1000-8000-00805f9b34fb",
@@ -426,7 +426,7 @@
           ],
           "handle": 15,
           "value_hex": "2e",
-          "value_text": "."
+          "value_text": null
         }
       ]
     },
@@ -441,7 +441,7 @@
           ],
           "handle": 131,
           "value_hex": "6054",
-          "value_text": "`T"
+          "value_text": null
         },
         {
           "uuid": "477ea600-a260-11e4-ae37-0002a5d542a2",

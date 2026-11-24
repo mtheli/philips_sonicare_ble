@@ -13,7 +13,7 @@
     "Firmware Revision": "4.2.2",
     "Hardware Revision": "",
     "System ID": "0000000000000000",
-    "Battery Level": "18",
+    "Battery Level": "24%",
     "Service Changed": "00000000"
   },
   "condor": {},
@@ -49,7 +49,7 @@
           ],
           "handle": 82,
           "value_hex": "",
-          "value_text": ""
+          "value_text": null
         },
         {
           "uuid": "00002a29-0000-1000-8000-00805f9b34fb",
@@ -99,7 +99,7 @@
           ],
           "handle": 78,
           "value_hex": "",
-          "value_text": ""
+          "value_text": null
         },
         {
           "uuid": "00002a23-0000-1000-8000-00805f9b34fb",

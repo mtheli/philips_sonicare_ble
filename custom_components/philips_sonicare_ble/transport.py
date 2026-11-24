@@ -964,6 +964,16 @@ class EspBridgeTransport(SonicareTransport):
         # is always lowercase on the wire — canonicalize here so service-name
         # building and bridge_id event filtering stay consistent.
         self._esp_bridge_id = (esp_bridge_id or "").lower()
+        # char uuid → service uuid from the last list_gatt_table() call
+        self._listed_char_services: dict[str, str] = {}
+        # Set by capture_gatt: address reads through the listed table first,
+        # so a model whose layout differs from CHAR_SERVICE_MAP (or a Kids
+        # handle before its overrides are set) is read where it really is.
+        self.prefer_listed_services = False
+        self.last_list_error: str | None = None
+        # Characteristics whose last read succeeded with an empty value
+        # (read_char returns None for those, as for a failed read).
+        self._empty_reads: set[str] = set()
         self._setup_done = False
         self._device_connected = False
         self._esp_alive = False
@@ -1040,7 +1050,17 @@ class EspBridgeTransport(SonicareTransport):
         keeps the session characteristics in a service of its own, and
         addressing the storage service it does not have would simply fail.
         """
-        svc = self.char_service_overrides.get(char_uuid) or CHAR_SERVICE_MAP.get(char_uuid)
+        if getattr(self, "prefer_listed_services", False):
+            listed = self._listed_char_services.get(char_uuid.lower())
+            if listed:
+                return listed
+        svc = (
+            self.char_service_overrides.get(char_uuid)
+            or CHAR_SERVICE_MAP.get(char_uuid)
+            # Characteristics the integration does not know (GATT capture)
+            # are found through the table of the last list_gatt_table().
+            or self._listed_char_services.get(char_uuid.lower())
+        )
         if not svc:
             raise TransportError(f"No service UUID mapping for characteristic {char_uuid}")
         return svc
@@ -1252,6 +1272,11 @@ class EspBridgeTransport(SonicareTransport):
                 # event, which would leave them running into the batch
                 # timeout (observed: 3 empty chars stalled a 3 s poll
                 # batch to the full 48 s ceiling).
+                # Only a read that succeeded is empty: a late error event
+                # (bridge read_timeout after HA gave up) carries no payload
+                # either.
+                if uuid in self._pending_reads and not error:
+                    self._empty_reads.add(uuid)
                 self._resolve_pending_reads(uuid, None)
                 return
 
@@ -1499,6 +1524,7 @@ class EspBridgeTransport(SonicareTransport):
     async def read_char(
         self, char_uuid: str, timeout: float = ESP_READ_TIMEOUT
     ) -> bytes | None:
+        self._empty_reads.discard(char_uuid)
         if not self._setup_done:
             return None
         service_uuid = self._get_service_uuid(char_uuid)
@@ -1524,6 +1550,10 @@ class EspBridgeTransport(SonicareTransport):
             self._discard_pending_read(char_uuid, future)
             _LOGGER.debug("Read timeout for %s (other reads continue)", char_uuid)
             return None
+
+    def read_was_empty(self, char_uuid: str) -> bool:
+        """True when the last read of the characteristic returned 0 bytes."""
+        return char_uuid in self._empty_reads
 
     async def read_chars(self, char_uuids: list[str]) -> dict[str, bytes | None]:
         if not self._setup_done:
@@ -1713,10 +1743,6 @@ class EspBridgeTransport(SonicareTransport):
     async def list_services(self, timeout: float = 5.0) -> list[str]:
         """Enumerate the connected device's GATT services via the bridge.
 
-        Calls ``ble_list_services`` and collects the resulting per-service
-        events (one ``esphome.philips_sonicare_ble_services`` event per
-        service, keyed by ``service_index`` / ``service_count``).
-
         Returns the discovered service UUIDs in discovery order, each
         normalised to the canonical 128-bit lowercase form so callers can
         compare directly against ``SVC_*`` constants. Returns an empty
@@ -1725,19 +1751,54 @@ class EspBridgeTransport(SonicareTransport):
         since older bridges and disconnected sessions both look the same
         from here.
         """
+        table = await self.list_gatt_table(timeout)
+        return [svc["uuid"] for svc in table or []]
+
+    async def list_gatt_table(
+        self, timeout: float = 5.0
+    ) -> list[dict[str, Any]] | None:
+        """Return the connected device's GATT table as seen by the bridge.
+
+        Calls ``ble_list_services`` and collects the resulting per-service
+        events (one ``esphome.philips_sonicare_ble_services`` event per
+        service, keyed by ``service_index`` / ``service_count``). Each
+        service is ``{"uuid", "characteristics": [{"uuid", "properties",
+        "value_handle"}]}`` with canonical UUIDs and bleak-style property
+        names; ``value_handle`` is None for bridges before 1.16.0, which do
+        not send it. A service whose characteristics the bridge could not
+        list carries ``chars_error``. Returns None on timeout, service-call
+        failure or a bridge error; ``last_list_error`` then says which.
+        """
+        self.last_list_error = None
         if not self.is_connected:
-            return []
+            self.last_list_error = "not_connected"
+            return None
 
         loop = self._hass.loop
-        result_future: asyncio.Future[list[str]] = loop.create_future()
-        collected: dict[int, str] = {}
+        result_future: asyncio.Future[list[dict[str, Any]] | None] = (
+            loop.create_future()
+        )
+        collected: dict[int, dict[str, Any]] = {}
         expected_count: int | None = None
 
         @callback
         def _handler(event: Event) -> None:
             nonlocal expected_count
             data = event.data
+            # Another slot or ESP answering its own ble_list_services: its
+            # mac may not tell us apart yet (setup flow before the info event).
+            bridge_id = str(data.get("bridge_id", "")).lower()
+            if bridge_id and self._esp_bridge_id and bridge_id != self._esp_bridge_id:
+                return
             if self._is_other_brush(data):
+                return
+            if data.get("error"):
+                # Bridges from 1.16.0 on answer failures right away instead
+                # of leaving us to run into the timeout.
+                _LOGGER.debug("ESP list_services failed: %s", data["error"])
+                self.last_list_error = str(data["error"])
+                if not result_future.done():
+                    result_future.set_result(None)
                 return
             try:
                 count = int(data.get("service_count", "0"))
@@ -1746,7 +1807,14 @@ class EspBridgeTransport(SonicareTransport):
                 return
             uuid = data.get("service_uuid") or ""
             if uuid:
-                collected[index] = self._canonical_uuid(uuid)
+                collected[index] = {
+                    "uuid": self._canonical_uuid(uuid),
+                    "characteristics": parse_service_chars(
+                        str(data.get("service_chars") or "")
+                    ),
+                }
+                if data.get("chars_error"):
+                    collected[index]["chars_error"] = str(data["chars_error"])
             if expected_count is None:
                 expected_count = count
             if (
@@ -1754,8 +1822,7 @@ class EspBridgeTransport(SonicareTransport):
                 and len(collected) >= expected_count
                 and not result_future.done()
             ):
-                ordered = [collected[i] for i in sorted(collected)]
-                result_future.set_result(ordered)
+                result_future.set_result([collected[i] for i in sorted(collected)])
             elif expected_count == 0 and not result_future.done():
                 result_future.set_result([])
 
@@ -1767,12 +1834,20 @@ class EspBridgeTransport(SonicareTransport):
                 {},
                 blocking=True,
             )
-            return await asyncio.wait_for(result_future, timeout=timeout)
+            table = await asyncio.wait_for(result_future, timeout=timeout)
         except (HomeAssistantError, asyncio.TimeoutError) as err:
             _LOGGER.debug("ESP list_services failed: %s", err)
-            return []
+            self.last_list_error = "no_answer"
+            return None
         finally:
             unsub()
+        if table:
+            self._listed_char_services = {
+                char["uuid"]: svc["uuid"]
+                for svc in table
+                for char in svc["characteristics"]
+            }
+        return table
 
     async def set_notify_throttle(self, ms: int) -> None:
         if not self.is_connected:
@@ -1822,3 +1897,40 @@ class EspBridgeTransport(SonicareTransport):
 
     def set_disconnect_callback(self, cb: Callable[[], None]) -> None:
         self._disconnect_cb = cb
+
+
+_PROP_LETTERS = {
+    "R": "read",
+    "W": "write",
+    "w": "write-without-response",
+    "N": "notify",
+    "I": "indicate",
+}
+
+
+def parse_service_chars(raw: str) -> list[dict[str, Any]]:
+    """Parse a bridge ``service_chars`` field: "uuid/props[/handle],...".
+
+    Bridges before 1.16.0 send ``uuid/props`` (props left out when empty),
+    later ones append the value handle in hex — the handle of the value
+    attribute, one above the declaration handle BlueZ/bleak report.
+    """
+    chars: list[dict[str, Any]] = []
+    for item in filter(None, raw.split(",")):
+        parts = item.split("/")
+        entry: dict[str, Any] = {
+            "uuid": EspBridgeTransport._canonical_uuid(parts[0]),
+            "properties": [
+                _PROP_LETTERS[c]
+                for c in (parts[1] if len(parts) > 1 else "")
+                if c in _PROP_LETTERS
+            ],
+            "value_handle": None,
+        }
+        if len(parts) > 2 and parts[2]:
+            try:
+                entry["value_handle"] = int(parts[2], 16)
+            except ValueError:
+                pass
+        chars.append(entry)
+    return chars
