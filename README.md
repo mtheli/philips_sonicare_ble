@@ -112,6 +112,8 @@ Like the card above, this is a **separate project and not bundled with this inte
 
 [Maintenance Supporter](https://github.com/iluebbe/maintenance_supporter) by [@iluebbe](https://github.com/iluebbe) and [Home Keeper](https://github.com/prestomation/ha-home-keeper) by [@prestomation](https://github.com/prestomation) detect this integration and offer a task to replace the brush head, based on the brush head's **Wear** sensor.
 
+[Maintenance](https://github.com/juju35/ha-maintenance) by [@juju35](https://github.com/juju35) picks up the same **Wear** sensor (from v0.5.4) and shows the brush head with what is left of it.
+
 ---
 
 ## Supported Languages
