@@ -35,6 +35,7 @@ from .const import (
     CONF_BLUETOOTH_ADAPTER,
     BLUETOOTH_ADAPTER_AUTO,
     TRANSPORT_ESP_BRIDGE,
+    TRANSPORT_MQTT_GATEWAY,
     SVC_BRUSHHEAD,
     SVC_CONDOR,
     SVC_STORAGE,
@@ -187,8 +188,11 @@ async def async_setup_entry(
             SonicareBrushHeadNfcVersionSensor(coordinator, entry),
         ])
 
-    # RSSI sensor (direct BLE only — ESP bridge has no advertisement RSSI)
-    if entry.data.get(CONF_TRANSPORT_TYPE) != TRANSPORT_ESP_BRIDGE:
+    # RSSI sensor (direct BLE only — a bridge or gateway has no
+    # advertisement RSSI here)
+    if entry.data.get(CONF_TRANSPORT_TYPE) not in (
+        TRANSPORT_ESP_BRIDGE, TRANSPORT_MQTT_GATEWAY,
+    ):
         entities.append(SonicareRssiSensor(coordinator, entry))
         entities.append(SonicareAdapterSelectionSensor(coordinator, entry))
 
@@ -1317,7 +1321,7 @@ class SonicareAdapterTypeSensor(PhilipsConnectionEntity, SensorEntity):
     _attr_translation_key = "adapter_type"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = ["direct_ble", "esp_bridge", "stock_proxy", "unknown"]
+    _attr_options = ["direct_ble", "esp_bridge", "stock_proxy", "mqtt_gateway", "unknown"]
     _attr_icon = "mdi:transit-connection-variant"
 
     def __init__(self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry) -> None:

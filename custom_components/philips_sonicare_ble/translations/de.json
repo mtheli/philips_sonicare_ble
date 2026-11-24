@@ -125,6 +125,13 @@
         "title": "BLE-Pairing erforderlich",
         "description": "{alert}Deine Zahnbürste unter `{address}` benötigt ein **BLE-Bonding**, bevor Charakteristiken gelesen werden können.\n\nDiese Verbindung läuft über einen **Bluetooth-Proxy** (`{proxy_name}`). Der Proxy koppelt sich **automatisch beim Lesen** mit der Zahnbürste — Pairing-Werkzeuge auf dem Home-Assistant-Host (`bluetoothctl`, Pairing-Skripte) haben auf diese Verbindung keinen Einfluss.\n\nDas automatische Pairing ist nicht abgeschlossen. Die wahrscheinlichsten Ursachen:\n\n1. **Die Zahnbürste hält noch einen alten Bond** zu einem Handy oder einem anderen Adapter. Entferne die Bürste in der Philips-Sonicare-App (oder über „Gerät vergessen“ in den Bluetooth-Einstellungen des Handys), wecke die Bürste und klicke auf **Erneut versuchen** — ein neuer Versuch startet das Pairing neu.\n2. **Die Zahnbürste ist während der Einrichtung eingeschlafen** — drücke den Power-Knopf, halte sie wach und klicke auf **Erneut versuchen**.\n3. **Du betreibst mehrere Bluetooth-Proxys:** Bonds wandern nicht von einem Proxy zum anderen, und Home Assistant wählt den Proxy mit dem besten Signal. Lege die Bürste direkt neben einen Proxy und klicke auf **Erneut versuchen**.\n4. Manche Modelle **verweigern das Pairing grundsätzlich**. Wenn jeder Versuch sofort scheitert, richte die Bürste stattdessen über den Bluetooth-Adapter des Hosts oder die dedizierte ESP32-Bridge ein.",
         "submit": "Erneut versuchen"
+      },
+      "mqtt_confirm": {
+        "title": "Philips Sonicare bestätigen (MQTT-Gateway)",
+        "description": "**{name}** (`{address}`) wurde vom MQTT-Gateway **{gateway}** gemeldet.\n\nModell: {model} · Firmware: {firmware}\n\nDas Gateway hält die Bluetooth-Verbindung zur Zahnbürste; Home Assistant bekommt die Daten über MQTT.",
+        "data": {
+          "device_name": "Name"
+        }
       }
     },
     "error": {
@@ -176,7 +183,8 @@
       "already_in_progress": "Der Konfigurationsvorgang läuft bereits.",
       "no_devices_found": "Auf dieser ESP-Bridge wurden keine unterstützten Philips-Sonicare-Geräte gefunden.",
       "no_esphome_devices": "Keine ESPHome-Bridge gefunden. Richte zuerst ein ESPHome-Gerät mit der Sonicare-BLE-Bridge-Komponente ein — die Anleitung erreichst du über das Hilfe-Symbol (oben rechts).",
-      "not_supported": "Dieses ESPHome-Gerät stellt keine Philips-Sonicare-Bridge-Komponente bereit."
+      "not_supported": "Dieses ESPHome-Gerät stellt keine Philips-Sonicare-Bridge-Komponente bereit.",
+      "mqtt_gateway_unsupported": "Das MQTT-Gateway hat eine Zahnbürste in einem Format gemeldet, das diese Version nicht unterstützt."
     }
   },
   "options": {
@@ -449,6 +457,7 @@
           "direct_ble": "Direktes Bluetooth",
           "esp_bridge": "ESP-Bridge",
           "stock_proxy": "Bluetooth-Proxy",
+          "mqtt_gateway": "MQTT-Gateway",
           "unknown": "Unbekannt"
         }
       }

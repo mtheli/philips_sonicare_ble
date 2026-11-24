@@ -125,6 +125,13 @@
         "title": "Appairage BLE requis",
         "description": "{alert}Votre brosse à dents à l'adresse `{address}` nécessite une **liaison BLE** avant que ses caractéristiques puissent être lues.\n\nCette connexion passe par un **proxy Bluetooth** (`{proxy_name}`). Le proxy s'appaire avec la brosse à dents **automatiquement pendant la lecture** — les outils d'appairage sur l'hôte Home Assistant (`bluetoothctl`, scripts d'appairage) n'ont aucun effet sur cette connexion.\n\nL'appairage automatique n'a pas abouti. Causes les plus probables :\n\n1. **La brosse à dents conserve une ancienne liaison** avec un téléphone ou un autre adaptateur. Supprimez la brosse de l'application Philips Sonicare (ou oubliez-la dans les réglages Bluetooth de votre téléphone), réveillez la brosse et cliquez sur **Réessayer** — chaque nouvel essai relance l'appairage.\n2. **La brosse à dents s'est mise en veille** pendant la configuration — appuyez sur le bouton marche/arrêt, gardez-la allumée et cliquez sur **Réessayer**.\n3. **Vous utilisez plusieurs proxys Bluetooth :** les liaisons ne passent pas d'un proxy à l'autre, et Home Assistant choisit le proxy ayant le meilleur signal. Placez la brosse près d'un seul proxy et cliquez sur **Réessayer**.\n4. Certains modèles **refusent tout appairage**. Si chaque essai échoue immédiatement, configurez plutôt la brosse via l'adaptateur Bluetooth de l'hôte ou via le pont ESP32 dédié.",
         "submit": "Réessayer"
+      },
+      "mqtt_confirm": {
+        "title": "Confirmer Philips Sonicare (passerelle MQTT)",
+        "description": "La passerelle MQTT **{gateway}** a annoncé **{name}** (`{address}`).\n\nModèle : {model} · Firmware : {firmware}\n\nLa passerelle gère la connexion Bluetooth avec la brosse à dents ; Home Assistant reçoit les données via MQTT.",
+        "data": {
+          "device_name": "Nom"
+        }
       }
     },
     "error": {
@@ -176,7 +183,8 @@
       "already_in_progress": "Une configuration est déjà en cours.",
       "no_devices_found": "Aucun appareil Philips Sonicare compatible n'a été trouvé sur ce pont ESP.",
       "no_esphome_devices": "Aucun pont ESPHome trouvé. Configurez d'abord un appareil ESPHome avec le composant pont BLE Sonicare — cliquez sur l'icône d'aide (en haut à droite) pour le guide d'installation.",
-      "not_supported": "Cet appareil ESPHome n'héberge pas de composant pont Philips Sonicare."
+      "not_supported": "Cet appareil ESPHome n'héberge pas de composant pont Philips Sonicare.",
+      "mqtt_gateway_unsupported": "La passerelle MQTT a annoncé une brosse à dents dans un format que cette version ne prend pas en charge."
     }
   },
   "options": {
@@ -449,6 +457,7 @@
           "direct_ble": "Bluetooth direct",
           "esp_bridge": "Pont ESP",
           "stock_proxy": "Proxy Bluetooth",
+          "mqtt_gateway": "Passerelle MQTT",
           "unknown": "Inconnu"
         }
       }

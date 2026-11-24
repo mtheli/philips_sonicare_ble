@@ -125,6 +125,13 @@
         "title": "Se requiere emparejamiento BLE",
         "description": "{alert}Tu cepillo de dientes en `{address}` requiere **vinculación BLE** antes de poder leer sus características.\n\nEsta conexión pasa por un **proxy Bluetooth** (`{proxy_name}`). El proxy se empareja con el cepillo de dientes **automáticamente durante la lectura**; las herramientas de emparejamiento del host de Home Assistant (`bluetoothctl`, scripts de emparejamiento) no tienen ningún efecto en esta conexión.\n\nEl emparejamiento automático no se ha completado. Causas más probables:\n\n1. **El cepillo de dientes aún conserva un vínculo antiguo** con un teléfono u otro adaptador. Elimina el cepillo de la app Philips Sonicare (u olvídalo en los ajustes de Bluetooth de tu teléfono), despiértalo y haz clic en **Reintentar**; al reintentar se reinicia el emparejamiento.\n2. **El cepillo de dientes ha entrado en reposo** durante la configuración: pulsa el botón de encendido, mantenlo activo y haz clic en **Reintentar**.\n3. **Usas varios proxies Bluetooth:** los vínculos no se trasladan de un proxy a otro, y Home Assistant elige el proxy que tenga mejor señal. Acerca el cepillo a uno de los proxies y haz clic en **Reintentar**.\n4. Algunos modelos **rechazan por completo el emparejamiento**. Si todos los reintentos fallan de inmediato, configura el cepillo mediante el adaptador Bluetooth del host o mediante el puente ESP32 dedicado.",
         "submit": "Reintentar"
+      },
+      "mqtt_confirm": {
+        "title": "Confirmar Philips Sonicare (pasarela MQTT)",
+        "description": "La pasarela MQTT **{gateway}** ha anunciado **{name}** (`{address}`).\n\nModelo: {model} · Firmware: {firmware}\n\nLa pasarela mantiene la conexión Bluetooth con el cepillo; Home Assistant recibe los datos por MQTT.",
+        "data": {
+          "device_name": "Nombre"
+        }
       }
     },
     "error": {
@@ -176,7 +183,8 @@
       "already_in_progress": "El flujo de configuración ya está en curso.",
       "no_devices_found": "No se han encontrado dispositivos Philips Sonicare compatibles en este puente ESP.",
       "no_esphome_devices": "No se ha encontrado ningún puente ESPHome. Configura primero un dispositivo ESPHome con el componente de puente BLE de Sonicare; haz clic en el icono de ayuda (arriba a la derecha) para ver la guía de configuración.",
-      "not_supported": "Este dispositivo ESPHome no aloja ningún componente de puente Philips Sonicare."
+      "not_supported": "Este dispositivo ESPHome no aloja ningún componente de puente Philips Sonicare.",
+      "mqtt_gateway_unsupported": "La pasarela MQTT anunció un cepillo en un formato que esta versión no admite."
     }
   },
   "options": {
@@ -449,6 +457,7 @@
           "direct_ble": "Bluetooth directo",
           "esp_bridge": "Puente ESP",
           "stock_proxy": "Proxy Bluetooth",
+          "mqtt_gateway": "Pasarela MQTT",
           "unknown": "Desconocido"
         }
       }

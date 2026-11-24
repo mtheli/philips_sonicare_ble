@@ -749,6 +749,8 @@ CONF_SERVICES = "services"
 CONF_TRANSPORT_TYPE = "transport_type"
 TRANSPORT_BLEAK = "bleak"
 TRANSPORT_ESP_BRIDGE = "esp_bridge"
+# A gateway near the brush holds the BLE link and talks MQTT (Condor only).
+TRANSPORT_MQTT_GATEWAY = "mqtt_gateway"
 
 CONF_ESP_DEVICE_NAME = "esp_device_name"
 CONF_ESP_BRIDGE_ID = "esp_bridge_id"

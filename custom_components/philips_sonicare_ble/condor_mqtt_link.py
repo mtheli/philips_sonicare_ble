@@ -82,10 +82,11 @@ class CondorMqttLink(CondorLink):
         # anyway, and the message layer never needs more.
         self._request_lock = asyncio.Lock()
 
-        # Called with no arguments when the gateway or the brush goes away
-        # or a new session starts — the owner then invalidates and sets up
-        # again.
-        self.on_link_change: Callable[[], None] | None = None
+        # Called with no arguments whenever ``link_up`` or the session
+        # changes — gateway online/offline, brush connected/disconnected, new
+        # session. The owner (the transport) turns this into its connection
+        # events.
+        self.on_state_change: Callable[[], None] | None = None
 
     # --- State -----------------------------------------------------------
 
@@ -104,6 +105,10 @@ class CondorMqttLink(CondorLink):
     @property
     def session(self) -> int | None:
         return self._session
+
+    @property
+    def gateway_online(self) -> bool:
+        return self._online
 
     # --- Lifecycle -------------------------------------------------------
 
@@ -150,8 +155,17 @@ class CondorMqttLink(CondorLink):
         self._opened_session = None
 
     async def close(self) -> None:
+        """End the session. The topic subscriptions stay: they belong to the
+        connection to the gateway, which outlives a session (see ``stop``)."""
         self.invalidate()
-        self._fail_pending("link closed")
+        self._fail_pending("session closed")
+
+    async def stop(self) -> None:
+        """Close and drop the topic subscriptions."""
+        await self.close()
+        self._online = False
+        self._connected = False
+        self._session = None
         unsubscribers, self._unsubscribers = self._unsubscribers, []
         for unsub in unsubscribers:
             try:
@@ -228,7 +242,7 @@ class CondorMqttLink(CondorLink):
         self._state_event.set()
         if not online:
             self._fail_pending("gateway offline")
-            self._notify_link_change()
+        self._notify_state_change()
 
     def _on_link(self, _topic: str, payload: str) -> None:
         try:
@@ -248,15 +262,14 @@ class CondorMqttLink(CondorLink):
             return
         if not connected:
             self._fail_pending("brush disconnected")
-        if self._opened_session is not None:
-            self._notify_link_change()
+        self._notify_state_change()
 
-    def _notify_link_change(self) -> None:
-        if self.on_link_change is not None:
+    def _notify_state_change(self) -> None:
+        if self.on_state_change is not None:
             try:
-                self.on_link_change()
+                self.on_state_change()
             except Exception:  # noqa: BLE001
-                _LOGGER.exception("MQTT gateway link-change callback failed")
+                _LOGGER.exception("MQTT gateway state callback failed")
 
     def _on_resp(self, _topic: str, payload: str) -> None:
         try:

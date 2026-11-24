@@ -92,6 +92,7 @@ from .const import (
     CONF_TRANSPORT_TYPE,
     CONF_SERVICES,
     TRANSPORT_ESP_BRIDGE,
+    TRANSPORT_MQTT_GATEWAY,
     MIN_BRIDGE_VERSION,
     CONF_NOTIFY_THROTTLE,
     DEFAULT_NOTIFY_THROTTLE,
@@ -186,9 +187,13 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry = entry
         self.address = entry.data.get("address", "unknown")
         self.transport = transport
-        self._is_esp_bridge = (
-            entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
-        )
+        transport_type = entry.data.get(CONF_TRANSPORT_TYPE)
+        self._is_esp_bridge = transport_type == TRANSPORT_ESP_BRIDGE
+        self._is_mqtt_gateway = transport_type == TRANSPORT_MQTT_GATEWAY
+        # Something between HA and the brush holds the BLE link (ESP bridge
+        # or MQTT gateway): no advertisements to wait for, the brush shows
+        # up as a "connected" event on the transport instead.
+        self._is_gateway = self._is_esp_bridge or self._is_mqtt_gateway
         if isinstance(transport, EspBridgeTransport):
             transport.set_build_info_callback(self._on_bridge_build_changed)
             transport.set_bond_address(entry.data.get(CONF_BOND_ADDRESS))
@@ -200,7 +205,10 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # same ``coordinator.data`` shape through their respective
         # adapters, so entity code stays protocol-agnostic.
         discovered = {s.lower() for s in entry.data.get(CONF_SERVICES, [])}
-        self._use_condor = SVC_CONDOR.lower() in discovered
+        # An MQTT gateway only carries Condor port data.
+        self._use_condor = (
+            SVC_CONDOR.lower() in discovered or self._is_mqtt_gateway
+        )
         # Counterfeit detection only applies to devices that actually expose a
         # brush-head NFC service (Classic ``SVC_BRUSHHEAD`` or Condor). Models
         # without it — e.g. the HX63xx Kids — never report a serial, so the
@@ -208,7 +216,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._has_brushhead = SVC_BRUSHHEAD.lower() in discovered or self._use_condor
         if self._use_condor:
             from .condor_protocol import CondorProtocol
-            self._protocol = CondorProtocol(transport)
+            self._protocol = CondorProtocol(
+                transport, link=getattr(transport, "link", None)
+            )
         else:
             from .classic_protocol import ClassicProtocol
             self._protocol = ClassicProtocol(transport)
@@ -309,7 +319,9 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         _LOGGER.debug(
             "Initializing coordinator for %s (transport: %s)",
             self.address,
-            "ESP" if self._is_esp_bridge else "Direct BLE",
+            "ESP" if self._is_esp_bridge
+            else "MQTT gateway" if self._is_mqtt_gateway
+            else "Direct BLE",
         )
         # Event-driven: no polling. Connect on ADV/D-Bus (Direct BLE)
         # or ESP "ready" event (ESP bridge).
@@ -460,7 +472,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_start(self) -> None:
         """Start live monitoring. Call after setup is complete."""
-        if not self._is_esp_bridge:
+        if not self._is_gateway:
             self._start_advertisement_callback()
             if not self._use_adv_clear:
                 # Fallback for HA < 2026.5 without async_clear_advertisement_history.
@@ -1323,7 +1335,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # ---- Wait for device to be available ----
             # Direct BLE: wait for ADV/D-Bus signal
             # ESP bridge: skips — connect() sets up listeners, then we wait below
-            if not self._is_esp_bridge and not self.transport.is_connected:
+            if not self._is_gateway and not self.transport.is_connected:
                     if self._wake_event.is_set() and self._adv_wake:
                         self._consume_wake()
                         _LOGGER.info("Advertisement already pending — connecting to %s", self.address)
@@ -1402,7 +1414,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                     _LOGGER.info("Establishing live connection to %s...", self.address)
                     await self.transport.connect()
-                    link_up = not self._is_esp_bridge
+                    link_up = not self._is_gateway
 
                     # The bridge reports its build environment while the
                     # transport waits for it, before the brush is connected —
@@ -1411,8 +1423,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._check_bridge_idf()
                         self._check_bridge_address_resolution()
 
-                    # ESP bridge: wait for BLE device to actually connect
-                    if self._is_esp_bridge and not self.transport.is_connected:
+                    # ESP bridge / MQTT gateway: wait for the brush to connect
+                    if self._is_gateway and not self.transport.is_connected:
                         _LOGGER.debug(
                             "ESP bridge alive, waiting for BLE device connection for %s...",
                             self.address,
@@ -1420,7 +1432,11 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self._wake_event.clear()
                         await self._wake_event.wait()
                         self._wake_event.clear()
-                        _LOGGER.info("BLE device connected via ESP bridge for %s", self.address)
+                        _LOGGER.info(
+                            "Brush connected via %s for %s",
+                            "ESP bridge" if self._is_esp_bridge else "MQTT gateway",
+                            self.address,
+                        )
 
                     # Set notification throttle for ESP bridge
                     if self._is_esp_bridge:
@@ -1428,6 +1444,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             CONF_NOTIFY_THROTTLE, DEFAULT_NOTIFY_THROTTLE
                         )
                         await self.transport.set_notify_throttle(throttle_ms)
+                    if self._is_gateway:
                         # Stamp the disconnect counter BEFORE the reads: a
                         # disconnect landing anywhere after this point makes
                         # the wait loop below re-run the whole setup, even
@@ -1505,7 +1522,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         # drops its key, so the next attempt pairs afresh.
                         self._count_proxy_encryption_failure()
 
-                    if not self._is_esp_bridge:
+                    if not self._is_gateway:
                         # Direct BLE: quick retries, then wait for ADV
                         for attempt in range(MAX_QUICK_RETRIES):
                             await asyncio.sleep(5)
@@ -1558,8 +1575,7 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     # itself, but HA still needs the fresh read batch (and
                     # the "_connecting" flag cleared) — re-run live setup.
                     if (
-                        self._is_esp_bridge
-                        and isinstance(self.transport, EspBridgeTransport)
+                        self._is_gateway
                         and self.transport.disconnect_count
                         != self._setup_disconnect_count
                     ):
@@ -1889,6 +1905,8 @@ class PhilipsSonicareCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         if self._is_esp_bridge:
             return "esp_bridge"
+        if self._is_mqtt_gateway:
+            return "mqtt_gateway"
         if self._last_adapter_type is not None and not self.transport.is_connected:
             return self._last_adapter_type
         client = getattr(self.transport, "_client", None)

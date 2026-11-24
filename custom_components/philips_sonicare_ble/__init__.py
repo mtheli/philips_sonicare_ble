@@ -24,6 +24,7 @@ from .const import (
     CONF_SERVICES,
     CONF_TRANSPORT_TYPE,
     TRANSPORT_ESP_BRIDGE,
+    TRANSPORT_MQTT_GATEWAY,
     CONF_ESP_DEVICE_NAME,
     CONF_ESP_BRIDGE_ID,
     CONF_BOND_ADDRESS,
@@ -385,6 +386,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 CONF_PIPELINED_READS, DEFAULT_PIPELINED_READS
             ),
         )
+    elif transport_type == TRANSPORT_MQTT_GATEWAY:
+        from .mqtt_transport import MqttGatewayTransport
+
+        transport = MqttGatewayTransport(hass, address)
     else:
         transport = BleakTransport(
             hass,
@@ -748,6 +753,10 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def _async_release_bond(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Drop the transport's BLE bond for a removed entry (best effort)."""
     transport = entry.data.get(CONF_TRANSPORT_TYPE)
+
+    if transport == TRANSPORT_MQTT_GATEWAY:
+        # The bond lives on the gateway, not on this host.
+        return
 
     if transport == TRANSPORT_ESP_BRIDGE:
         esp_device_name = entry.data.get(CONF_ESP_DEVICE_NAME)

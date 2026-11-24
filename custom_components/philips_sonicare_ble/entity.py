@@ -15,6 +15,7 @@ from .const import (
     CONF_ADDRESS,
     CONF_TRANSPORT_TYPE,
     TRANSPORT_ESP_BRIDGE,
+    TRANSPORT_MQTT_GATEWAY,
     CONF_ESP_DEVICE_NAME,
     CONF_DEVICE_NAME,
     CONF_AREA,
@@ -45,6 +46,9 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator]):
         self._device_id = entry.data.get("address", entry.data.get("esp_device_name", "unknown"))
         self._is_esp_bridge = (
             entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE
+        )
+        self._is_mqtt_gateway = (
+            entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_MQTT_GATEWAY
         )
 
         stored_name = entry.data.get(CONF_DEVICE_NAME)
@@ -97,7 +101,7 @@ class PhilipsSonicareEntity(CoordinatorEntity[PhilipsSonicareCoordinator]):
             return True
 
         # Never seen (fresh install): fall back to reachability
-        if self._is_esp_bridge:
+        if self._is_esp_bridge or self._is_mqtt_gateway:
             return self.coordinator.transport.is_connected
         return async_last_service_info(self.hass, self._device_id) is not None
 

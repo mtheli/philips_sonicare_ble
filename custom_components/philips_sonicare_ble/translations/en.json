@@ -125,6 +125,13 @@
         "title": "BLE Pairing Required",
         "description": "{alert}Your toothbrush at `{address}` requires **BLE bonding** before characteristics can be read.\n\nThis connection runs through a **Bluetooth proxy** (`{proxy_name}`). The proxy pairs with the toothbrush **automatically while reading** — pairing tools on the Home Assistant host (`bluetoothctl`, pairing scripts) have no effect on this connection.\n\nThe automatic pairing has not completed. Most likely causes:\n\n1. **The toothbrush still holds an old bond** for a phone or another adapter. Remove the brush from the Philips Sonicare app (or forget it in your phone's Bluetooth settings), wake the brush, and click **Retry** — retrying restarts the pairing.\n2. **The toothbrush fell asleep** during setup — press the power button, keep it awake, and click **Retry**.\n3. **You run several Bluetooth proxies:** bonds do not move between proxies, and Home Assistant picks whichever proxy has the best signal. Move the brush next to one proxy and click **Retry**.\n4. Some models **reject pairing entirely**. If every retry fails immediately, set the brush up via the host's Bluetooth adapter or the dedicated ESP32 bridge instead.",
         "submit": "Retry"
+      },
+      "mqtt_confirm": {
+        "title": "Confirm Philips Sonicare (MQTT gateway)",
+        "description": "**{name}** (`{address}`) was announced by the MQTT gateway **{gateway}**.\n\nModel: {model} · Firmware: {firmware}\n\nThe gateway holds the Bluetooth connection to the toothbrush; Home Assistant receives its data over MQTT.",
+        "data": {
+          "device_name": "Name"
+        }
       }
     },
     "error": {
@@ -176,7 +183,8 @@
       "already_in_progress": "Configuration flow is already in progress.",
       "no_devices_found": "No supported Philips Sonicare devices were found on this ESP bridge.",
       "no_esphome_devices": "No ESPHome bridge found. Set up an ESPHome device with the Sonicare BLE bridge component first — click the help icon (top-right) for the setup guide.",
-      "not_supported": "This ESPHome device does not host a Philips Sonicare bridge component."
+      "not_supported": "This ESPHome device does not host a Philips Sonicare bridge component.",
+      "mqtt_gateway_unsupported": "The MQTT gateway announced a toothbrush in a format this version does not support."
     }
   },
   "options": {
@@ -449,6 +457,7 @@
           "direct_ble": "Direct Bluetooth",
           "esp_bridge": "ESP Bridge",
           "stock_proxy": "Bluetooth Proxy",
+          "mqtt_gateway": "MQTT Gateway",
           "unknown": "Unknown"
         }
       }

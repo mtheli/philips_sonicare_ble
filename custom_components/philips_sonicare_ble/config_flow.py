@@ -32,6 +32,10 @@ from homeassistant.data_entry_flow import AbortFlow, FlowResult, section
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import http as ha_http
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from homeassistant.helpers.service_info.mqtt import MqttServiceInfo
 from homeassistant.helpers.translation import async_get_translations
 from homeassistant.util import dt as dt_util
 from homeassistant.util import language as language_util
@@ -68,6 +72,7 @@ from .const import (
     BLUETOOTH_ADAPTER_AUTO,
     TRANSPORT_BLEAK,
     TRANSPORT_ESP_BRIDGE,
+    TRANSPORT_MQTT_GATEWAY,
     DEFAULT_NOTIFY_THROTTLE,
     DEFAULT_PIPELINED_READS,
     DEFAULT_SENSOR_PRESSURE,
@@ -633,6 +638,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         self._discovery_info: BluetoothServiceInfoBleak | None = None
         self._address: str | None = None
         self._name: str | None = None
+        self._mqtt_info: dict[str, Any] = {}
         self._fetched_data: dict[str, Any] | None = None
         self._pair_error: str | None = None
         self._transport_type: str = TRANSPORT_BLEAK
@@ -2007,7 +2013,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
         _LOGGER.debug("Flow started: zeroconf discovery of %s", host or "?")
         device_name = esphome_service_id(host.rstrip(".").removesuffix(".local"))
         if not device_name:
-            return self.async_abort(reason="not_supported")
+            return self.async_abort(reason="mqtt_gateway_unsupported")
 
         # Wait for ESPHome to register services (may not be ready yet)
         for _ in range(10):
@@ -2016,7 +2022,7 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
                 break
             await asyncio.sleep(3)
         else:
-            return self.async_abort(reason="not_supported")
+            return self.async_abort(reason="mqtt_gateway_unsupported")
 
         # Found bridges — check if ALL are already configured
         self._esp_device_name = device_name
@@ -2449,6 +2455,81 @@ class PhilipsSonicareConfigFlow(ConfigFlow, domain=DOMAIN):
     # ------------------------------------------------------------------
     # Manual flow — menu: choose connection type
     # ------------------------------------------------------------------
+    async def async_step_mqtt(
+        self, discovery_info: MqttServiceInfo
+    ) -> FlowResult:
+        """A gateway announced a brush on ``sonicare_gateway/<id>/info``."""
+        import json as _json
+
+        from .condor_mqtt_link import PROTOCOL_VERSION, base_topic
+
+        payload = discovery_info.payload
+        if isinstance(payload, bytes):
+            payload = payload.decode("utf-8", errors="replace")
+        try:
+            info = _json.loads(payload) if payload else None
+        except ValueError:
+            info = None
+        if not isinstance(info, dict):
+            return self.async_abort(reason="mqtt_gateway_unsupported")
+        if info.get("protocol") != PROTOCOL_VERSION:
+            _LOGGER.info(
+                "MQTT gateway on %s speaks protocol %r, expected %d",
+                discovery_info.topic, info.get("protocol"), PROTOCOL_VERSION,
+            )
+            return self.async_abort(reason="mqtt_gateway_unsupported")
+        address = str(info.get("address") or "").upper()
+        if (
+            not re.fullmatch(r"([0-9A-F]{2}:){5}[0-9A-F]{2}", address)
+            or f"{base_topic(address)}/info" != discovery_info.topic
+        ):
+            _LOGGER.info(
+                "MQTT gateway info on %s has no matching address: %r",
+                discovery_info.topic, info.get("address"),
+            )
+            return self.async_abort(reason="mqtt_gateway_unsupported")
+
+        await self.async_set_unique_id(address)
+        self._abort_if_already_configured()
+        self._address = address
+        self._mqtt_info = info
+        model = str(info.get("model") or "")
+        self._name = f"Sonicare {model}".strip() if model else "Philips Sonicare"
+        self.context["title_placeholders"] = {"name": f"{self._name} · MQTT gateway"}
+        return await self.async_step_mqtt_confirm()
+
+    async def async_step_mqtt_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        info = self._mqtt_info
+        model = str(info.get("model") or "")
+        default_name = f"{self._name} ({self._address[-5:].replace(':', '')})"
+        if user_input is not None:
+            device_name = (user_input.get(CONF_DEVICE_NAME) or "").strip() or default_name
+            return self.async_create_entry(
+                title=f"Philips Sonicare ({device_name})",
+                data={
+                    CONF_ADDRESS: self._address,
+                    CONF_TRANSPORT_TYPE: TRANSPORT_MQTT_GATEWAY,
+                    CONF_SERVICES: [SVC_CONDOR, SVC_DEVICE_INFO],
+                    "model": model,
+                    CONF_DEVICE_NAME: device_name,
+                },
+            )
+        return self.async_show_form(
+            step_id="mqtt_confirm",
+            data_schema=vol.Schema({
+                vol.Required(CONF_DEVICE_NAME, default=default_name): str,
+            }),
+            description_placeholders={
+                "name": self._name,
+                "address": self._address,
+                "model": model or "—",
+                "firmware": str(info.get("firmware") or "—"),
+                "gateway": str(info.get("gateway") or "—"),
+            },
+        )
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -4369,7 +4450,11 @@ class PhilipsSonicareOptionsFlow(OptionsFlowWithReload):
         choose from — unless it is already fixed to one, so the way back
         to automatic choice stays open.
         """
-        if self._is_esp() or not self._adapter_choice_available():
+        if (
+            self._is_esp()
+            or self.config_entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_MQTT_GATEWAY
+            or not self._adapter_choice_available()
+        ):
             return await self.async_step_settings(user_input)
         return self.async_show_menu(
             step_id="init", menu_options=["settings", "adapter"]
