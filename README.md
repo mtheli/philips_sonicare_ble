@@ -36,6 +36,7 @@ See [Configuration](#configuration) for setup instructions.
   - [Option A: Direct Bluetooth](#option-a-direct-bluetooth)
   - [Option B: ESP32 BLE Bridge](#option-b-esp32-ble-bridge)
   - [Option C: Bluetooth Proxy](#option-c-bluetooth-proxy)
+  - [Option D: MQTT Gateway](#option-d-mqtt-gateway)
   - [Bluetooth adapter](#bluetooth-adapter)
 - [How It Works](#how-it-works)
 - [Troubleshooting & Caveats](#troubleshooting--caveats)
@@ -191,23 +192,24 @@ These sensors are only available while actively brushing and stream live data fr
 | **Firmware** | Sensor | Installed firmware version. |
 | **Last Seen** | Sensor | Timestamp of last successful data read. |
 | **BLE RSSI** | Sensor | BLE signal strength in dBm (Direct BLE only). |
-| **Adapter** | Sensor | Name/path of the BLE adapter currently carrying the link (e.g. `hci0`, ESP device name + bridge slot). |
+| **Adapter** | Sensor | Name/path of the BLE adapter currently carrying the link (e.g. `hci0`, ESP device name + bridge slot, MQTT gateway name + version). |
 | **Adapter Selection** | Sensor | *Chosen by Home Assistant* or *Fixed* (Direct Bluetooth only), see [Bluetooth adapter](#bluetooth-adapter). |
-| **Adapter Type** | Sensor | Transport classification: *Direct Bluetooth* / *ESP Bridge* / *Bluetooth Proxy*. |
+| **Adapter Type** | Sensor | Transport classification: *Direct Bluetooth* / *ESP Bridge* / *Bluetooth Proxy* / *MQTT Gateway*. |
 | **Bridge Version** | Sensor | ESP bridge firmware version (ESP Bridge only). |
 | **Bridge Firmware** | Update | Passive notification when newer ESP bridge firmware is available, with cumulative release notes. Informational only — there's no install button; reflash via ESPHome (ESP Bridge only). |
 | **ESP Last Boot** | Sensor | Timestamp the ESP bridge last booted — useful for detecting unattended reboots (ESP Bridge only). |
 | **ESP Connected** | Binary | Whether the ESP bridge is reachable and sending heartbeats (ESP Bridge only). |
 | **ESP Build** | Sensor | ESPHome and ESP-IDF version the bridge firmware was built with (ESP Bridge only). |
 | **ESP Chip** | Sensor | Chip of the ESP bridge (e.g. *ESP32-S3*); the `address_resolution` attribute shows whether the bridge can follow brushes with a rotating address — `host` can, `controller` cannot, see [known issue](esphome/KNOWN_ISSUES.md#brushes-with-a-rotating-address-stop-reconnecting-on-newer-esp32-chips) (ESP Bridge only, bridge firmware 1.14.2 or later). |
-| **BLE Connected** | Binary | Whether the GATT link to the toothbrush is currently up. |
+| **Gateway Connected** | Binary | Whether the MQTT gateway is online, independent of the brush being connected to it (MQTT Gateway only). |
+| **BLE Connected** | Binary | Whether the GATT link to the toothbrush is currently up (with an MQTT gateway: the gateway's link to the brush). |
 
 ---
 
 ## Prerequisites
 
 * A compatible Philips Sonicare toothbrush (see [Tested Models](#tested-models) above).
-* **Either** a Home Assistant instance with the **Bluetooth integration** enabled and a working Bluetooth adapter, **or** an ESP32 running the [BLE Bridge component](esphome/SETUP.md).
+* **Either** a Home Assistant instance with the **Bluetooth integration** enabled and a working Bluetooth adapter, **or** an ESP32 running the [BLE Bridge component](esphome/SETUP.md), **or** (Series 6500 / 7100 / For Kids) an [MQTT gateway](#option-d-mqtt-gateway) with Home Assistant's MQTT integration.
 * **Pairing depends on the model** -- some models require BLE bonding, the integration detects and handles this automatically (see the note under [Tested Models](#tested-models)). Simply close any Sonicare phone app to free the BLE connection.
 
 > [!NOTE]
@@ -250,13 +252,14 @@ services.home-assistant.customComponents = [
 
 ## Configuration
 
-The integration supports three connection methods:
+The integration supports four connection methods:
 
 | | Method | Best for |
 | :--- | :--- | :--- |
 | **[Option A](#option-a-direct-bluetooth)** ⭐ | **Direct Bluetooth** | HA host within Bluetooth range of the toothbrush (typically 5–10 m / 15–30 ft) |
 | **[Option B](#option-b-esp32-ble-bridge)** ⭐ | **ESP32 BLE Bridge** | **Recommended for out-of-range setups.** Multiple devices, live data streaming, full notification throttling |
 | **[Option C](#option-c-bluetooth-proxy)** | **Bluetooth Proxy** | Single Sonicare, existing `bluetooth_proxy` — **not recommended, see warning below** |
+| **[Option D](#option-d-mqtt-gateway)** | **MQTT Gateway** | Series 6500 / 7100 / For Kids brushes where another device, e.g. a phone, holds the Bluetooth connection — **beta** |
 
 ⭐ = recommended path
 
@@ -346,6 +349,39 @@ If you already operate an [ESPHome Bluetooth Proxy](https://esphome.io/component
 - **RSSI shown in the Connection device reflects the scanner actually carrying the link** (since v0.9.x), not the strongest advertisement.
 
 Setup is the same as Option A — Home Assistant's Bluetooth stack picks the proxy automatically when it has a better or equal connection score to the host adapter.
+
+### Option D: MQTT Gateway
+
+> [!NOTE]
+> **Beta** — available from integration v0.37.0b1. Only for brushes with the newer protocol (Series 6500 HX741X, Series 7100 HX742X, Sonicare For Kids HX6600).
+
+Here Home Assistant does not talk to the toothbrush at all. Another device near the brush — a **gateway** — holds the Bluetooth connection and publishes the brush on your MQTT broker; the integration reads it from there. Useful when the bathroom is out of reach of every Bluetooth adapter and ESP32 you have.
+
+The first gateway is the **[Sonicare Android gateway](https://github.com/Marthinek/sonicare-android-gateway)** by @Marthinek, an app for a phone or tablet that stays in the bathroom; the gateway part is in [this pull request](https://github.com/Marthinek/sonicare-android-gateway/pull/1) until it is merged. Any other gateway that follows the [MQTT gateway contract](docs/MQTT_GATEWAY.md) works the same way.
+
+**What you need**
+
+- An MQTT broker, e.g. the Mosquitto add-on, and Home Assistant's **MQTT integration** connected to it.
+- The gateway device within Bluetooth range of the brush, with the gateway running permanently (on Android: the app keeps a foreground service; exclude it from battery optimization).
+- The brush **not** connected to the Sonicare app at the same time — it accepts only one connection.
+
+**Setup**
+
+1. In the gateway, enter the same MQTT broker as Home Assistant (host, port, user, password) and enable MQTT.
+2. Let the gateway connect to the brush. Wake the brush up (pick it up or switch it on) so the gateway can find it.
+3. In the Android gateway, switch off **"Own HA discovery + old topics (base topic)"** in the MQTT settings — otherwise every value shows up twice, once from the app's own sensors and once from this integration.
+4. In Home Assistant, the brush appears under **Settings > Devices & Services > Discovered** as *Philips Sonicare · MQTT gateway*. Click **Configure**, check the name and **Submit**.
+
+Nothing else is configured by hand: there are no topics to enter. The integration listens to `sonicare_gateway/+/info`; a gateway announces each brush there, and all other topics of that brush follow from its Bluetooth address (`sonicare_gateway/<address>/…`). For that reason the gateway must always use the same address for a brush — if it changes, Home Assistant offers the brush as a new device.
+
+**What is different**
+
+- **Connection entities:** *Adapter* shows the gateway's name and version, *Adapter Type* shows *MQTT Gateway*, and *Gateway Connected* says whether the gateway is online. *BLE Connected* is the link between brush and gateway, so "gateway online, brush asleep" is a normal state.
+- **After a Home Assistant restart** the current values are back right away, without waking the brush: the gateway keeps them on the broker.
+- **No BLE RSSI and no pairing from Home Assistant** — both are the gateway's job.
+- **Removing the entry** only removes it from Home Assistant; the gateway keeps its own connection to the brush.
+
+For gateway authors, [docs/MQTT_GATEWAY.md](docs/MQTT_GATEWAY.md) describes the topics and payloads, and the repository's `scripts` folder has a checker that plays the Home Assistant side and a reference gateway for a PC.
 
 ### Options
 
