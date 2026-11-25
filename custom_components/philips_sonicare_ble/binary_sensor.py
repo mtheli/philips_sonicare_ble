@@ -14,7 +14,7 @@ from homeassistant.helpers.entity import EntityCategory
 
 from .coordinator import PhilipsSonicareCoordinator
 from .entity import PhilipsSonicareEntity, PhilipsBrushHeadEntity, PhilipsConnectionEntity
-from .const import DOMAIN, CONF_SERVICES, CONF_TRANSPORT_TYPE, SVC_SENSOR, SVC_BRUSHHEAD, SVC_CONDOR, TRANSPORT_ESP_BRIDGE
+from .const import DOMAIN, CONF_SERVICES, CONF_TRANSPORT_TYPE, SVC_SENSOR, SVC_BRUSHHEAD, SVC_CONDOR, TRANSPORT_ESP_BRIDGE, TRANSPORT_MQTT_GATEWAY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,6 +44,8 @@ async def async_setup_entry(
     entities.append(SonicareBleConnectedSensor(coordinator, entry))
     if entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_ESP_BRIDGE:
         entities.append(SonicareBridgeAliveSensor(coordinator, entry))
+    if entry.data.get(CONF_TRANSPORT_TYPE) == TRANSPORT_MQTT_GATEWAY:
+        entities.append(SonicareGatewayOnlineSensor(coordinator, entry))
 
     async_add_entities(entities)
 
@@ -141,6 +143,36 @@ class SonicareBridgeAliveSensor(PhilipsConnectionEntity, BinarySensorEntity):
     ) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{self._device_id}_esp_bridge_alive"
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.transport.is_bridge_alive
+
+
+class SonicareGatewayOnlineSensor(PhilipsConnectionEntity, BinarySensorEntity):
+    """Whether the MQTT gateway is online (its ``status`` topic).
+
+    Separate from ``ble_connected``: the gateway can be online while the
+    brush is not connected to it.
+    """
+
+    _attr_translation_key = "mqtt_gateway_online"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self, coordinator: PhilipsSonicareCoordinator, entry: ConfigEntry
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{self._device_id}_mqtt_gateway_online"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        # The gateway can come online without the brush, which the
+        # coordinator does not report; listen to the transport directly.
+        add = getattr(self.coordinator.transport, "add_online_listener", None)
+        if add is not None:
+            self.async_on_remove(add(self.async_write_ha_state))
 
     @property
     def is_on(self) -> bool:

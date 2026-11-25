@@ -487,6 +487,13 @@
           "on": "Connecté"
         }
       },
+      "mqtt_gateway_online": {
+        "name": "Passerelle connectée",
+        "state": {
+          "off": "Déconnecté",
+          "on": "Connecté"
+        }
+      },
       "ble_connected": {
         "name": "BLE connecté",
         "state": {

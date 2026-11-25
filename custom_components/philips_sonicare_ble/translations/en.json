@@ -487,6 +487,13 @@
           "on": "Connected"
         }
       },
+      "mqtt_gateway_online": {
+        "name": "Gateway Connected",
+        "state": {
+          "off": "Disconnected",
+          "on": "Connected"
+        }
+      },
       "ble_connected": {
         "name": "BLE Connected",
         "state": {

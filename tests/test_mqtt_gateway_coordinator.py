@@ -157,6 +157,38 @@ async def test_gateway_last_will_ends_the_session(rig) -> None:
     assert not rig.transport.link.is_open
 
 
+async def test_online_listener_follows_the_gateway_not_the_brush(rig) -> None:
+    calls = []
+    remove = rig.transport.add_online_listener(lambda: calls.append(rig.transport.is_bridge_alive))
+    await settle()
+    # Already online before the listener was added: no call for that.
+    assert rig.transport.is_bridge_alive
+
+    await rig.brush_connects()
+    await rig.wait(lambda: rig.coordinator._live_setup_done)
+    assert calls == []  # the brush coming does not change the gateway
+
+    rig.gw_client.die()
+    await rig.wait(lambda: calls == [False])
+    remove()
+
+
+async def test_adapter_names_the_gateway_and_its_version(rig) -> None:
+    await settle()
+    # The rig's gateway sends no name: generic label.
+    assert rig.transport.connection_path == "MQTT gateway"
+
+    rig.gateway.info.update({"gateway": "Phone Gateway", "gateway_version": "0.2.0"})
+    rig.gateway.send_info()
+    await rig.gateway.flush()
+    await rig.wait(lambda: rig.transport.connection_path == "Phone Gateway 0.2.0")
+
+    rig.gateway.info.pop("gateway_version")
+    rig.gateway.send_info()
+    await rig.gateway.flush()
+    await rig.wait(lambda: rig.transport.connection_path == "Phone Gateway")
+
+
 async def test_removing_the_entry_leaves_host_bonds_alone(hass, monkeypatch) -> None:
     from custom_components.philips_sonicare_ble import _async_release_bond
     from custom_components.philips_sonicare_ble import dbus_pairing

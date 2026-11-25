@@ -119,6 +119,7 @@ class CondorMqttLink(CondorLink):
         # session. The owner (the transport) turns this into its connection
         # events.
         self.on_state_change: Callable[[], None] | None = None
+        self._info: dict[str, Any] = {}
 
     # --- State -----------------------------------------------------------
 
@@ -146,6 +147,11 @@ class CondorMqttLink(CondorLink):
     def sensor_mask(self) -> int:
         return self._sensor_mask
 
+    @property
+    def gateway_info(self) -> dict[str, Any]:
+        """The gateway's last ``<base>/info`` (empty until it arrived)."""
+        return self._info
+
     def set_change_handler(self, handler) -> None:
         super().set_change_handler(handler)
         if handler is None:
@@ -164,6 +170,7 @@ class CondorMqttLink(CondorLink):
             return
         subs = (
             (f"{self._base}/status", self._on_status),
+            (f"{self._base}/info", self._on_info),
             (f"{self._base}/link", self._on_link),
             (f"{self._base}/state/#", self._on_state),
             (f"{self._base}/resp", self._on_resp),
@@ -354,6 +361,15 @@ class CondorMqttLink(CondorLink):
         if not online:
             self._fail_pending("gateway offline")
         self._notify_state_change()
+
+    def _on_info(self, _topic: str, payload: str) -> None:
+        try:
+            info = json.loads(payload)
+        except ValueError:
+            return
+        if isinstance(info, dict) and info != self._info:
+            self._info = info
+            self._notify_state_change()
 
     def _on_link(self, _topic: str, payload: str) -> None:
         try:

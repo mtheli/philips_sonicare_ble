@@ -79,6 +79,8 @@ class MqttGatewayTransport(SonicareTransport):
         self._last_up = False
         self._last_session: int | None = None
         self._online_event = asyncio.Event()
+        self._online_listeners: list[Callable[[], None]] = []
+        self._last_online = False
         # Like the ESP bridge: counts link losses, including a new session
         # that started before a disconnect was ever observed.
         self.disconnect_count = 0
@@ -99,17 +101,40 @@ class MqttGatewayTransport(SonicareTransport):
 
     @property
     def connection_path(self) -> str | None:
-        return "MQTT gateway"
+        """The gateway as it names itself in ``info``, with its version."""
+        info = self.link.gateway_info
+        name = info.get("gateway")
+        if not isinstance(name, str) or not name.strip():
+            return "MQTT gateway"
+        version = info.get("gateway_version")
+        if isinstance(version, (str, int, float)) and str(version).strip():
+            return f"{name.strip()} {str(version).strip()}"
+        return name.strip()
 
     def set_disconnect_callback(self, cb: Callable[[], None]) -> None:
         self._state_cb = cb
 
+    def add_online_listener(self, cb: Callable[[], None]) -> Callable[[], None]:
+        """Call ``cb`` whenever the gateway goes online or offline."""
+        self._online_listeners.append(cb)
+
+        def remove() -> None:
+            if cb in self._online_listeners:
+                self._online_listeners.remove(cb)
+
+        return remove
+
     @callback
     def _on_link_state(self) -> None:
-        if self.link.gateway_online:
+        online = self.link.gateway_online
+        if online:
             self._online_event.set()
         else:
             self._online_event.clear()
+        if online != self._last_online:
+            self._last_online = online
+            for listener in list(self._online_listeners):
+                listener()
         up, session = self.link.link_up, self.link.session
         if self._last_up and (not up or session != self._last_session):
             self.disconnect_count += 1
