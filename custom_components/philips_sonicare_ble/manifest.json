@@ -16,6 +16,6 @@
   "issue_tracker": "https://github.com/mtheli/philips_sonicare_ble/issues",
   "mqtt": ["sonicare_gateway/+/info"],
   "requirements": [],
-  "version": "0.36.0",
+  "version": "0.37.0b1",
   "zeroconf": [{"type": "_esphomelib._tcp.local."}]
 }
